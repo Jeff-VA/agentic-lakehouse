@@ -6,14 +6,12 @@ reads the Iceberg table's files directly, so all three see the same events.
 """
 
 import pytest
+from compare import assert_same_result
 
 from core.compiler import MetricQuery, SqlCompiler
-from core.ontology import AggregateMetric
+from core.ontology import Ontology
 
 pytestmark = pytest.mark.integration
-
-# Trino's approx_percentile and Pinot's t-digest against DuckDB's exact quantile_cont.
-PERCENTILE_TOLERANCE = 0.05
 
 QUERIES = {
     "every metric by isp": {
@@ -69,18 +67,22 @@ def test_engine_agrees_with_duckdb(platform, engines, window, engine, name):
     actual = engines[engine].execute(
         compiler.compile(query, engine=engine, table=platform.table_for("telemetry", engine))
     )
-
     assert actual.column_names == expected.column_names
-    percentiles = {
-        m.name for m in platform.ontology.models[0].metrics if isinstance(m, AggregateMetric) and m.agg == "percentile"
-    }
-    expected_rows, actual_rows = expected.to_pylist(), actual.to_pylist()
-    assert len(actual_rows) == len(expected_rows)
-    for expected_row, actual_row in zip(expected_rows, actual_rows):
-        for column, value in expected_row.items():
-            if column in percentiles:
-                assert actual_row[column] == pytest.approx(value, rel=PERCENTILE_TOLERANCE), column
-            elif isinstance(value, float):
-                assert actual_row[column] == pytest.approx(value, rel=1e-9), column
-            else:
-                assert actual_row[column] == value, column
+    assert_same_result(platform.ontology, engines["duckdb"], query, expected.to_pylist(), actual.to_pylist())
+
+
+def test_percentile_check_rejects_a_wrong_percentile(platform, engines, window):
+    """The rank check isn't vacuous: the exact p99 passes, a p90 passed off as the p99 fails."""
+    query = MetricQuery.model_validate({**QUERIES["p99 by device class"], **window})
+    exact = engines["duckdb"].execute(SqlCompiler(platform.ontology).compile(query, engine="duckdb", table="telemetry"))
+    raw = platform.ontology.model_dump()
+    for metric in raw["models"][0]["metrics"]:
+        if metric["name"] == "p99_ttfb":
+            metric["percentile"] = 0.9
+    p90 = engines["duckdb"].execute(
+        SqlCompiler(Ontology.model_validate(raw)).compile(query, engine="duckdb", table="telemetry")
+    )
+
+    assert_same_result(platform.ontology, engines["duckdb"], query, exact.to_pylist(), exact.to_pylist())
+    with pytest.raises(AssertionError, match="not within 1% of the 99% position"):
+        assert_same_result(platform.ontology, engines["duckdb"], query, exact.to_pylist(), p90.to_pylist())
