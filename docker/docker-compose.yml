@@ -5,8 +5,11 @@
 #   docker compose -f docker/docker-compose.yml up -d
 #   python run.py setup    # creates the topic, bucket and tables from config/
 #
+#   Orchestration:   Prefect server, for the flush and other pipelines
+#
 # Host ports: Kafka 9092, Pinot controller UI 9000, Pinot broker 8099,
-# Trino 8080, Iceberg REST 8181, MinIO S3 API 9100 and console 9101.
+# Trino 8080, Iceberg REST 8181, MinIO S3 API 9100 and console 9101,
+# Prefect UI 4200.
 # Credentials here are for this local stack only.
 name: male
 
@@ -155,6 +158,21 @@ services:
       timeout: 5s
       retries: 30
 
+  prefect:
+    image: prefecthq/prefect:3.8.8-python3.13  # same version as the prefect package in pyproject.toml
+    restart: unless-stopped
+    command: prefect server start --host 0.0.0.0
+    ports: ["4200:4200"]
+    environment:
+      PREFECT_UI_API_URL: http://127.0.0.1:4200/api  # the address the browser uses
+    volumes: [prefect-data:/root/.prefect]
+    mem_limit: 768m
+    healthcheck:
+      test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
 volumes:
   kafka-data:
   zookeeper-data:
@@ -163,3 +181,4 @@ volumes:
   pinot-server-data:
   minio-data:
   iceberg-catalog:
+  prefect-data:

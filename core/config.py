@@ -64,6 +64,8 @@ class IcebergTable(StrictModel):
     dataset: Identifier
     table: str = Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")  # <namespace>.<table>
     partition_by: Literal["hour", "day", "month"]  # transform applied to the dataset's time column
+    flush_every_minutes: float = Field(gt=0)
+    allowed_lateness_minutes: float = Field(ge=0)
 
     @property
     def namespace(self) -> str:
@@ -112,6 +114,10 @@ class S3Endpoint(StrictModel):
     secret_key: str
 
 
+class PrefectEndpoint(StrictModel):
+    api_url: str
+
+
 class DeploymentConfig(StrictModel):
     version: str
     kafka: KafkaEndpoints
@@ -119,6 +125,7 @@ class DeploymentConfig(StrictModel):
     trino: TrinoEndpoint
     iceberg: IcebergEndpoint
     s3: S3Endpoint
+    prefect: PrefectEndpoint
 
 
 class ConfigError(ValueError):

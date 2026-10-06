@@ -1,7 +1,8 @@
 """Same semantic query, same answer, on every engine.
 
 Each query runs on DuckDB, Trino and Pinot over the telemetry batch that
-`python run.py seed` loaded into both tiers, and the results must match. DuckDB
+`python run.py seed` published (Pinot ingests it) and `python run.py flush` moved
+into Iceberg, and the results must match. DuckDB
 reads the Iceberg table's files directly, so all three see the same events.
 """
 

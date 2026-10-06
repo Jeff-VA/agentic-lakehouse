@@ -24,3 +24,6 @@ s3:
   region: us-east-1
   access_key: male
   secret_key: male-local-secret  # local stack only
+
+prefect:
+  api_url: http://127.0.0.1:4200/api

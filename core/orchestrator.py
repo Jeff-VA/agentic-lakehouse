@@ -9,14 +9,13 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import httpx
-import pyarrow as pa
 from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient, NewTopic
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 
 from core.config import Dataset, Platform
-from core.schema_compiler import arrow_schema, iceberg_partition_spec, iceberg_schema, pinot_schema, pinot_table_config
+from core.schema_compiler import iceberg_partition_spec, iceberg_schema, pinot_schema, pinot_table_config
 
 Log = Callable[[str], None]
 
@@ -118,26 +117,16 @@ def flushed_through(platform: Platform, dataset: str) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-def load_events(platform: Platform, dataset: Dataset, events: list[dict], through: datetime, log: Log = print) -> None:
-    """Append events to the dataset's Iceberg table and publish the same events
-    to its Kafka topic (Pinot ingests them), so both tiers hold the batch.
-
-    `through` is the end of the batch's time window (naive UTC); the Iceberg
-    table records it, in the same commit as the data, as complete up to there.
-    Iceberg goes first: it checks the events against the table schema, so a bad
-    batch fails before anything reaches Kafka.
-    """
-    table = iceberg_catalog(platform).load_table(platform.iceberg_table(dataset.name).table)
-    previous = table.properties.get(FLUSHED_THROUGH)
-    watermark = max(through, datetime.fromisoformat(previous)) if previous else through
-    with table.transaction() as transaction:
-        transaction.append(pa.Table.from_pylist(events, schema=arrow_schema(dataset)))
-        transaction.set_properties({FLUSHED_THROUGH: watermark.isoformat()})
-    log(f"iceberg: appended {len(events)} events to {table.name()}, complete through {watermark:%Y-%m-%d %H:%M} UTC")
-
+def publish_events(platform: Platform, dataset: Dataset, events: list[dict], log: Log = print) -> None:
+    """Publish events to the dataset's Kafka topic as JSON, timestamps in epoch
+    milliseconds. Pinot ingests them right away; the flush (core/flush.py)
+    moves them into Iceberg."""
     producer = Producer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "linger.ms": 50})
     for event in events:
-        message = {**event, dataset.time_column: (event[dataset.time_column] - _EPOCH) // timedelta(milliseconds=1)}
+        message = {
+            key: (value - _EPOCH) // timedelta(milliseconds=1) if isinstance(value, datetime) else value
+            for key, value in event.items()
+        }
         while True:
             try:
                 producer.produce(dataset.topic, json.dumps(message).encode())

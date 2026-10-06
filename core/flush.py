@@ -1,0 +1,183 @@
+"""Move events from a dataset's Kafka topic into its Iceberg table.
+
+Each flush reads every message published before it started, appends the
+events to Iceberg and, in the same Iceberg commit, records:
+
+- the Kafka offsets read up to (table property male.kafka-offsets). The next
+  flush resumes exactly there. Keeping offsets in Iceberg rather than in a
+  Kafka consumer group means a crash between writing rows and saving offsets
+  can't load a batch twice: both happen in one commit, or neither does.
+- the flush watermark (male.flushed-through): Iceberg now holds every event
+  older than the flush's start minus the allowed lateness. The router relies
+  on it to decide what the historical tier can answer.
+
+Producers can evolve their events without breaking the flush: a new field
+becomes an optional Iceberg column (NULL in older rows), and a field that
+stops arriving is stored as NULL. The drift agent then notices the new
+columns and proposes ontology updates.
+"""
+
+import json
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+import pyarrow as pa
+from confluent_kafka import Consumer, KafkaException, TopicPartition
+from pyiceberg.table import Table
+from pyiceberg.types import BooleanType, DoubleType, IcebergType, LongType, StringType
+
+from core.config import Dataset
+from core.orchestrator import FLUSHED_THROUGH
+
+OFFSETS = "male.kafka-offsets"  # JSON {partition: next offset to read}
+
+_EPOCH = datetime(1970, 1, 1)
+
+
+class FlushError(RuntimeError):
+    """Events couldn't be flushed; nothing was committed."""
+
+
+@dataclass
+class FlushResult:
+    events: int
+    watermark: datetime
+    new_columns: dict[str, str] = field(default_factory=dict)  # name -> Iceberg type
+
+
+def flush(
+    table: Table,
+    consumer,
+    dataset: Dataset,
+    *,
+    now: datetime,
+    lateness: timedelta,
+    batch_size: int = 50_000,
+    timeout: float = 30,
+) -> FlushResult:
+    """Append every message in `dataset.topic` that `table` doesn't hold yet.
+
+    `consumer` is a confluent_kafka.Consumer (only assign/consume are used, no
+    consumer-group offsets). Events are committed in batches of `batch_size`;
+    the watermark only moves with the last one. `now` is naive UTC.
+    """
+    topic = dataset.topic
+    start = json.loads(table.properties.get(OFFSETS, "{}"))
+    partitions = sorted(consumer.list_topics(topic, timeout=timeout).topics[topic].partitions)
+    ends, positions = {}, {}
+    for partition in partitions:
+        low, high = consumer.get_watermark_offsets(TopicPartition(topic, partition), timeout=timeout)
+        position = start.get(str(partition), low)
+        if position < low:
+            raise FlushError(f"{topic}[{partition}]: offsets {position}-{low - 1} expired from Kafka before being flushed")
+        ends[partition], positions[partition] = high, position
+    consumer.assign([TopicPartition(topic, p, positions[p]) for p in partitions])
+
+    result = FlushResult(events=0, watermark=_watermark(table, now - lateness))
+    while True:
+        events = _read(consumer, positions, ends, batch_size, timeout)
+        done = all(positions[p] >= ends[p] for p in partitions)
+        if events or done:
+            properties = {OFFSETS: json.dumps({str(p): o for p, o in positions.items()})}
+            if done:
+                properties[FLUSHED_THROUGH] = result.watermark.isoformat()
+            new_columns = _commit(table, events, properties)
+            result.events += len(events)
+            result.new_columns.update(new_columns)
+        if done:
+            return result
+
+
+def _watermark(table: Table, candidate: datetime) -> datetime:
+    previous = table.properties.get(FLUSHED_THROUGH)
+    return max(candidate, datetime.fromisoformat(previous)) if previous else candidate
+
+
+def _read(consumer, positions: dict, ends: dict, batch_size: int, timeout: float) -> list[dict]:
+    """Up to `batch_size` events from where `positions` stand to `ends`, advancing `positions`."""
+    events = []
+    stalled_since = time.monotonic()
+    while len(events) < batch_size and (remaining := sum(max(0, ends[p] - positions[p]) for p in positions)):
+        # consume() waits until it has num_messages or the timeout passes, so
+        # ask for no more than remain, and poll briefly.
+        messages = consumer.consume(num_messages=min(1000, batch_size - len(events), remaining), timeout=1)
+        if not messages:
+            if time.monotonic() - stalled_since > timeout:
+                raise FlushError(f"no messages from Kafka for {timeout}s while reading up to offsets {ends}")
+            continue
+        stalled_since = time.monotonic()
+        for message in messages:
+            if message.error():
+                raise KafkaException(message.error())
+            partition, offset = message.partition(), message.offset()
+            if offset >= ends[partition]:
+                continue  # published after this flush started; the next flush takes it
+            try:
+                events.append(json.loads(message.value()))
+            except json.JSONDecodeError as e:
+                raise FlushError(f"{message.topic()}[{partition}] offset {offset} isn't JSON: {e}") from None
+            positions[partition] = offset + 1
+    return events
+
+
+def _commit(table: Table, events: list[dict], properties: dict[str, str]) -> dict[str, str]:
+    """Append `events` with `properties` in one Iceberg commit, adding columns
+    for fields the table doesn't have. Returns the added columns."""
+    current = table.schema()
+    known = {f.name for f in current.fields}
+    new_columns = {}
+    for name in dict.fromkeys(key for event in events for key in event):  # first-seen order
+        if name not in known and (iceberg_type := _infer_type([e.get(name) for e in events])) is not None:
+            new_columns[name] = iceberg_type
+    arrow_schema = pa.schema(
+        [pa.field(f.name, f.type) for f in current.as_arrow()]
+        + [pa.field(name, _ARROW[type(t)]) for name, t in new_columns.items()]
+    )
+    rows = _to_arrow(events, arrow_schema) if events else None
+    with table.transaction() as transaction:
+        if new_columns:
+            with transaction.update_schema() as update:
+                for name, iceberg_type in new_columns.items():
+                    update.add_column(name, iceberg_type, doc="added by the flush: first seen in Kafka events")
+        if rows is not None:
+            transaction.append(rows)
+        transaction.set_properties(properties)
+    return {name: str(t) for name, t in new_columns.items()}
+
+
+_ARROW = {BooleanType: pa.bool_(), LongType: pa.int64(), DoubleType: pa.float64(), StringType: pa.string()}
+
+
+def _infer_type(values: list) -> IcebergType | None:
+    """Column type for a new field, from its values; None until a non-null value arrives."""
+    kinds = {type(v) for v in values if v is not None}
+    if not kinds:
+        return None
+    if kinds == {bool}:
+        return BooleanType()
+    if kinds == {int}:
+        return LongType()
+    if kinds <= {int, float}:
+        return DoubleType()
+    return StringType()  # text, or mixed/nested values kept as JSON
+
+
+def _to_arrow(events: list[dict], schema: pa.Schema) -> pa.Table:
+    columns = {}
+    for column in schema:
+        values = [event.get(column.name) for event in events]
+        if pa.types.is_timestamp(column.type):  # events carry epoch milliseconds
+            values = [None if v is None else _EPOCH + timedelta(milliseconds=v) for v in values]
+        elif pa.types.is_string(column.type):
+            values = [v if v is None or isinstance(v, str) else json.dumps(v) for v in values]
+        try:
+            columns[column.name] = pa.array(values, type=column.type)
+        except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError, OverflowError) as e:
+            raise FlushError(f"field '{column.name}' has a value that doesn't fit {column.type}: {e}") from None
+    return pa.table(columns, schema=schema)
+
+
+def kafka_consumer(bootstrap_servers: str) -> Consumer:
+    """A consumer for flush(): offsets come from Iceberg, so the group never commits any."""
+    return Consumer({"bootstrap.servers": bootstrap_servers, "group.id": "male-flush", "enable.auto.commit": False})

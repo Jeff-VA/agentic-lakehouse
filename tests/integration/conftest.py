@@ -2,7 +2,7 @@
 set up and seeded:
 
     docker compose -f docker/docker-compose.yml up -d
-    python run.py setup && python run.py seed
+    python run.py setup && python run.py seed && python run.py flush
 
 Test modules here set `pytestmark = pytest.mark.integration`; run them with
 `pytest -m integration`.
@@ -55,14 +55,14 @@ def window(platform, engines):
         f"SELECT count(*) AS n, min(event_ts) AS first, max(event_ts) AS last FROM {trino_table}"
     ).to_pylist()
     if not stats["n"]:
-        pytest.skip("the Iceberg table is empty; run: python run.py seed")
+        pytest.skip("the Iceberg table is empty; run: python run.py seed && python run.py flush")
     pinot_table = platform.table_for("telemetry", "pinot")
     deadline = time.monotonic() + 30  # Pinot may still be consuming from Kafka
     while (pinot_rows := engines["pinot"].execute(f"SELECT COUNT(*) AS n FROM {pinot_table}")["n"][0].as_py()) != stats["n"]:
         if time.monotonic() > deadline:
             pytest.fail(
                 f"Pinot holds {pinot_rows} events but Iceberg holds {stats['n']}; "
-                "reload both: python run.py reset --yes && python run.py seed"
+                "reload both: python run.py reset --yes && python run.py seed && python run.py flush"
             )
         time.sleep(1)
     start = stats["first"].replace(minute=0, second=0, microsecond=0)

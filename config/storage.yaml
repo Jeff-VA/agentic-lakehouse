@@ -1,8 +1,11 @@
 # Long-term storage: one Apache Iceberg table per dataset, in object storage,
-# queried through Trino. Schema and validation rules: core/config.py
+# queried through Trino. A scheduled flush (pipelines/flush.py) moves events
+# from Kafka into it. Schema and validation rules: core/config.py
 version: "1.0.0"
 
 tables:
   - dataset: telemetry
     table: raw.telemetry  # <namespace>.<table> in the Iceberg catalog
     partition_by: day     # Iceberg transform on the dataset's time column: hour, day or month
+    flush_every_minutes: 5
+    allowed_lateness_minutes: 2  # events arriving later than this miss the watermark (see core/flush.py)
