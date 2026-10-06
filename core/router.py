@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pyarrow as pa
 
-from core.compiler import Grain, MetricQuery, SqlCompiler
+from core.compiler import Grain, MetricQuery, QueryError, SqlCompiler
 from core.config import Platform
 from core.engines import PinotEngine, QueryEngine, TrinoEngine
 from core.orchestrator import flushed_through
@@ -80,7 +80,10 @@ class Router:
         return cls(SqlCompiler(platform.ontology), placements)
 
     def run(self, query: MetricQuery) -> QueryResult:
-        placement = self.placements[self.compiler.model_for(query).source]
+        model = self.compiler.model_for(query)
+        placement = self.placements.get(model.source)
+        if placement is None:
+            raise QueryError(f"model '{model.name}' reads dataset '{model.source}', which no tier holds")
         start, end = query.start, query.end
         realtime_from = _utc(self.clock()) - placement.retention
         flushed = placement.flushed_through()

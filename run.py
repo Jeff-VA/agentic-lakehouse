@@ -3,6 +3,8 @@
     python run.py setup                 create topics and tables from config/
     python run.py seed --hours 24       load synthetic telemetry into every tier
     python run.py reset --yes           delete all topics, tables and data, then run setup
+    python run.py serve                 REST API and MCP (HTTP) on http://127.0.0.1:8000
+    python run.py mcp                   MCP over stdio, for Claude Code or Claude Desktop
 
 Start the containers first: docker compose -f docker/docker-compose.yml up -d
 """
@@ -10,9 +12,11 @@ Start the containers first: docker compose -f docker/docker-compose.yml up -d
 import argparse
 from datetime import UTC, datetime, timedelta
 
+from core.api_gateway import Gateway, create_app, create_mcp_server
 from core.config import load_platform
 from core.events import generate_events
 from core.orchestrator import load_events, setup, teardown
+from core.router import Router
 
 
 def main() -> None:
@@ -26,6 +30,10 @@ def main() -> None:
     seed.add_argument("--seed", type=int, default=0, help="random seed; the same seed and window give the same events")
     reset = commands.add_parser("reset", help="delete all topics, tables and data, then recreate them empty")
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
+    serve = commands.add_parser("serve", help="run the REST API, with MCP at /mcp")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    commands.add_parser("mcp", help="run the MCP server over stdio")
     args = parser.parse_args()
 
     platform = load_platform(args.config)
@@ -43,6 +51,12 @@ def main() -> None:
         events = generate_events(start, end, sessions_per_minute=args.sessions_per_minute, seed=args.seed)
         print(f"generated {len(events)} events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC")
         load_events(platform, dataset, events, through=end)
+    elif args.command == "serve":
+        import uvicorn
+
+        uvicorn.run(create_app(Gateway(Router.from_platform(platform))), host=args.host, port=args.port)
+    elif args.command == "mcp":
+        create_mcp_server(Gateway(Router.from_platform(platform))).run("stdio")
 
 
 if __name__ == "__main__":
