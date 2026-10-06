@@ -3,6 +3,7 @@
     python run.py setup                 create topics and tables from config/
     python run.py seed --hours 24       publish synthetic telemetry to Kafka (Pinot ingests it)
     python run.py flush [--serve]       move new events from Kafka into Iceberg (once, or on schedule)
+    python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
     python run.py reset --yes           delete all topics, tables and data, then run setup
     python run.py serve                 REST API and MCP (HTTP) on http://127.0.0.1:8000
     python run.py mcp                   MCP over stdio, for Claude Code or Claude Desktop
@@ -13,6 +14,8 @@ Start the containers first: docker compose -f docker/docker-compose.yml up -d
 import argparse
 import os
 from datetime import UTC, datetime, timedelta
+
+from dotenv import load_dotenv
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
 from core.config import load_platform
@@ -34,11 +37,14 @@ def main() -> None:
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
     flush = commands.add_parser("flush", help="move new events from Kafka into Iceberg (a Prefect flow)")
     flush.add_argument("--serve", action="store_true", help="keep running, flushing on the configured schedule")
+    drift = commands.add_parser("drift", help="find new event fields and have Claude propose config patches")
+    drift.add_argument("--serve", action="store_true", help="keep running, checking every hour")
     serve = commands.add_parser("serve", help="run the REST API, with MCP at /mcp")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     commands.add_parser("mcp", help="run the MCP server over stdio")
     args = parser.parse_args()
+    load_dotenv()  # ANTHROPIC_API_KEY for the drift agent, if kept in .env
 
     platform = load_platform(args.config)
     if args.command == "setup":
@@ -64,6 +70,14 @@ def main() -> None:
             flush_all.serve(name="flush", interval=timedelta(minutes=every), parameters={"config_dir": args.config})
         else:
             flush_all(config_dir=args.config)
+    elif args.command == "drift":
+        os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
+        from pipelines.drift import drift_check  # after PREFECT_API_URL is set
+
+        if args.serve:
+            drift_check.serve(name="drift", interval=timedelta(hours=1), parameters={"config_dir": args.config})
+        else:
+            drift_check(config_dir=args.config)
     elif args.command == "serve":
         import uvicorn
 

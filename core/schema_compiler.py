@@ -9,7 +9,16 @@ import pyarrow as pa
 from pyiceberg.partitioning import PartitionField, PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.transforms import DayTransform, HourTransform, MonthTransform
-from pyiceberg.types import BooleanType, DoubleType, IntegerType, LongType, NestedField, StringType, TimestampType
+from pyiceberg.types import (
+    BooleanType,
+    DoubleType,
+    IcebergType,
+    IntegerType,
+    LongType,
+    NestedField,
+    StringType,
+    TimestampType,
+)
 
 from core.config import Dataset, IcebergTable
 
@@ -102,11 +111,15 @@ def pinot_table_config(dataset: Dataset, kafka_bootstrap_servers: str) -> dict:
     }
 
 
+def iceberg_type(column_type: str) -> IcebergType:
+    return _ICEBERG_TYPES[column_type]()
+
+
 def iceberg_schema(dataset: Dataset) -> Schema:
     # Optional fields: a dataset gaining a column must not break older files.
     return Schema(
         *(
-            NestedField(field_id=i, name=c.name, field_type=_ICEBERG_TYPES[c.type](), required=False)
+            NestedField(field_id=i, name=c.name, field_type=iceberg_type(c.type), required=False)
             for i, c in enumerate(dataset.columns, start=1)
         )
     )

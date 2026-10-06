@@ -13,9 +13,10 @@ from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient, NewTopic
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
+from pyiceberg.table import Table
 
 from core.config import Dataset, Platform
-from core.schema_compiler import iceberg_partition_spec, iceberg_schema, pinot_schema, pinot_table_config
+from core.schema_compiler import iceberg_partition_spec, iceberg_schema, iceberg_type, pinot_schema, pinot_table_config
 
 Log = Callable[[str], None]
 
@@ -63,14 +64,34 @@ def _create_topic(kafka: AdminClient, dataset: Dataset, log: Log) -> None:
 
 def _create_pinot_table(platform: Platform, dataset: Dataset, log: Log) -> None:
     controller = platform.deployment.pinot.controller_url
+    sync_pinot_schema(controller, dataset, log)
     table = dataset.realtime.table
     if httpx.get(f"{controller}/tables/{table}").json().get("REALTIME"):
         log(f"pinot: table {table} exists")
         return
-    httpx.post(f"{controller}/schemas", json=pinot_schema(dataset)).raise_for_status()
     config = pinot_table_config(dataset, platform.deployment.kafka.internal_bootstrap_servers)
     httpx.post(f"{controller}/tables", json=config).raise_for_status()
     log(f"pinot: created table {table}, consuming topic {dataset.topic}")
+
+
+def sync_pinot_schema(controller_url: str, dataset: Dataset, log: Log = print) -> None:
+    """Create the dataset's Pinot schema, or add the columns ingestion.yaml gained since.
+    Pinot fills new columns only for events it ingests from then on."""
+    name = dataset.realtime.table
+    existing = httpx.get(f"{controller_url}/schemas/{name}")
+    if existing.status_code == 404:
+        httpx.post(f"{controller_url}/schemas", json=pinot_schema(dataset)).raise_for_status()
+        return
+    existing.raise_for_status()
+    fields = existing.json()
+    have = {f["name"] for key in ("dimensionFieldSpecs", "metricFieldSpecs", "dateTimeFieldSpecs") for f in fields.get(key, [])}
+    if missing := [c.name for c in dataset.columns if c.name not in have]:
+        # Reloading adds the columns to the table's existing segments; it fails if there's no table yet.
+        reload = bool(httpx.get(f"{controller_url}/tables/{name}").json().get("REALTIME"))
+        httpx.put(
+            f"{controller_url}/schemas/{name}", params={"reload": str(reload).lower()}, json=pinot_schema(dataset)
+        ).raise_for_status()
+        log(f"pinot: added {', '.join(missing)} to schema {name}")
 
 
 def _create_iceberg_table(platform: Platform, catalog: Catalog, dataset: Dataset, log: Log) -> None:
@@ -86,6 +107,17 @@ def _create_iceberg_table(platform: Platform, catalog: Catalog, dataset: Dataset
         log(f"iceberg: created table {table.table}, partitioned by {table.partition_by}")
     except TableAlreadyExistsError:
         log(f"iceberg: table {table.table} exists")
+        sync_iceberg_columns(catalog.load_table(table.table), dataset, log)
+
+
+def sync_iceberg_columns(table: Table, dataset: Dataset, log: Log = print) -> None:
+    """Add the columns ingestion.yaml lists that the Iceberg table lacks (as optional columns)."""
+    have = {f.name for f in table.schema().fields}
+    if missing := [c for c in dataset.columns if c.name not in have]:
+        with table.update_schema() as update:
+            for column in missing:
+                update.add_column(column.name, iceberg_type(column.type))
+        log(f"iceberg: added {', '.join(c.name for c in missing)} to {'.'.join(table.name())}")
 
 
 def teardown(platform: Platform, log: Log = print) -> None:

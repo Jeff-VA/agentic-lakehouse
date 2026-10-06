@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Config-driven semantic lakehouse engine: one ontology, many query engines."
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=1.11,<2",
     "confluent-kafka>=2.6",
     "duckdb>=1.5",
     "fastapi>=0.115",
@@ -14,7 +15,9 @@ dependencies = [
     "pyarrow>=18",
     "pydantic>=2.7",
     "pyiceberg[pyarrow,pyiceberg-core]>=0.10",  # pyiceberg-core: writes to partitioned tables
+    "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "ruamel.yaml>=0.18",  # round-trip YAML edits that keep comments (core/agent_sync.py)
     "sqlglot>=30.21,<31",  # majors break dialect internals; core.compiler subclasses Dialect
     "trino>=0.330",
     "uvicorn>=0.30",
