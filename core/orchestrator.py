@@ -20,6 +20,9 @@ from core.schema_compiler import arrow_schema, iceberg_partition_spec, iceberg_s
 
 Log = Callable[[str], None]
 
+# Iceberg table property: the Iceberg table holds every event before this time (ISO, UTC).
+FLUSHED_THROUGH = "male.flushed-through"
+
 _EPOCH = datetime(1970, 1, 1)
 
 
@@ -108,16 +111,29 @@ def teardown(platform: Platform, log: Log = print) -> None:
             log(f"iceberg: dropped table {iceberg_table}")
 
 
-def load_events(platform: Platform, dataset: Dataset, events: list[dict], log: Log = print) -> None:
+def flushed_through(platform: Platform, dataset: str) -> datetime | None:
+    """The time before which the dataset's Iceberg table holds every event, or None if nothing was loaded."""
+    table = iceberg_catalog(platform).load_table(platform.iceberg_table(dataset).table)
+    value = table.properties.get(FLUSHED_THROUGH)
+    return datetime.fromisoformat(value) if value else None
+
+
+def load_events(platform: Platform, dataset: Dataset, events: list[dict], through: datetime, log: Log = print) -> None:
     """Append events to the dataset's Iceberg table and publish the same events
     to its Kafka topic (Pinot ingests them), so both tiers hold the batch.
 
+    `through` is the end of the batch's time window (naive UTC); the Iceberg
+    table records it, in the same commit as the data, as complete up to there.
     Iceberg goes first: it checks the events against the table schema, so a bad
     batch fails before anything reaches Kafka.
     """
     table = iceberg_catalog(platform).load_table(platform.iceberg_table(dataset.name).table)
-    table.append(pa.Table.from_pylist(events, schema=arrow_schema(dataset)))
-    log(f"iceberg: appended {len(events)} events to {table.name()}")
+    previous = table.properties.get(FLUSHED_THROUGH)
+    watermark = max(through, datetime.fromisoformat(previous)) if previous else through
+    with table.transaction() as transaction:
+        transaction.append(pa.Table.from_pylist(events, schema=arrow_schema(dataset)))
+        transaction.set_properties({FLUSHED_THROUGH: watermark.isoformat()})
+    log(f"iceberg: appended {len(events)} events to {table.name()}, complete through {watermark:%Y-%m-%d %H:%M} UTC")
 
     producer = Producer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "linger.ms": 50})
     for event in events:

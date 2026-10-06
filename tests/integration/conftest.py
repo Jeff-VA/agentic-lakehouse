@@ -8,6 +8,8 @@ Test modules here set `pytestmark = pytest.mark.integration`; run them with
 `pytest -m integration`.
 """
 
+import time
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -43,3 +45,25 @@ def engines(platform):
         "trino": TrinoEngine(platform.deployment.trino),
         "pinot": PinotEngine(platform.deployment.pinot.broker_url),
     }
+
+
+@pytest.fixture(scope="session")
+def window(platform, engines):
+    """The hour-aligned range holding the seeded batch, once Pinot has ingested all of it."""
+    trino_table = platform.table_for("telemetry", "trino")
+    [stats] = engines["trino"].execute(
+        f"SELECT count(*) AS n, min(event_ts) AS first, max(event_ts) AS last FROM {trino_table}"
+    ).to_pylist()
+    if not stats["n"]:
+        pytest.skip("the Iceberg table is empty; run: python run.py seed")
+    pinot_table = platform.table_for("telemetry", "pinot")
+    deadline = time.monotonic() + 30  # Pinot may still be consuming from Kafka
+    while (pinot_rows := engines["pinot"].execute(f"SELECT COUNT(*) AS n FROM {pinot_table}")["n"][0].as_py()) != stats["n"]:
+        if time.monotonic() > deadline:
+            pytest.fail(
+                f"Pinot holds {pinot_rows} events but Iceberg holds {stats['n']}; "
+                "reload both: python run.py reset --yes && python run.py seed"
+            )
+        time.sleep(1)
+    start = stats["first"].replace(minute=0, second=0, microsecond=0)
+    return {"start": start, "end": stats["last"].replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)}

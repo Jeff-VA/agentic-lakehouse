@@ -42,7 +42,7 @@ def main() -> None:
         dataset = platform.dataset("telemetry")
         events = generate_events(start, end, sessions_per_minute=args.sessions_per_minute, seed=args.seed)
         print(f"generated {len(events)} events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC")
-        load_events(platform, dataset, events)
+        load_events(platform, dataset, events, through=end)
 
 
 if __name__ == "__main__":
