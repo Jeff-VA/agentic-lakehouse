@@ -141,7 +141,7 @@ Metric = Annotated[
 ]
 
 
-def _index_by_name(items: list, kind: str, where: str) -> dict:
+def index_by_name(items: list, kind: str, where: str) -> dict:
     index = {}
     for item in items:
         if item.name in index:
@@ -160,11 +160,23 @@ class SemanticModel(StrictModel):
     dimensions: list[Dimension] = Field(min_length=1)
     metrics: list[Metric] = Field(min_length=1)
 
+    def source_columns(self) -> set[str]:
+        """Columns of the source dataset that this model's dimensions and metrics read."""
+        columns = {d.name for d in self.dimensions if d.sql is None}
+        fragments = [d.sql for d in self.dimensions if d.sql is not None]
+        for metric in self.metrics:
+            if isinstance(metric, AggregateMetric):
+                fragments += [metric.sql] if metric.sql else []
+                fragments += metric.filters
+        for sql in fragments:
+            columns |= {column.name for column in parse_fragment(sql).find_all(exp.Column)}
+        return columns
+
     @model_validator(mode="after")
     def _check_references(self) -> Self:
         where = f"model '{self.name}'"
-        dimensions = _index_by_name(self.dimensions, "dimension", where)
-        metrics = _index_by_name(self.metrics, "metric", where)
+        dimensions = index_by_name(self.dimensions, "dimension", where)
+        metrics = index_by_name(self.metrics, "metric", where)
 
         # Dimensions and metrics share one namespace: both become result columns.
         if clash := dimensions.keys() & metrics.keys():
@@ -195,7 +207,7 @@ class Ontology(StrictModel):
 
     @model_validator(mode="after")
     def _check_unique_names(self) -> Self:
-        _index_by_name(self.models, "model", "ontology")
+        index_by_name(self.models, "model", "ontology")
         # Clients ask for a metric by name alone, so each name must mean one thing.
         owner: dict[str, str] = {}
         for model in self.models:

@@ -1,0 +1,22 @@
+# What arrives on the event streams: each dataset's Kafka topic and raw event
+# schema, and the Pinot real-time table that consumes it. Ontology models name
+# a dataset as their `source`. Schema and validation rules: core/config.py
+version: "1.0.0"
+
+datasets:
+  - name: telemetry
+    description: Playback trace events emitted by client devices.
+    topic: playback-telemetry
+    time_column: event_ts  # event time, UTC
+    columns:
+      - {name: event_ts, type: timestamp}
+      - {name: session_id, type: string}
+      - {name: client_isp, type: string}
+      - {name: client_device, type: string}
+      - {name: request_latency_ms, type: int}
+      - {name: stream_start_event, type: boolean}
+      - {name: buffer_duration_ms, type: int}
+      - {name: bitrate_kbps, type: int}
+    realtime:
+      table: telemetry
+      retention_days: 7  # older data is served from the Iceberg table (storage.yaml)

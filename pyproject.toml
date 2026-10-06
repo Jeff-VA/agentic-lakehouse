@@ -4,11 +4,16 @@ version = "0.1.0"
 description = "Config-driven semantic lakehouse engine: one ontology, many query engines."
 requires-python = ">=3.11"
 dependencies = [
-    "duckdb>=1.4",
+    "confluent-kafka>=2.6",
+    "duckdb>=1.5",
+    "httpx>=0.27",
     "jinja2>=3.1",
+    "pyarrow>=18",
     "pydantic>=2.7",
+    "pyiceberg[pyarrow,pyiceberg-core]>=0.10",  # pyiceberg-core: writes to partitioned tables
     "pyyaml>=6.0",
     "sqlglot>=30.21,<31",  # majors break dialect internals; core.compiler subclasses Dialect
+    "trino>=0.330",
 ]
 
 [project.optional-dependencies]
@@ -26,3 +31,6 @@ core = ["templates/*.sql", "templates/macros/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Integration tests need the Docker stack; run them with `pytest -m integration`.
+addopts = "-m 'not integration'"
+markers = ["integration: needs the local Docker stack (docker/docker-compose.yml), set up and seeded"]

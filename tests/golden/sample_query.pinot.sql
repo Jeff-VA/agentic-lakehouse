@@ -1,5 +1,5 @@
 SELECT
-  DATETRUNC('HOUR', event_ts) AS "event_ts",
+  CAST(DATETRUNC('HOUR', event_ts) AS TIMESTAMP) AS "event_ts",
   client_isp AS "isp_provider",
   CASE WHEN client_device IN ('ios', 'android') THEN TRUE ELSE FALSE END AS "is_mobile_device",
   PERCENTILETDIGEST(request_latency_ms, 99) FILTER (WHERE stream_start_event = TRUE) AS "p99_ttfb",
@@ -12,7 +12,7 @@ WHERE event_ts >= 1790812800000
   AND client_isp IN ('comcast', 'verizon')
   AND CASE WHEN client_device IN ('ios', 'android') THEN TRUE ELSE FALSE END = TRUE
 GROUP BY
-  DATETRUNC('HOUR', event_ts),
+  CAST(DATETRUNC('HOUR', event_ts) AS TIMESTAMP),
   client_isp,
   CASE WHEN client_device IN ('ios', 'android') THEN TRUE ELSE FALSE END
 ORDER BY
