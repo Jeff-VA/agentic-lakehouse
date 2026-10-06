@@ -11,12 +11,63 @@ later.
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, Union
 
+import sqlglot
 import yaml
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, StringConstraints, Tag, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Discriminator, Field, StringConstraints, Tag, model_validator
+from sqlglot import exp
 
 # Names become SQL column aliases and API/MCP identifiers, so keep them plain:
 # lowercase snake_case only. This also rules out SQL injection through a name.
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
+
+# SQL fragments in the ontology (dimension and metric `sql`, metric `filters`)
+# are written in DuckDB's dialect. The compiler re-renders them for each engine.
+FRAGMENT_DIALECT = "duckdb"
+
+
+def parse_fragment(sql: str) -> exp.Expression:
+    """Parse an ontology SQL fragment into a sqlglot expression tree.
+
+    A fragment must be one scalar expression over the source table's columns.
+    Statements, subqueries, aliases and `*` are rejected, and so are aggregate
+    and window functions: aggregation is the compiler's job, driven by a
+    metric's `agg`. Raises ValueError explaining what is wrong.
+    """
+    # Parsing it as a SELECT list item catches anything that isn't a single
+    # expression, including a smuggled second statement ("x; DROP TABLE t").
+    try:
+        statements = sqlglot.parse(f"SELECT {sql}", read=FRAGMENT_DIALECT)
+    except sqlglot.ParseError as e:
+        raise ValueError(f"invalid SQL {sql!r}: {e.errors[0]['description']}") from None
+    select = statements[0] if len(statements) == 1 else None
+    if (
+        not isinstance(select, exp.Select)
+        or len(select.expressions) != 1
+        or any(value for key, value in select.args.items() if key != "expressions")
+    ):
+        raise ValueError(f"{sql!r} must be a single SQL expression")
+
+    [tree] = select.expressions
+    forbidden = {
+        "an alias (AS ...)": exp.Alias,
+        "*": exp.Star,
+        "a subquery": (exp.Subquery, exp.Select),
+        "an aggregate function": exp.AggFunc,
+        "a window function": exp.Window,
+    }
+    for what, kinds in forbidden.items():
+        if tree.find(kinds):
+            raise ValueError(f"{sql!r} must not contain {what}")
+    return tree
+
+
+def _check_fragment(sql: str) -> str:
+    parse_fragment(sql)
+    return sql
+
+
+# A SQL expression over the source table's columns, e.g. "client_isp" or a CASE.
+SqlExpression = Annotated[str, AfterValidator(_check_fragment)]
 
 DimensionType = Literal["string", "number", "boolean", "timestamp"]
 Aggregation = Literal["count", "count_distinct", "sum", "avg", "min", "max", "percentile"]
@@ -32,7 +83,7 @@ class Dimension(StrictModel):
     name: Identifier
     type: DimensionType
     description: str = ""
-    sql: str | None = None  # SQL expression; defaults to the column of the same name
+    sql: SqlExpression | None = None  # defaults to the column of the same name
 
     @property
     def expr(self) -> str:
@@ -46,9 +97,9 @@ class AggregateMetric(StrictModel):
     type: Literal["aggregate"] = "aggregate"
     description: str = Field(min_length=1)  # the AI agent picks metrics by reading these
     agg: Aggregation
-    sql: str | None = None  # expression to aggregate; omit it with `count` for COUNT(*)
+    sql: SqlExpression | None = None  # expression to aggregate; omit it with `count` for COUNT(*)
     percentile: float | None = Field(default=None, gt=0, lt=1)  # 0.99 means p99
-    filters: list[str] = []  # SQL predicates, ANDed together
+    filters: list[SqlExpression] = []  # SQL predicates, ANDed together
 
     @model_validator(mode="after")
     def _check_agg_params(self) -> Self:

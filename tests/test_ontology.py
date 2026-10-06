@@ -107,6 +107,33 @@ def test_aggregations_other_than_count_need_sql(raw):
 
 
 @pytest.mark.parametrize(
+    ("sql", "match"),
+    [
+        ("amount +", "invalid SQL"),
+        ("amount; DROP TABLE orders", "must be a single SQL expression"),
+        ("amount FROM orders", "must be a single SQL expression"),
+        ("amount AS amt", r"must not contain an alias"),
+        ("*", r"must not contain \*"),
+        ("(SELECT MAX(amount) FROM orders)", "must not contain a subquery"),
+        ("SUM(amount)", "must not contain an aggregate function"),
+        ("ROW_NUMBER() OVER ()", "must not contain a window function"),
+    ],
+)
+def test_sql_must_be_one_scalar_expression(raw, sql, match):
+    raw["models"][0]["metrics"][1]["sql"] = sql  # revenue
+    assert_rejected(raw, match)
+
+
+@pytest.mark.parametrize("field", ["dimension sql", "metric filter"])
+def test_dimension_sql_and_metric_filters_are_checked_too(raw, field):
+    if field == "dimension sql":
+        raw["models"][0]["dimensions"][1]["sql"] = "country; DROP TABLE orders"
+    else:
+        raw["models"][0]["metrics"][0]["filters"] = ["amount > 0", "1; DELETE FROM orders"]
+    assert_rejected(raw, "must be a single SQL expression")
+
+
+@pytest.mark.parametrize(
     "metric",
     [
         {"name": "p95_amount", "description": "d", "agg": "percentile", "sql": "amount"},

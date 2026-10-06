@@ -44,3 +44,13 @@ models:
         type: ratio
         numerator: rebuffer_event_count
         denominator: event_count
+
+      - name: unique_sessions
+        description: Number of distinct playback sessions.
+        agg: count_distinct
+        sql: session_id
+
+      - name: avg_bitrate_kbps
+        description: Average delivered video bitrate (kbps).
+        agg: avg
+        sql: bitrate_kbps
