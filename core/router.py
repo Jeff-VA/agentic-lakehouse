@@ -29,7 +29,7 @@ import pyarrow as pa
 
 from core.compiler import MetricQuery, QueryError, SqlCompiler, bucket_start
 from core.config import Platform
-from core.engines import PinotEngine, QueryEngine, TrinoEngine
+from core.engines import PinotEngine, QueryEngine, TrinoEngine, plain_types
 from core.orchestrator import flushed_through
 
 
@@ -129,22 +129,37 @@ class Router:
             con.register(label, tier.engine.execute(sql[label]))
         relation = "(SELECT * FROM historical UNION ALL BY NAME SELECT * FROM realtime)"
         sql["merge"] = self.compiler.merge_sql(query, relation, partial=partial)
-        return QueryResult(con.execute(sql["merge"]).to_arrow_table(), query.start, query.end, sql)
+        return QueryResult(plain_types(con.execute(sql["merge"]).to_arrow_table()), query.start, query.end, sql)
 
     def _with_gap(
         self, query: MetricQuery, placement: Placement, realtime_from: datetime, flushed: datetime | None
     ) -> QueryResult:
-        # The historical tier stops before the real-time tier begins, e.g. the
-        # flush job is behind. Answer from the tier holding more of the window.
+        # The historical tier stops before the real-time tier begins: the flush is
+        # behind, or nothing has been flushed yet. Answer from the tier holding
+        # more of the requested range, and say what's missing.
         start, end = query.start, query.end
-        missing_from = max(start, flushed) if flushed else start
-        if end > realtime_from:
-            result = self._single(query.model_copy(update={"start": realtime_from}), placement.realtime, "realtime")
-            note = f"no tier holds events from {missing_from:%Y-%m-%d %H:%M} to {realtime_from:%Y-%m-%d %H:%M} UTC"
+        historical_end = max(start, min(end, flushed)) if flushed else start
+        realtime_start = min(end, max(start, realtime_from))
+        if historical_end == start and realtime_start == end:
+            reason = (
+                "nothing has been flushed to the historical tier yet"
+                if flushed is None
+                else f"the historical tier ends at {flushed:%Y-%m-%d %H:%M} UTC"
+            )
+            raise QueryError(
+                f"no tier holds events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC: {reason}, "
+                f"and the real-time tier starts at {realtime_from:%Y-%m-%d %H:%M} UTC"
+            )
+        if end - realtime_start >= historical_end - start:
+            result = self._single(query.model_copy(update={"start": realtime_start}), placement.realtime, "realtime")
+            missing = (start, realtime_start)
         else:
-            result = self._single(query.model_copy(update={"end": flushed}), placement.historical, "historical")
-            note = f"no tier holds events after {flushed:%Y-%m-%d %H:%M} UTC yet"
-        result.notes.append(note + "; the answer covers only the rest of the requested range.")
+            result = self._single(query.model_copy(update={"end": historical_end}), placement.historical, "historical")
+            missing = (historical_end, end)
+        result.notes.append(
+            f"no tier holds events from {missing[0]:%Y-%m-%d %H:%M} to {missing[1]:%Y-%m-%d %H:%M} UTC; "
+            "the answer covers the rest of the requested range."
+        )
         return result
 
 

@@ -131,7 +131,7 @@ def test_new_fields_become_optional_columns(table):
     result = run_flush(table, {0: [event(0), newer]})
 
     assert result.new_columns == {
-        "dropped_frames": "long",
+        "dropped_frames": "double",  # numbers become doubles: a later 0.25 must not be truncated
         "cdn_pop": "string",
         "rebuffer_ratio": "double",
         "is_live": "boolean",
@@ -174,3 +174,26 @@ def test_events_that_expired_from_kafka_before_being_flushed_are_reported(table)
 
 def test_a_new_table_starts_from_the_oldest_event_kafka_still_has(table):
     assert run_flush(table, {0: [event(i) for i in range(8)]}, low={0: 5}).events == 3
+
+
+def test_fractional_numbers_are_not_truncated(table):
+    run_flush(table, {0: [event(0, frames_ratio=0)]})  # first seen as a whole number, as JS and Go send 0.0
+    run_flush(table, {0: [event(0, frames_ratio=0), event(1, frames_ratio=0.25)]})
+    assert [r["frames_ratio"] for r in rows(table)] == [0.0, 0.25]
+
+
+def test_a_fractional_number_in_an_integer_column_fails_the_flush(table):
+    with pytest.raises(FlushError, match="field 'request_latency_ms' has a value that doesn't fit int32: 123.9"):
+        run_flush(table, {0: [event(0, request_latency_ms=123.9)]})
+
+
+def test_dotted_field_names_become_columns_of_that_name(table):
+    result = run_flush(table, {0: [event(0, **{"device.os": "ios"})]})
+    assert result.new_columns == {"device.os": "string"}
+    assert rows(table)[0]["device.os"] == "ios"
+
+
+def test_offsets_past_the_end_of_the_topic_are_reported(table):
+    run_flush(table, {0: [event(i) for i in range(5)]})  # next to read: offset 5
+    with pytest.raises(FlushError, match=r"offset 5 is past the end of the topic \(2\); was it recreated"):
+        run_flush(table, {0: [event(i) for i in range(2)]})  # the topic was deleted and recreated

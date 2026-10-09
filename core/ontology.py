@@ -48,6 +48,8 @@ def parse_fragment(sql: str) -> exp.Expression:
         raise ValueError(f"{sql!r} must be a single SQL expression")
 
     [tree] = select.expressions
+    if tree.find(exp.IntDiv):
+        raise ValueError(f"{sql!r} must not use // (integer division): DuckDB truncates it, Trino rounds; write floor(a / b)")
     forbidden = {
         "an alias (AS ...)": exp.Alias,
         "*": exp.Star,

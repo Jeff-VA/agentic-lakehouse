@@ -139,7 +139,7 @@ def test_detect_drift_profiles_the_new_columns(table):
     assert list(profiles) == ["cdn_pop", "dropped_frames", "is_live"]
     assert report.unsupported_columns == ["droppedFrames: config needs lowercase snake_case names"]
     assert (profiles["cdn_pop"].type, profiles["cdn_pop"].top_values) == ("string", [("den-1", 4), ("sea-2", 4)])
-    assert (profiles["dropped_frames"].type, profiles["dropped_frames"].minimum, profiles["dropped_frames"].maximum) == ("long", 2, 9)
+    assert (profiles["dropped_frames"].type, profiles["dropped_frames"].minimum, profiles["dropped_frames"].maximum) == ("double", 2, 9)
     assert profiles["is_live"].top_values == [(False, 4), (True, 4)]  # ties in value order
     assert sample.num_rows == 8  # only rows where a new column is set
 

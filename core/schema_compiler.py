@@ -67,6 +67,9 @@ def pinot_schema(dataset: Dataset) -> dict:
             dimensions.append(spec)
     return {
         "schemaName": dataset.realtime.table,
+        # Store a missing field as NULL, as Iceberg does, rather than a default like 0 that
+        # would skew aggregates. Queries see the NULLs with the enableNullHandling option.
+        "enableColumnBasedNullHandling": True,
         "dimensionFieldSpecs": dimensions,
         "metricFieldSpecs": metrics,
         "dateTimeFieldSpecs": date_times,

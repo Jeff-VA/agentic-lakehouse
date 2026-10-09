@@ -50,7 +50,7 @@ def test_flush_evolves_the_table_and_loads_each_event_once(platform, scratch):
     first = run_flush(platform, dataset, table)
     second = run_flush(platform, dataset, table)
 
-    assert (first.events, first.new_columns) == (len(events), {"dropped_frames_count": "long"})
+    assert (first.events, first.new_columns) == (len(events), {"dropped_frames_count": "double"})
     assert second.events == 0
     [counts] = TrinoEngine(platform.deployment.trino).execute(
         f"SELECT count(*) AS n, count(dropped_frames_count) AS with_frames FROM iceberg.test.{dataset.name}"

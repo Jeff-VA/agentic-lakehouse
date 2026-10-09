@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 import pyarrow as pa
 from confluent_kafka import Consumer, KafkaException, TopicPartition
 from pyiceberg.table import Table
-from pyiceberg.types import BooleanType, DoubleType, IcebergType, LongType, StringType
+from pyiceberg.types import BooleanType, DoubleType, IcebergType, StringType
 
 from core.config import Dataset
 from core.orchestrator import FLUSHED_THROUGH
@@ -71,6 +71,11 @@ def flush(
         position = start.get(str(partition), low)
         if position < low:
             raise FlushError(f"{topic}[{partition}]: offsets {position}-{low - 1} expired from Kafka before being flushed")
+        if position > high:
+            raise FlushError(
+                f"{topic}[{partition}]: offset {position} is past the end of the topic ({high}); was it recreated? "
+                f"To load it from the start, remove the table property {OFFSETS}"
+            )
         ends[partition], positions[partition] = high, position
     consumer.assign([TopicPartition(topic, p, positions[p]) for p in partitions])
 
@@ -139,25 +144,29 @@ def _commit(table: Table, events: list[dict], properties: dict[str, str]) -> dic
         if new_columns:
             with transaction.update_schema() as update:
                 for name, iceberg_type in new_columns.items():
-                    update.add_column(name, iceberg_type, doc="added by the flush: first seen in Kafka events")
+                    # A one-element path: "device.os" is a column of that name, not a nested field.
+                    update.add_column((name,), iceberg_type, doc="added by the flush: first seen in Kafka events")
         if rows is not None:
             transaction.append(rows)
         transaction.set_properties(properties)
     return {name: str(t) for name, t in new_columns.items()}
 
 
-_ARROW = {BooleanType: pa.bool_(), LongType: pa.int64(), DoubleType: pa.float64(), StringType: pa.string()}
+_ARROW = {BooleanType: pa.bool_(), DoubleType: pa.float64(), StringType: pa.string()}
 
 
 def _infer_type(values: list) -> IcebergType | None:
-    """Column type for a new field, from its values; None until a non-null value arrives."""
+    """Column type for a new field, from its values; None until a non-null value arrives.
+
+    Numbers are always doubles: producers in JavaScript or Go send 0.0 as 0, so a
+    field that looks whole in its first batch may carry 0.25 later, and Iceberg
+    can't widen a long column to double afterwards.
+    """
     kinds = {type(v) for v in values if v is not None}
     if not kinds:
         return None
     if kinds == {bool}:
         return BooleanType()
-    if kinds == {int}:
-        return LongType()
     if kinds <= {int, float}:
         return DoubleType()
     return StringType()  # text, or mixed/nested values kept as JSON
@@ -171,6 +180,9 @@ def _to_arrow(events: list[dict], schema: pa.Schema) -> pa.Table:
             values = [None if v is None else _EPOCH + timedelta(milliseconds=v) for v in values]
         elif pa.types.is_string(column.type):
             values = [v if v is None or isinstance(v, str) else json.dumps(v) for v in values]
+        elif pa.types.is_integer(column.type):  # Arrow would silently truncate 123.9 to 123
+            if fractional := next((v for v in values if isinstance(v, float) and not v.is_integer()), None):
+                raise FlushError(f"field '{column.name}' has a value that doesn't fit {column.type}: {fractional}")
         try:
             columns[column.name] = pa.array(values, type=column.type)
         except (pa.ArrowInvalid, pa.ArrowTypeError, TypeError, OverflowError) as e:

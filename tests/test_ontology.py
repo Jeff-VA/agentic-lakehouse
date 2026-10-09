@@ -117,6 +117,7 @@ def test_aggregations_other_than_count_need_sql(raw):
         ("(SELECT MAX(amount) FROM orders)", "must not contain a subquery"),
         ("SUM(amount)", "must not contain an aggregate function"),
         ("ROW_NUMBER() OVER ()", "must not contain a window function"),
+        ("amount // 100", r"must not use // \(integer division\)"),  # truncates on DuckDB, rounds on Trino
     ],
 )
 def test_sql_must_be_one_scalar_expression(raw, sql, match):

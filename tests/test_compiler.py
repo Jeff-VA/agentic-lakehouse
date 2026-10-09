@@ -235,3 +235,33 @@ def test_sample_query_runs_on_duckdb():
         " request_latency_ms INTEGER, stream_start_event BOOLEAN, buffer_duration_ms INTEGER, bitrate_kbps INTEGER)"
     )
     con.execute((GOLDEN / "sample_query.duckdb.sql").read_text())
+
+
+def test_pinot_timestamps_round_up_to_the_millisecond():
+    # Pinot stores epoch milliseconds: for an integer x, x >= 12.0005 ms is x >= 13 ms. Flooring
+    # would count the event at 12 ms on both sides of a tier split.
+    query = MetricQuery.model_validate({"metrics": ["plays"], "start": "2026-01-01T00:00:00.0005", "end": "2026-01-01T01:00:00"})
+    sql = SqlCompiler(ONTOLOGY).compile(query, engine="pinot", table="playback")
+    assert '"ts" >= 1767225600001' in sql and '"ts" < 1767229200000' in sql
+
+
+def test_pinot_quotes_every_identifier():
+    # sqlglot's generic dialect knows no Pinot keywords, so a column named "timestamp" must be quoted.
+    ontology = Ontology.model_validate(
+        {
+            "version": "1",
+            "models": [
+                {
+                    "name": "events",
+                    "description": "d",
+                    "source": "events",
+                    "time_dimension": "timestamp",
+                    "dimensions": [{"name": "timestamp", "type": "timestamp"}, {"name": "value", "type": "string"}],
+                    "metrics": [{"name": "n", "description": "d", "agg": "count", "filters": ["value <> 'x'"]}],
+                }
+            ],
+        }
+    )
+    query = MetricQuery.model_validate({"metrics": ["n"], "dimensions": ["value"], "start": START, "end": END})
+    sql = SqlCompiler(ontology).compile(query, engine="pinot", table="events")
+    assert '"value" AS "value"' in sql and '"timestamp" >= ' in sql and "WHERE \"value\" <> 'x'" in sql

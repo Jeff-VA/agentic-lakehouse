@@ -44,8 +44,13 @@ class Pinot(Dialect):
     """sqlglot dialect for Apache Pinot, which sqlglot doesn't ship.
 
     Pinot's Calcite-based SQL accepts sqlglot's generic output for the scalar
-    expressions ontology fragments contain, so nothing is overridden yet.
+    expressions ontology fragments contain. That output doesn't know Pinot's
+    reserved words (a column named "timestamp" or "value"), so every
+    identifier is quoted.
     """
+
+    def generate(self, expression: exp.Expression, copy: bool = True, **opts) -> str:
+        return super().generate(expression, copy=copy, **{"identify": True, **opts})
 
 
 # The sqlglot dialect that prints ontology fragments and filters for each engine.
@@ -140,7 +145,9 @@ def _environment() -> jinja2.Environment:
         autoescape=False,  # this renders SQL, not HTML; values are already escaped by sqlglot
     )
     env.filters["sql_timestamp"] = lambda ts: ts.replace(tzinfo=None).isoformat(sep=" ")
-    env.filters["epoch_millis"] = lambda ts: (ts - _EPOCH) // timedelta(milliseconds=1)
+    # Rounded up: Pinot holds whole milliseconds, and for an integer x, x >= 12.0005 is x >= 13
+    # (likewise for <). Flooring would put an event at 12 ms on both sides of a tier split.
+    env.filters["epoch_millis"] = lambda ts: -((_EPOCH - ts) // timedelta(milliseconds=1))
     return env
 
 

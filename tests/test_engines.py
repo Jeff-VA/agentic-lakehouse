@@ -5,7 +5,8 @@ import httpx
 import pyarrow as pa
 import pytest
 
-from core.engines import DuckDBEngine, EngineError, PinotEngine
+from core.config import TrinoEndpoint
+from core.engines import DuckDBEngine, EngineError, PinotEngine, TrinoEngine
 
 
 def test_duckdb_returns_arrow():
@@ -49,10 +50,38 @@ def test_pinot_results_get_arrow_types():
     assert table.to_pylist() == [
         {"event_ts": datetime(2026, 10, 6, 1), "isp": "cox", "plays": 7, "rate": 0.5, "mobile": True}
     ]
-    assert requests == [{"sql": "SELECT 1", "queryOptions": "useMultistageEngine=true"}]
+    assert requests == [{"sql": "SELECT 1", "queryOptions": "useMultistageEngine=true;enableNullHandling=true"}]
 
 
 def test_pinot_query_exceptions_become_engine_errors():
     engine = pinot({"exceptions": [{"errorCode": 150, "message": "SQLParsingError: bad"}]})
     with pytest.raises(EngineError, match="pinot: SQLParsingError: bad"):
         engine.execute("SELEC 1")
+
+
+def test_pinot_nan_and_infinity_become_null():
+    # PERCENTILETDIGEST over no rows answers "NaN"; DuckDB and Trino answer NULL.
+    engine = pinot(
+        {
+            "resultTable": {
+                "dataSchema": {"columnNames": ["p99"], "columnDataTypes": ["DOUBLE"]},
+                "rows": [["NaN"], ["Infinity"], ["-Infinity"], [1.5]],
+            },
+            "exceptions": [],
+        }
+    )
+    assert engine.execute("SELECT 1")["p99"].to_pylist() == [None, None, None, 1.5]
+
+
+def test_pinot_values_that_dont_fit_their_type_are_engine_errors():
+    engine = pinot(
+        {"resultTable": {"dataSchema": {"columnNames": ["n"], "columnDataTypes": ["LONG"]}, "rows": [["x"]]}, "exceptions": []}
+    )
+    with pytest.raises(EngineError, match="pinot: column 'n'"):
+        engine.execute("SELECT 1")
+
+
+def test_unreachable_trino_is_an_engine_error():
+    engine = TrinoEngine(TrinoEndpoint(host="127.0.0.1", port=1, user="test", catalog="iceberg"))
+    with pytest.raises(EngineError, match="trino"):
+        engine.execute("SELECT 1")

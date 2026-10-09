@@ -21,6 +21,10 @@ def test_pinot_schema_assigns_columns_by_type():
     }
 
 
+def test_pinot_stores_missing_fields_as_null():
+    assert pinot_schema(DATASET)["enableColumnBasedNullHandling"] is True
+
+
 def test_pinot_table_consumes_the_dataset_topic():
     config = pinot_table_config(DATASET, "kafka:19092")
     [stream] = config["ingestionConfig"]["streamIngestionConfig"]["streamConfigMaps"]

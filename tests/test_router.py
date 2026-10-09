@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pytest
 
-from core.compiler import MetricQuery, SqlCompiler
+import pyarrow as pa
+
+from core.compiler import MetricQuery, QueryError, SqlCompiler
 from core.engines import DuckDBEngine
 from core.router import Placement, Router, Tier
 from test_compiler import ONTOLOGY
@@ -118,4 +120,26 @@ def test_gap_between_tiers_is_reported(flushed):
     assert result.sql.keys() == {"realtime"}
     assert result.start == REALTIME_FROM.replace(tzinfo=UTC)
     assert "no tier holds events" in result.notes[0]
+    assert_matches_all_events(result, q)
+
+
+def test_merged_counts_stay_integers():
+    result = router().run(query(0, 6, metrics=["plays", "total_latency_ms"], dimensions=["isp"]))
+    assert result.sql.keys() == {"historical", "realtime", "merge"}
+    assert pa.types.is_integer(result.table.schema.field("plays").type)  # not a HUGEINT decimal
+    assert all(isinstance(row["plays"], int) for row in result.table.to_pylist())
+
+
+def test_a_range_no_tier_holds_is_a_query_error():
+    # Before the first flush nothing covers ranges older than the real-time tier.
+    with pytest.raises(QueryError, match="no tier holds events from 2026-01-01 00:00 to 2026-01-01 01:00 UTC"):
+        router(flushed=None).run(query(0, 1, metrics=["plays"]))
+
+
+def test_a_gap_is_answered_by_the_tier_holding_more_of_the_range():
+    flushed = REALTIME_FROM - timedelta(minutes=5)  # the flush is 5 minutes behind retention
+    q = MetricQuery.model_validate({"metrics": ["plays"], "start": T0, "end": T0 + timedelta(hours=2, minutes=5)})
+    result = router(flushed=flushed).run(q)
+    assert result.sql.keys() == {"historical"}
+    assert (result.start, result.end) == (q.start, flushed.replace(tzinfo=UTC))
     assert_matches_all_events(result, q)
