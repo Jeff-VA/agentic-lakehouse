@@ -1,23 +1,28 @@
 """Typed contracts for the platform config files that sit beside ontology.yaml.
 
 - ingestion.yaml: datasets arriving on Kafka, their raw schema and Pinot table
-- storage.yaml: the Iceberg table each dataset is kept in long-term
+- storage.yaml: the Iceberg table each dataset is kept in long-term, and the
+  rollups: semantic queries materialized as gold Iceberg tables
+- quality_rules.yaml: checks a rollup's rows must pass before they're published
+  (schema in core/quality.py)
 - deployment.yaml: where the services are reachable
 
-load_platform() loads all four files and checks that they agree with each
+load_platform() loads all five files and checks that they agree with each
 other, e.g. that every column an ontology model reads exists in its source
 dataset. Comparing against the live tables is the drift agent's job.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Self
 
 import yaml
 from pydantic import Field, model_validator
 
-from core.compiler import Engine
-from core.ontology import Identifier, Ontology, StrictModel, index_by_name, load_ontology
+from core.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
+from core.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
+from core.quality import QualityConfig, TableName
 
 ColumnType = Literal["string", "int", "long", "double", "boolean", "timestamp"]
 
@@ -72,17 +77,44 @@ class IcebergTable(StrictModel):
         return self.table.split(".")[0]
 
 
+class RollupQuery(StrictModel):
+    """A MetricQuery without its time range; each run supplies the window."""
+
+    metrics: list[Identifier] = Field(min_length=1)
+    dimensions: list[Identifier] = []
+    grain: Grain
+    filters: list[Filter] = []
+
+
+class Rollup(StrictModel):
+    """A gold Iceberg table holding a semantic query's results (pipelines/rollups.py)."""
+
+    table: TableName
+    description: str = Field(min_length=1)
+    query: RollupQuery
+    lookback_hours: float = Field(gt=0)  # each run recomputes at least this much, so late events are corrected
+    backfill_days: float = Field(gt=0)  # how far back the first run (or one after an outage) starts
+    every_minutes: float = Field(gt=0)
+
+    def with_window(self, start: datetime, end: datetime) -> MetricQuery:
+        return MetricQuery(**self.query.model_dump(), start=start, end=end)
+
+
 class StorageConfig(StrictModel):
     version: str
     tables: list[IcebergTable] = Field(min_length=1)
+    rollups: list[Rollup] = []
 
     @model_validator(mode="after")
-    def _check_one_table_per_dataset(self) -> Self:
+    def _check_unique_tables(self) -> Self:
         seen = set()
         for table in self.tables:
             if table.dataset in seen:
                 raise ValueError(f"storage: dataset '{table.dataset}' has more than one table")
             seen.add(table.dataset)
+        names = [t.table for t in self.tables] + [r.table for r in self.rollups]
+        if repeated := sorted({n for n in names if names.count(n) > 1}):
+            raise ValueError(f"storage: tables defined more than once: {', '.join(repeated)}")
         return self
 
 
@@ -137,6 +169,7 @@ class Platform:
     ontology: Ontology
     ingestion: IngestionConfig
     storage: StorageConfig
+    quality: QualityConfig
     deployment: DeploymentConfig
 
     def dataset(self, name: str) -> Dataset:
@@ -144,6 +177,17 @@ class Platform:
 
     def iceberg_table(self, dataset: str) -> IcebergTable:
         return next(t for t in self.storage.tables if t.dataset == dataset)
+
+    def rollup(self, table: str) -> Rollup:
+        return next(r for r in self.storage.rollups if r.table == table)
+
+    def rollup_model(self, rollup: Rollup) -> SemanticModel:
+        """The ontology model a rollup's metrics come from."""
+        return SqlCompiler(self.ontology).model_for(rollup.with_window(_EPOCH, _EPOCH + timedelta(hours=1)))
+
+    def rollup_columns(self, rollup: Rollup) -> list[str]:
+        """The gold table's columns: time bucket, dimensions, metrics."""
+        return [self.rollup_model(rollup).time_dimension, *rollup.query.dimensions, *rollup.query.metrics]
 
     def table_for(self, dataset: str, engine: Engine) -> str:
         """The relation that holds `dataset` in `engine`, ready to put in a FROM clause."""
@@ -159,8 +203,11 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+_EPOCH = datetime(1970, 1, 1)
+
+
 def load_platform(config_dir: str | Path) -> Platform:
-    """Load and cross-check ontology, ingestion, storage and deployment YAML from `config_dir`.
+    """Load and cross-check the ontology, ingestion, storage, quality and deployment YAML in `config_dir`.
 
     Raises pydantic.ValidationError for a malformed file, ConfigError when files disagree.
     """
@@ -169,6 +216,7 @@ def load_platform(config_dir: str | Path) -> Platform:
         ontology=load_ontology(config_dir / "ontology.yaml"),
         ingestion=IngestionConfig.model_validate(_load_yaml(config_dir / "ingestion.yaml")),
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
+        quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),
         deployment=DeploymentConfig.model_validate(_load_yaml(config_dir / "deployment.yaml")),
     )
     _check_consistency(platform)
@@ -194,5 +242,25 @@ def _check_consistency(platform: Platform) -> None:
                 f"model '{model.name}' reads columns that dataset '{dataset.name}' doesn't have: "
                 + ", ".join(sorted(missing))
             )
+    rollup_columns = {}
+    for rollup in platform.storage.rollups:
+        try:
+            # Compiling checks the query against the ontology, as each run will.
+            query = rollup.with_window(_EPOCH, _EPOCH + timedelta(hours=1))
+            SqlCompiler(platform.ontology).compile(query, engine="trino", table="t")
+            rollup_columns[rollup.table] = set(platform.rollup_columns(rollup))
+        except QueryError as e:
+            problems.append(f"rollup '{rollup.table}': {e}")
+    for rules in platform.quality.rules:
+        if rules.table not in rollup_columns:
+            if rules.table not in {r.table for r in platform.storage.rollups}:
+                problems.append(f"quality rules for '{rules.table}', which isn't a rollup in storage.yaml")
+            continue
+        for check in rules.checks:
+            if missing := check.referenced_columns() - rollup_columns[rules.table]:
+                problems.append(
+                    f"quality check {check.type} on '{rules.table}' reads columns the rollup doesn't have: "
+                    + ", ".join(sorted(missing))
+                )
     if problems:
         raise ConfigError("config files disagree:\n  - " + "\n  - ".join(problems))

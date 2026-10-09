@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pyarrow as pa
 
-from core.compiler import Grain, MetricQuery, QueryError, SqlCompiler
+from core.compiler import MetricQuery, QueryError, SqlCompiler, bucket_start
 from core.config import Platform
 from core.engines import PinotEngine, QueryEngine, TrinoEngine
 from core.orchestrator import flushed_through
@@ -96,7 +96,7 @@ class Router:
         if flushed is None or flushed < realtime_from:
             return self._with_gap(query, placement, realtime_from, flushed)
 
-        if query.grain and (boundary := _floor(flushed, query.grain)) >= realtime_from:
+        if query.grain and (boundary := bucket_start(flushed, query.grain)) >= realtime_from:
             return self._split(query, placement, boundary, partial=False)
         if not (unmergeable := self.compiler.unmergeable_metrics(query)):
             return self._split(query, placement, flushed, partial=True)
@@ -150,17 +150,3 @@ class Router:
 
 def _utc(ts: datetime) -> datetime:
     return ts.astimezone(UTC) if ts.tzinfo else ts.replace(tzinfo=UTC)
-
-
-def _floor(ts: datetime, grain: Grain) -> datetime:
-    """Start of the `grain` bucket containing ts, matching date_trunc (weeks start on Monday)."""
-    if grain == "minute":
-        return ts.replace(second=0, microsecond=0)
-    if grain == "hour":
-        return ts.replace(minute=0, second=0, microsecond=0)
-    day = ts.replace(hour=0, minute=0, second=0, microsecond=0)
-    if grain == "day":
-        return day
-    if grain == "week":
-        return day - timedelta(days=day.weekday())
-    return day.replace(day=1)

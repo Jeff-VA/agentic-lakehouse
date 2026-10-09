@@ -3,6 +3,7 @@
     python run.py setup                 create topics and tables from config/
     python run.py seed --hours 24       publish synthetic telemetry to Kafka (Pinot ingests it)
     python run.py flush [--serve]       move new events from Kafka into Iceberg (once, or on schedule)
+    python run.py rollups [--serve]     refresh the gold rollup tables, behind their quality gates
     python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
     python run.py reset --yes           delete all topics, tables and data, then run setup
     python run.py serve                 REST API and MCP (HTTP) on http://127.0.0.1:8000
@@ -37,6 +38,8 @@ def main() -> None:
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
     flush = commands.add_parser("flush", help="move new events from Kafka into Iceberg (a Prefect flow)")
     flush.add_argument("--serve", action="store_true", help="keep running, flushing on the configured schedule")
+    rollups = commands.add_parser("rollups", help="refresh the gold rollup tables, behind their quality gates")
+    rollups.add_argument("--serve", action="store_true", help="keep running on the configured schedule")
     drift = commands.add_parser("drift", help="find new event fields and have Claude propose config patches")
     drift.add_argument("--serve", action="store_true", help="keep running, checking every hour")
     serve = commands.add_parser("serve", help="run the REST API, with MCP at /mcp")
@@ -70,6 +73,15 @@ def main() -> None:
             flush_all.serve(name="flush", interval=timedelta(minutes=every), parameters={"config_dir": args.config})
         else:
             flush_all(config_dir=args.config)
+    elif args.command == "rollups":
+        os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
+        from pipelines.rollups import refresh_rollups  # after PREFECT_API_URL is set
+
+        if args.serve:
+            every = min(r.every_minutes for r in platform.storage.rollups)
+            refresh_rollups.serve(name="rollups", interval=timedelta(minutes=every), parameters={"config_dir": args.config})
+        else:
+            refresh_rollups(config_dir=args.config)
     elif args.command == "drift":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
         from pipelines.drift import drift_check  # after PREFECT_API_URL is set

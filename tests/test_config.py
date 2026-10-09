@@ -55,3 +55,27 @@ def test_time_column_must_be_a_timestamp(config_dir):
     edit(config_dir / "ingestion.yaml", lambda d: d["datasets"][0].update(time_column="session_id"))
     with pytest.raises(ValidationError, match="time_column 'session_id' must be a timestamp column"):
         load_platform(config_dir)
+
+
+def test_rollup_queries_are_checked_against_the_ontology(config_dir):
+    edit(config_dir / "storage.yaml", lambda d: d["rollups"][0]["query"].update(metrics=["p99_ttfbb"]))
+    with pytest.raises(ConfigError, match="rollup 'gold.hourly_isp_quality': unknown metrics: p99_ttfbb"):
+        load_platform(config_dir)
+
+
+def test_quality_rules_must_name_a_rollup(config_dir):
+    edit(config_dir / "quality_rules.yaml", lambda d: d["rules"][0].update(table="gold.nowhere"))
+    with pytest.raises(ConfigError, match="quality rules for 'gold.nowhere', which isn't a rollup"):
+        load_platform(config_dir)
+
+
+def test_quality_checks_must_read_the_rollups_columns(config_dir):
+    edit(config_dir / "quality_rules.yaml", lambda d: d["rules"][0]["checks"].append({"type": "not_null", "columns": ["client_isp"]}))
+    with pytest.raises(ConfigError, match="not_null on 'gold.hourly_isp_quality' reads columns the rollup doesn't have: client_isp"):
+        load_platform(config_dir)
+
+
+def test_a_rollup_cannot_reuse_a_table_name(config_dir):
+    edit(config_dir / "storage.yaml", lambda d: d["rollups"][0].update(table="raw.telemetry"))
+    with pytest.raises(ValidationError, match="tables defined more than once: raw.telemetry"):
+        load_platform(config_dir)

@@ -9,3 +9,29 @@ tables:
     partition_by: day     # Iceberg transform on the dataset's time column: hour, day or month
     flush_every_minutes: 5
     allowed_lateness_minutes: 2  # events arriving later than this miss the watermark (see core/flush.py)
+
+# Rollups: semantic queries kept as gold Iceberg tables for dashboards and
+# alerting (pipelines/rollups.py). Each run recomputes the window from where the
+# last run stopped (at least lookback_hours back), up to the last complete time
+# bucket before the flush watermark, and replaces it in one Iceberg commit after
+# the rows pass their checks in quality_rules.yaml.
+rollups:
+  - table: gold.hourly_isp_quality
+    description: Hourly playback quality per ISP.
+    query:
+      metrics: [event_count, unique_sessions, rebuffer_incidence_rate, p99_ttfb, avg_bitrate_kbps]
+      dimensions: [isp_provider]
+      grain: hour
+    lookback_hours: 6
+    backfill_days: 14
+    every_minutes: 15
+
+  - table: gold.daily_device_quality
+    description: Daily playback quality for mobile versus other devices.
+    query:
+      metrics: [event_count, unique_sessions, rebuffer_incidence_rate, avg_bitrate_kbps]
+      dimensions: [is_mobile_device]
+      grain: day
+    lookback_hours: 48
+    backfill_days: 90
+    every_minutes: 60

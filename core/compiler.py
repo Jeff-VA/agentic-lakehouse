@@ -52,6 +52,20 @@ class Pinot(Dialect):
 SQLGLOT_DIALECTS: dict[Engine, str | type[Dialect]] = {"duckdb": "duckdb", "trino": "trino", "pinot": Pinot}
 
 
+def bucket_start(ts: datetime, grain: Grain) -> datetime:
+    """Start of the `grain` bucket containing ts, matching date_trunc (weeks start on Monday)."""
+    if grain == "minute":
+        return ts.replace(second=0, microsecond=0)
+    if grain == "hour":
+        return ts.replace(minute=0, second=0, microsecond=0)
+    day = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    if grain == "day":
+        return day
+    if grain == "week":
+        return day - timedelta(days=day.weekday())
+    return day.replace(day=1)
+
+
 class QueryError(ValueError):
     """The query asks for something its ontology doesn't define."""
 
