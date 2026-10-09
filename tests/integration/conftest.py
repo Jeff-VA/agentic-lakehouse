@@ -9,7 +9,7 @@ Test modules here set `pytestmark = pytest.mark.integration`; run them with
 """
 
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -17,7 +17,8 @@ import pytest
 
 from core.config import load_platform
 from core.engines import DuckDBEngine, PinotEngine, TrinoEngine
-from core.orchestrator import iceberg_catalog
+from core.compiler import bucket_start
+from core.orchestrator import flushed_through, iceberg_catalog
 
 ROOT = Path(__file__).parents[2]
 
@@ -49,21 +50,31 @@ def engines(platform):
 
 @pytest.fixture(scope="session")
 def window(platform, engines):
-    """The hour-aligned range holding the seeded batch, once Pinot has ingested all of it."""
+    """An hour-aligned range that both tiers hold completely: from the first
+    flushed event up to the flush watermark (a live stream may run past it),
+    once Pinot has ingested the same events."""
+    flushed = flushed_through(platform, "telemetry")
+    if flushed is None:
+        pytest.skip("nothing flushed yet; run: python run.py seed && python run.py flush")
+    end = bucket_start(flushed, "hour")
     trino_table = platform.table_for("telemetry", "trino")
-    [stats] = engines["trino"].execute(
-        f"SELECT count(*) AS n, min(event_ts) AS first, max(event_ts) AS last FROM {trino_table}"
-    ).to_pylist()
-    if not stats["n"]:
-        pytest.skip("the Iceberg table is empty; run: python run.py seed && python run.py flush")
-    pinot_table = platform.table_for("telemetry", "pinot")
+    [first] = engines["trino"].execute(f"SELECT min(event_ts) AS t FROM {trino_table}").to_pylist()
+    start = bucket_start(first["t"], "hour")
+    if start >= end:
+        pytest.skip("less than an hour of flushed events; run: python run.py seed && python run.py flush")
+
+    def count(engine: str, table: str, low: str, high: str) -> int:
+        sql = f"SELECT COUNT(*) AS n FROM {table} WHERE event_ts >= {low} AND event_ts < {high}"
+        return engines[engine].execute(sql)["n"][0].as_py()
+
+    iceberg_rows = count("trino", trino_table, f"TIMESTAMP '{start}'", f"TIMESTAMP '{end}'")
+    millis = [str((t - datetime(1970, 1, 1)) // timedelta(milliseconds=1)) for t in (start, end)]
     deadline = time.monotonic() + 30  # Pinot may still be consuming from Kafka
-    while (pinot_rows := engines["pinot"].execute(f"SELECT COUNT(*) AS n FROM {pinot_table}")["n"][0].as_py()) != stats["n"]:
+    while (pinot_rows := count("pinot", platform.table_for("telemetry", "pinot"), *millis)) != iceberg_rows:
         if time.monotonic() > deadline:
             pytest.fail(
-                f"Pinot holds {pinot_rows} events but Iceberg holds {stats['n']}; "
+                f"between {start} and {end} Pinot holds {pinot_rows} events but Iceberg holds {iceberg_rows}; "
                 "reload both: python run.py reset --yes && python run.py seed && python run.py flush"
             )
         time.sleep(1)
-    start = stats["first"].replace(minute=0, second=0, microsecond=0)
-    return {"start": start, "end": stats["last"].replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)}
+    return {"start": start, "end": end}

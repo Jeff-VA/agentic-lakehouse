@@ -2,6 +2,7 @@
 
     python run.py setup                 create topics and tables from config/
     python run.py seed --hours 24       publish synthetic telemetry to Kafka (Pinot ingests it)
+    python run.py stream                publish live synthetic telemetry until stopped (Ctrl-C)
     python run.py flush [--serve]       move new events from Kafka into Iceberg (once, or on schedule)
     python run.py rollups [--serve]     refresh the gold rollup tables, behind their quality gates
     python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
@@ -14,15 +15,20 @@ Start the containers first: docker compose -f docker/docker-compose.yml up -d
 
 import argparse
 import os
+import time
 from datetime import UTC, datetime, timedelta
 
 from dotenv import load_dotenv
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
 from core.config import load_platform
-from core.events import generate_events
-from core.orchestrator import publish_events, setup, teardown
+from core.events import LiveSource, generate_events
+from core.orchestrator import EventPublisher, publish_events, setup, teardown
 from core.router import Router
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def main() -> None:
@@ -34,6 +40,9 @@ def main() -> None:
     seed.add_argument("--hours", type=float, default=24, help="length of the window ending at the current hour")
     seed.add_argument("--sessions-per-minute", type=float, default=6)
     seed.add_argument("--seed", type=int, default=0, help="random seed; the same seed and window give the same events")
+    stream = commands.add_parser("stream", help="publish live synthetic telemetry until stopped")
+    stream.add_argument("--sessions-per-minute", type=float, default=6)
+    stream.add_argument("--every", type=float, default=5, help="seconds between batches")
     reset = commands.add_parser("reset", help="delete all topics, tables and data, then recreate them empty")
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
     flush = commands.add_parser("flush", help="move new events from Kafka into Iceberg (a Prefect flow)")
@@ -58,12 +67,26 @@ def main() -> None:
         teardown(platform)
         setup(platform)
     elif args.command == "seed":
-        end = datetime.now(UTC).replace(tzinfo=None, minute=0, second=0, microsecond=0)
+        end = utc_now().replace(minute=0, second=0, microsecond=0)
         start = end - timedelta(hours=args.hours)
         dataset = platform.dataset("telemetry")
         events = generate_events(start, end, sessions_per_minute=args.sessions_per_minute, seed=args.seed)
         print(f"generated {len(events)} events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC")
         publish_events(platform, dataset, events)
+    elif args.command == "stream":
+        source = LiveSource(utc_now(), sessions_per_minute=args.sessions_per_minute)
+        publisher = EventPublisher(platform, platform.dataset("telemetry"))
+        published = 0
+        print(f"streaming live telemetry to {publisher.topic}, ~{args.sessions_per_minute:g} new sessions a minute; Ctrl-C stops")
+        try:
+            while True:
+                time.sleep(args.every)
+                events = source.poll(utc_now())
+                publisher.publish(events)
+                published += len(events)
+        except KeyboardInterrupt:
+            publisher.flush()
+            print(f"stopped after {published} events")
     elif args.command == "flush":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
         from pipelines.flush import flush_all  # after PREFECT_API_URL is set

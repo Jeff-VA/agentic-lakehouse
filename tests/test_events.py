@@ -1,12 +1,12 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
 
 import pyarrow as pa
 
 from core.config import load_platform
-from core.events import ISPS, generate_events
+from core.events import ISPS, LiveSource, generate_events
 from core.schema_compiler import arrow_schema
 
 START, END = datetime(2026, 1, 1), datetime(2026, 1, 1, 2)
@@ -43,3 +43,27 @@ def test_cox_rebuffers_most():
         return mean(e["buffer_duration_ms"] > 200 for e in EVENTS if e["client_isp"] == isp)
 
     assert max(ISPS, key=rebuffer_rate) == "cox"
+
+
+def test_live_source_streams_sessions_across_polls():
+    source = LiveSource(START, sessions_per_minute=6, seed=1)
+    ticks = [START + timedelta(seconds=5 * i) for i in range(1, 12 * 60 + 1)]  # an hour of polls, 5 s apart
+    polls = [source.poll(tick) for tick in ticks]
+
+    for previous, tick, batch in zip([START, *ticks], ticks, polls):
+        times = [e["event_ts"] for e in batch]
+        assert times == sorted(times) and all(previous <= t < tick for t in times)
+    polls_per_session = defaultdict(set)
+    first_event = {}
+    for i, batch in enumerate(polls):
+        for event in batch:
+            polls_per_session[event["session_id"]].add(i)
+            first_event.setdefault(event["session_id"], event["stream_start_event"])
+    assert 300 < len(first_event) < 420  # ~6 new sessions a minute
+    assert all(first_event.values())  # every session opens with its stream start
+    assert mean(len(p) > 1 for p in polls_per_session.values()) > 0.5  # sessions outlive a poll
+
+
+def test_live_source_returns_nothing_until_time_passes():
+    source = LiveSource(START, seed=1)
+    assert source.poll(START) == []

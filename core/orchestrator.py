@@ -149,23 +149,38 @@ def flushed_through(platform: Platform, dataset: str) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-def publish_events(platform: Platform, dataset: Dataset, events: list[dict], log: Log = print) -> None:
-    """Publish events to the dataset's Kafka topic as JSON, timestamps in epoch
+class EventPublisher:
+    """Publishes events to a dataset's Kafka topic as JSON, timestamps in epoch
     milliseconds. Pinot ingests them right away; the flush (core/flush.py)
     moves them into Iceberg."""
-    producer = Producer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "linger.ms": 50})
-    for event in events:
-        message = {
-            key: (value - _EPOCH) // timedelta(milliseconds=1) if isinstance(value, datetime) else value
-            for key, value in event.items()
-        }
-        while True:
-            try:
-                producer.produce(dataset.topic, json.dumps(message).encode())
-                break
-            except BufferError:  # local queue full: let deliveries drain, then retry
-                producer.poll(0.5)
-        producer.poll(0)
-    if undelivered := producer.flush(30):
-        raise RuntimeError(f"kafka: {undelivered} events not delivered to {dataset.topic}")
+
+    def __init__(self, platform: Platform, dataset: Dataset):
+        self.topic = dataset.topic
+        self.producer = Producer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "linger.ms": 50})
+
+    def publish(self, events: list[dict]) -> None:
+        for event in events:
+            message = {
+                key: (value - _EPOCH) // timedelta(milliseconds=1) if isinstance(value, datetime) else value
+                for key, value in event.items()
+            }
+            while True:
+                try:
+                    self.producer.produce(self.topic, json.dumps(message).encode())
+                    break
+                except BufferError:  # local queue full: let deliveries drain, then retry
+                    self.producer.poll(0.5)
+            self.producer.poll(0)
+
+    def flush(self, timeout: float = 30) -> None:
+        """Wait for every published event to be delivered."""
+        if undelivered := self.producer.flush(timeout):
+            raise RuntimeError(f"kafka: {undelivered} events not delivered to {self.topic}")
+
+
+def publish_events(platform: Platform, dataset: Dataset, events: list[dict], log: Log = print) -> None:
+    """Publish `events` to the dataset's Kafka topic and wait until they're delivered."""
+    publisher = EventPublisher(platform, dataset)
+    publisher.publish(events)
+    publisher.flush()
     log(f"kafka: published {len(events)} events to {dataset.topic}")
