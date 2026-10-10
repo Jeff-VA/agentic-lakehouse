@@ -17,13 +17,18 @@ Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
        for several views over one connection (core/live.py)
 Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one);
        they draw views with the chart tags in /male.js (core/static/male.js)
-MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
+MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`. Given the project
+       (Project), it also checks and screenshots dashboards for the agent
+       building them, and open pages reload when a view or dashboard file changes.
 """
 
+import asyncio
 import contextlib
 import html
+import logging
 import math
 import re
+import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from urllib.parse import parse_qsl
 from dataclasses import dataclass
@@ -37,13 +42,16 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp_types import ToolAnnotations
+from mcp.server.mcpserver.utilities.types import Image
+from mcp_types import TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 from pyiceberg.exceptions import NoSuchTableError
 
 from core.agent_sync import pending_proposals, unmodeled_columns
+from core.browser import BrowserError, Capture, capture, serving
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
-from core.config import Platform
+from core.config import ConfigError, Platform, load_platform
+from core.dashboards import check_dashboards, dashboard_files, describe_dashboard
 from core.engines import EngineError, QueryEngine, TrinoEngine
 from core.live import LiveViews
 from core.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
@@ -53,8 +61,10 @@ from core.router import QueryResult, Router
 from core.views import ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
-DASHBOARD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 STATIC = Path(__file__).parent / "static"  # male.js, the chart tags dashboards use
+BOOT = uuid.uuid4().hex  # this server process: a page that sees another one reloads
+
+log = logging.getLogger(__name__)
 
 
 class DimensionInfo(BaseModel):
@@ -198,6 +208,67 @@ class ViewResult(BaseModel):
     truncated: bool  # more rows matched than were returned
     computed_at: datetime
     sql: dict[str, str] | None = None  # what each engine ran, when requested
+
+
+class DashboardInfo(BaseModel):
+    name: str
+    title: str
+    url: str  # path on the gateway, e.g. /d/playback
+    views: list[str]  # the views its tags draw
+    problems: list[str]  # "file:line: <tag> what's wrong"
+
+
+class ProjectCheck(BaseModel):
+    config_error: str | None  # the config or a view doesn't load; until it does, nothing else is checked
+    views: list[str]
+    dashboards: list[DashboardInfo]
+
+    @property
+    def ok(self) -> bool:
+        return self.config_error is None and not any(d.problems for d in self.dashboards)
+
+
+@dataclass
+class Project:
+    """The project's config folder, read afresh on every call: an agent edits views and
+    dashboards while the server runs. `gateway` builds the gateway a screenshot renders
+    against (by default Gateway.from_platform, the real stack)."""
+
+    config_dir: Path
+    gateway: Callable[[Platform], "Gateway"] | None = None
+
+    @property
+    def dashboards_dir(self) -> Path:
+        return self.config_dir / "dashboards"
+
+    def check(self) -> ProjectCheck:
+        """The config and views load, and every dashboard's tags fit the views they draw."""
+        files = dashboard_files(self.dashboards_dir)
+
+        def info(name: str, path: Path, problems: list[str]) -> DashboardInfo:
+            title, views = describe_dashboard(path)
+            return DashboardInfo(name=name, title=title, url=f"/d/{name}", views=views, problems=problems)
+
+        try:
+            platform = load_platform(self.config_dir)
+        except (ConfigError, ValidationError, OSError) as e:
+            return ProjectCheck(config_error=str(e), views=[], dashboards=[info(n, p, []) for n, p in files.items()])
+        datasets = [d.name for d in platform.ingestion.datasets]
+        problems = check_dashboards(self.dashboards_dir, platform.views, datasets)
+        dashboards = [
+            info(name, path, [str(p) for p in problems if p.file == f"{path.parent.name}/{path.name}"]) for name, path in files.items()
+        ]
+        return ProjectCheck(config_error=None, views=list(platform.views), dashboards=dashboards)
+
+    def screenshot(self, name: str, *, theme: str = "light", width: int = 1280, timeout: float = 30) -> Capture:
+        """Dashboard `name` in headless Chrome, served from the files as they are now. Raises KeyError
+        for an unknown dashboard, ConfigError if the config doesn't load, BrowserError."""
+        platform = load_platform(self.config_dir)
+        if name not in dashboard_files(self.dashboards_dir):
+            raise KeyError(name)
+        gateway = (self.gateway or Gateway.from_platform)(platform)
+        with serving(create_app(gateway, dashboards_dir=self.dashboards_dir)) as url:
+            return capture(f"{url}/d/{name}", theme=theme, width=width, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -507,7 +578,46 @@ def _calculation(metric: Metric, model: SemanticModel) -> str:
     return text
 
 
-def create_mcp_server(gateway: Gateway) -> MCPServer:
+def _male_reference() -> str:
+    """The tag reference at the top of male.js, for agents writing dashboards."""
+    text = (STATIC / "male.js").read_text()
+    comment = text[text.index("/*") + 2 : text.index("*/")]
+    return "\n".join(line.removeprefix(" *").removeprefix(" ") for line in comment.splitlines()).strip()
+
+
+DASHBOARD_GUIDE = """Goal: {goal}
+
+You build dashboards for this lakehouse as files in the project's config folder ({config_dir}):
+views in views/<name>.sql, pages in dashboards/<name>.html. Work in small steps:
+
+1. Find the data: list_metrics shows the ontology's metrics and dimensions; list_views shows the
+   views that already exist, with their parameters, columns and SQL. Reuse one if it fits.
+2. Write a view per question. Start the file with a YAML comment, then one SELECT:
+     /*
+     description: What it answers, for people and agents.
+     params:
+       hours: {{type: int, default: 24, min: 1, max: 720}}
+     */
+     SELECT date_trunc('hour', event_ts) AS hour, isp_provider, p99_ttfb
+     FROM playback_telemetry
+     WHERE event_ts >= now() - INTERVAL :hours HOUR
+   FROM a model, select its metrics and dimensions by name (never re-derive a metric), group by
+   time with date_trunc, and bound the time dimension with >= and <: it runs live across both
+   tiers. FROM a table (namespace.table, e.g. a gold rollup), write any Trino SELECT.
+   query_view runs a view so you can see its rows.
+3. Write the page in plain HTML with the chart tags below. Names are enough: labels and number
+   formats come from the ontology. Keep the page small and readable.
+4. check_dashboards after every edit, and fix what it reports.
+5. screenshot_dashboard to see the page as people will, with the problems it shows. Look at it
+   critically: titles, empty charts, crowded labels. Iterate until it reads well.
+
+Chart tags (male.js):
+
+{reference}
+"""
+
+
+def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPServer:
     mcp = MCPServer(
         "lakehouse-metrics",
         instructions=(
@@ -542,6 +652,9 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
             return gateway.view(name, params or {}, include_sql)
         except (ViewError, QueryError, EngineError) as e:
             raise ToolError(str(e)) from e
+
+    if project is not None:
+        _add_project_tools(mcp, project, read_only)
 
     @mcp.tool(annotations=read_only)
     def list_metrics() -> Catalog:
@@ -591,25 +704,99 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
     return mcp
 
 
-def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live: LiveViews | None = None) -> FastAPI:
+def _add_project_tools(mcp: MCPServer, project: Project, read_only: ToolAnnotations) -> None:
+    """Tools and a prompt for the agent building dashboards: they read the files as they are now."""
+
+    @mcp.tool(annotations=read_only)
+    def check_dashboards() -> ProjectCheck:
+        """Check the project as it is on disk now: the config and every view load, and each dashboard's
+        tags name views, columns and parameters that exist. Run it after every edit to a view or page."""
+        return project.check()
+
+    @mcp.tool(annotations=read_only)
+    async def screenshot_dashboard(
+        name: Annotated[str, Field(description="The dashboard's name: its file name without .html")],
+        theme: Annotated[Literal["light", "dark"], Field(description="Color scheme to render in")] = "light",
+        width: Annotated[int, Field(ge=320, le=2400, description="Viewport width in CSS pixels; 400 for a phone")] = 1280,
+    ) -> list[TextContent | Image]:
+        """Open a dashboard in headless Chrome, as it is on disk now and with live data, wait until every
+        chart has drawn, and return a screenshot with the problems the page shows."""
+        try:
+            shot = await asyncio.to_thread(project.screenshot, name, theme=theme, width=width)
+        except KeyError:
+            names = ", ".join(dashboard_files(project.dashboards_dir)) or "none"
+            raise ToolError(f"no dashboard named '{name}'. Dashboards: {names}") from None
+        except (ConfigError, ValidationError, BrowserError) as e:
+            raise ToolError(str(e)) from e
+        static = next((d.problems for d in project.check().dashboards if d.name == name), [])
+        lines = [f"Dashboard {name} (/d/{name}), {theme}, {width} px wide."]
+        lines.append("Every tag drew its data or an error." if shot.settled else "Captured at the time limit: some tags were still loading.")
+        for title, items in (("Problems the page shows", shot.problems), ("Problems in the file", static), ("Notes about the data", shot.notes)):
+            lines.append(f"{title}: " + ("none" if not items else "\n- " + "\n- ".join(items)))
+        return [TextContent(type="text", text="\n".join(lines)), Image(data=shot.png, format="png")]
+
+    @mcp.prompt()
+    def build_dashboard(goal: str) -> str:
+        """Build or change a dashboard: views in SQL, a page in HTML with live chart tags, checked and
+        looked at until it reads well."""
+        return DASHBOARD_GUIDE.format(goal=goal, config_dir=project.config_dir, reference=_male_reference())
+
+
+async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, interval: float = 1.0) -> None:
+    """Reload the views when a view file changes, and open pages when a view or dashboard does.
+    An edit that breaks a view keeps the last good views, and pages say what broke."""
+
+    def stamps() -> dict[str, int]:
+        found = {}
+        for path in [*project.config_dir.glob("views/*.sql"), *project.dashboards_dir.glob("*.html")]:
+            with contextlib.suppress(OSError):  # deleted while listing
+                found[str(path)] = path.stat().st_mtime_ns
+        return found
+
+    last = await asyncio.to_thread(stamps)
+    while True:
+        await asyncio.sleep(interval)
+        current = await asyncio.to_thread(stamps)
+        if current == last:
+            continue
+        views_changed = any(path.endswith(".sql") for path in current.keys() ^ last.keys() | {p for p in current if current[p] != last.get(p)})
+        last = current
+        if views_changed:
+            try:
+                platform = await asyncio.to_thread(load_platform, project.config_dir)
+            except (ConfigError, ValidationError, OSError) as e:
+                log.warning("not reloading the views: %s", e)
+                live.announce("problem", {"detail": str(e)})
+                continue
+            gateway.views = dict(platform.views)
+            live.restart()
+        live.announce("reload", {})
+
+
+def create_app(
+    gateway: Gateway,
+    dashboards_dir: str | Path | None = None,
+    live: LiveViews | None = None,
+    project: Project | None = None,
+) -> FastAPI:
     """REST endpoints, live views, the MCP server (Streamable HTTP) at /mcp, and
-    the HTML dashboards in `dashboards_dir` (the project's config/dashboards)."""
+    the HTML dashboards in `dashboards_dir` (the project's config/dashboards).
+    With a `project`, MCP gets the tools for building dashboards, and open pages
+    reload when its view or dashboard files change."""
     dashboards = Path(dashboards_dir) if dashboards_dir else None
     live = live or LiveViews(gateway)
-
-    def dashboard_files() -> dict[str, Path]:
-        if dashboards is None or not dashboards.is_dir():
-            return {}
-        return {p.stem: p for p in sorted(dashboards.glob("*.html")) if DASHBOARD_NAME.match(p.stem)}
-    mcp = create_mcp_server(gateway)
+    mcp = create_mcp_server(gateway, project)
     mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         async with mcp.session_manager.run():  # mounted apps don't get their own lifespan run
+            watcher = asyncio.create_task(_watch_project(project, gateway, live)) if project else None
             try:
                 yield
             finally:
+                if watcher:
+                    watcher.cancel()
                 live.close()
 
     app = FastAPI(
@@ -667,9 +854,7 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live:
             yield event
 
     def subscriptions(request: Request) -> list[tuple[str, str, dict[str, Any]]]:
-        requested = request.query_params.getlist("view")
-        if not requested:
-            raise HTTPException(status_code=400, detail="name the views to watch: /live?view=<name>&view=<name>?<param>=<value>")
+        requested = request.query_params.getlist("view")  # none: only the news about the project
         subscribed = []
         for key in dict.fromkeys(requested):  # each once, in order
             name, _, query = key.partition("?")
@@ -685,8 +870,14 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live:
         """Server-Sent Events for several views over one connection, as a dashboard needs: each
         `view` is a name, with its parameters after a ?, URL-encoded (isp_hourly%3Fhours%3D24).
         Events are `result` ({subscription, result}) and `error` ({subscription, detail}), where
-        `subscription` is the `view` value as requested."""
+        `subscription` is the `view` value as requested; and, for every page, `hello` ({boot}) first,
+        then `reload` when a view or dashboard file changed, or `problem` ({detail}) when an edit
+        broke a view."""
+        yield ServerSentEvent(event="hello", data={"boot": BOOT})
         async for key, event in live.watch(subscribed):
+            if not key:  # news for every page
+                yield event
+                continue
             body = {"result": event.data} if event.event == "result" else event.data
             yield ServerSentEvent(event=event.event, data={"subscription": key, **body})
 
@@ -703,7 +894,7 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live:
 
     @app.get("/", include_in_schema=False, response_model=None)
     def home() -> FileResponse | HTMLResponse:
-        files = dashboard_files()
+        files = dashboard_files(dashboards)
         if len(files) == 1:
             return FileResponse(next(iter(files.values())), media_type="text/html")
         items = "".join(f'<li><a href="/d/{html.escape(name)}">{html.escape(name)}</a></li>' for name in files)
@@ -720,7 +911,7 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live:
 
     @app.get("/d/{name}", include_in_schema=False)
     def dashboard(name: str) -> FileResponse:
-        path = dashboard_files().get(name)
+        path = dashboard_files(dashboards).get(name)
         if path is None:
             raise HTTPException(status_code=404, detail=f"no dashboard named '{name}'")
         return FileResponse(path, media_type="text/html")

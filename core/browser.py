@@ -9,16 +9,21 @@ use it, and so does the MCP tool that lets an agent look at what it built.
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+import uvicorn
 import websockets
 
 CANDIDATES = [
@@ -56,6 +61,27 @@ class Capture:
     notes: list[str] = field(default_factory=list)  # caveats about the data, by tag
     settled: bool = True  # False: the page was captured at the timeout, still loading
     value: object = None  # what `script` returned
+
+
+@contextlib.contextmanager
+def serving(app):
+    """An ASGI app on a local HTTP server for as long as the block runs; yields its base URL."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        if time.monotonic() > deadline or not thread.is_alive():
+            raise BrowserError("the local server didn't start")
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
 
 
 def find_chrome() -> str | None:

@@ -260,13 +260,16 @@ def test_a_dashboard_watches_its_views_over_one_connection(server):
     with httpx.Client(base_url=server, timeout=10) as client:
         params = [("view", "plays_by_isp"), ("view", "hourly?min_plays=7")]
         with client.stream("GET", "/live", params=params) as response:
-            events = {data["subscription"]: (event, data) for event, data in read_events(response, 2)}
+            hello, *results = read_events(response, 3)
+        assert hello[0] == "hello" and len(hello[1]["boot"]) == 32  # pages reload when this changes
+        events = {data["subscription"]: (event, data) for event, data in results}
         assert events.keys() == {"plays_by_isp", "hourly?min_plays=7"}
         event, data = events["hourly?min_plays=7"]
         assert event == "result"
         assert data["result"]["rows"] == client.get("/views/hourly", params={"min_plays": 7}).json()["rows"]
+        with client.stream("GET", "/live") as response:  # no views: only news about the project
+            assert read_events(response, 1)[0][0] == "hello"
         for params, status, detail in [
-            ([], 400, "name the views to watch"),
             ([("view", "nope")], 404, "no view named 'nope'"),
             ([("view", "hourly?min_plays=lots")], 400, "parameter 'min_plays' must be a whole number"),
         ]:

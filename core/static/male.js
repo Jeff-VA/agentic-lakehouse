@@ -359,12 +359,18 @@ class Live {
 
   connect() {
     this.source?.close();
-    this.source = null;
+    // With no views to watch, the stream still brings news about the project (reload, problem).
     const keys = [...this.subs.keys()].filter(key => !this.subs.get(key).invalid);
-    if (!keys.length) return this.setState(this.subs.size ? "offline" : "idle");
     const source = new EventSource(`/live?${keys.map(key => `view=${encodeURIComponent(key)}`).join("&")}`);
     this.source = source;
     source.onopen = () => this.setState("live");
+    source.addEventListener("hello", event => {
+      const { boot } = JSON.parse(event.data);
+      if (this.boot && this.boot !== boot) location.reload();  // a new server: its views and pages may have changed
+      this.boot = boot;
+    });
+    source.addEventListener("reload", () => location.reload());  // a view or dashboard file changed
+    source.addEventListener("problem", event => banner(JSON.parse(event.data).detail));
     source.addEventListener("result", event => this.receive(JSON.parse(event.data), "result"));
     source.addEventListener("error", event => {
       if (event.data) return this.receive(JSON.parse(event.data), "error");  // a view failed to refresh
@@ -408,6 +414,17 @@ class Live {
   }
 }
 const live = new Live();
+
+function banner(detail) {
+  // An edit broke a view: the page keeps the last good version and says what to fix.
+  let box = document.getElementById("male-banner");
+  if (!box) {
+    box = el("div", { id: "male-banner", class: "male-error", role: "alert" });
+    Object.assign(box.style, { position: "sticky", top: "0", zIndex: "20", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "10px 12px", margin: "8px", whiteSpace: "pre-wrap" });
+    document.body.prepend(box);
+  }
+  box.replaceChildren(icon("bad"), el("span", { text: `The last edit didn't load, so this page shows the version before it.\n${detail}` }));
+}
 
 // ---------------------------------------------------------------- platform status (/status), polled
 
@@ -1021,6 +1038,7 @@ for (const param of document.querySelectorAll("male-param[name]")) {
 }
 for (const tag of document.querySelectorAll("[colors]")) registerColors(tag.getAttribute("colors").split(",").map(s => s.trim()));
 
+if (document.querySelector("[class^='male'], male-param, male-live, male-theme, male-freshness, male-gates, male-drift")) live.reconnectSoon();
 customElements.define("male-kpi", KpiTag);
 customElements.define("male-bars", BarsTag);
 customElements.define("male-lines", LinesTag);

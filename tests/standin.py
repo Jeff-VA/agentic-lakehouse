@@ -5,15 +5,10 @@ hourly gold rollup computed from them: enough for the example's views and
 dashboard to run in tests (and in a browser) without Pinot, Trino or Iceberg.
 """
 
-import contextlib
-import socket
-import threading
-import time
 from datetime import UTC, datetime, timedelta
 
 import duckdb
 import pyarrow as pa
-import uvicorn
 
 from core.api_gateway import Gateway, TableState, Warehouse
 from core.compiler import SqlCompiler, bucket_start
@@ -51,23 +46,3 @@ def standin_gateway(platform: Platform, *, hours: int = 6) -> Gateway:
     router = Router(compiler, {"telemetry": placement})
     warehouse = Warehouse(engine, table_state=lambda table: TableState(exists=True, complete_through=complete, snapshot=1))
     return Gateway(router, views=platform.views, warehouse=warehouse)
-
-
-@contextlib.contextmanager
-def serving(app):
-    """`app` on a real HTTP server, as a browser needs; yields its base URL."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        assert time.monotonic() < deadline, "server didn't start"
-        time.sleep(0.05)
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)

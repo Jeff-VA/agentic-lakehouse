@@ -173,7 +173,9 @@ def test_run_py_serves_mcp_over_stdio():
     root = Path(__file__).parents[1]
     params = StdioServerParameters(command=sys.executable, args=[str(root / "run.py"), "mcp"], cwd=str(root))
     tools = call_mcp(params, "list_tools").tools
-    assert {t.name for t in tools} == {"list_metrics", "query_metrics", "data_status", "list_views", "query_view"}
+    assert {t.name for t in tools} == {
+        "list_metrics", "query_metrics", "data_status", "list_views", "query_view", "check_dashboards", "screenshot_dashboard"
+    }
 
 
 class FakeRollups:

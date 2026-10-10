@@ -18,6 +18,11 @@ Each event's data then says which `view` value it answers:
     event: result
     data: {"subscription": "isp_hourly?hours=24", "result": {...}}
 
+That stream also carries news about the project to every open page: `hello`
+first (with the server's boot id: a page that sees a new one reloads), then
+`reload` after a dashboard or view file changes, or `problem` when an edit
+broke a view (the page keeps showing the last good version).
+
 Everyone watching the same view with the same parameters shares one feed, which
 recomputes the view in the background while anyone watches, so a hundred open
 dashboards cost what one does. When the feed recomputes:
@@ -88,6 +93,7 @@ class LiveViews:
         self.refresh_seconds = refresh_seconds
         self.max_age_seconds = max_age_seconds
         self._feeds: dict[tuple[str, str], _Feed] = {}
+        self._pages: set[asyncio.Queue] = set()  # every open /live stream's queue, for announcements
 
     async def events(self, name: str, values: dict[str, Any]) -> AsyncIterator[ServerSentEvent]:
         """View `name`'s result with parameter `values` (already bound), then every change to it."""
@@ -104,25 +110,39 @@ class LiveViews:
             feed.inboxes.remove(inbox)
             if not feed.inboxes:
                 feed.task.cancel()
-                del self._feeds[key]
+                if self._feeds.get(key) is feed:  # not if restart() already replaced it
+                    del self._feeds[key]
 
     async def watch(self, subscriptions: list[tuple[str, str, dict[str, Any]]]) -> AsyncIterator[tuple[str, ServerSentEvent]]:
         """Several views in one stream. `subscriptions` are (key, view name, parameter values);
         yields (key, event) as each view's events arrive."""
-        merged: asyncio.Queue[tuple[str, ServerSentEvent]] = asyncio.Queue(maxsize=2 * len(subscriptions))
+        merged: asyncio.Queue[tuple[str, ServerSentEvent]] = asyncio.Queue(maxsize=2 * len(subscriptions) + 2)
 
         async def forward(key: str, name: str, values: dict[str, Any]) -> None:
             async for event in self.events(name, values):
                 await merged.put((key, event))  # waits for a slow client; its feed's inbox keeps the newest
 
         tasks = [asyncio.create_task(forward(*subscription)) for subscription in subscriptions]
+        self._pages.add(merged)
         try:
             while True:
                 yield await merged.get()
         finally:
+            self._pages.discard(merged)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def announce(self, event: str, data: dict[str, Any]) -> None:
+        """Send every open page an event about the project, such as `reload`. Its key is ""."""
+        for page in self._pages:
+            if page.full():
+                page.get_nowait()  # older results matter less than this
+            page.put_nowait(("", ServerSentEvent(event=event, data=data)))
+
+    def restart(self) -> None:
+        """Stop every feed, as views were redefined: pages reload and start new ones."""
+        self.close()
 
     def watched(self) -> list[tuple[str, int]]:
         """(view, subscribers) for every running feed."""

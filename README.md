@@ -101,6 +101,14 @@ hours, and can I trust the data right now?"* The agent can list the metrics
 (`list_views`, `query_view`) and check freshness and quality gates
 (`data_status`).
 
+**Build dashboards with Claude Code.** Open the repository in Claude Code:
+[`.mcp.json`](.mcp.json) registers the platform's MCP server on your machine
+(`python run.py mcp`), and [`AGENTS.md`](AGENTS.md) gives it the workflow.
+Ask for a dashboard. The agent writes views and a page, checks them
+(`check_dashboards`), and looks at the result (`screenshot_dashboard`: headless
+Chrome, live data). Any page you have open reloads each time it saves a file.
+The `build_dashboard` prompt starts the same loop in any MCP client.
+
 **Watch the drift agent.** Put `ANTHROPIC_API_KEY=...` in a `.env` file at the
 repository root (it is git-ignored) and restart the `drift` service. Then
 simulate an upstream release that adds two event fields:
@@ -324,7 +332,9 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 `run.py` drives each component directly against the same stack: `setup`,
 `seed`, `stream`, `flush`, `rollups`, `drift`, `serve`, `mcp` (stdio, for
-Claude Desktop) and `reset --yes`. The tests use the example project in
+Claude Code or Claude Desktop) and `reset --yes`. `run.py check` checks the
+config, views and dashboards (CI runs it), and `run.py screenshot <name>`
+renders a dashboard in headless Chrome and lists the problems it shows. The tests use the example project in
 `examples/playback/config`; the integration tests expect the stack to be
 running it, as `config/` does by default. Stop the matching container first if you
 run one on the host, for example `docker compose -f docker/docker-compose.yml

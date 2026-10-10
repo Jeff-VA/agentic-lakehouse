@@ -9,22 +9,30 @@
     python run.py rollups [--serve]     refresh the gold rollup tables, behind their quality gates
     python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
     python run.py reset --yes           delete all topics, tables and data, then run setup
-    python run.py serve                 REST API and MCP (HTTP) on http://127.0.0.1:8000
+    python run.py serve                 REST API, dashboards and MCP (HTTP) on http://127.0.0.1:8000;
+                                        open pages reload when a view or dashboard file changes
     python run.py mcp                   MCP over stdio, for Claude Code or Claude Desktop
+    python run.py check                 check the config, views and dashboards (exit 1 on problems)
+    python run.py screenshot NAME       render dashboard NAME in headless Chrome, with live data:
+                                        writes NAME.png and lists the problems the page shows
 
 `docker compose -f docker/docker-compose.yml up -d --build` runs all of this in
 containers; these commands are for development against the same stack.
 """
 
 import argparse
+import logging
 import os
+import sys
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import get_args
 
 from dotenv import load_dotenv
 
-from core.api_gateway import Gateway, create_app, create_mcp_server
+from core.api_gateway import Gateway, Project, create_app, create_mcp_server
+from core.browser import BrowserError
 from core.config import ColumnType, Dataset, Platform, load_platform
 from core.simulate import LiveSource, add_fields, generate_events
 from core.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
@@ -107,8 +115,19 @@ def main() -> None:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     commands.add_parser("mcp", help="run the MCP server over stdio")
+    commands.add_parser("check", help="check the config, views and dashboards")
+    screenshot = commands.add_parser("screenshot", help="render a dashboard in headless Chrome, with live data")
+    screenshot.add_argument("name", help="the dashboard: its file name in dashboards/ without .html")
+    screenshot.add_argument("--theme", choices=["light", "dark"], default="light")
+    screenshot.add_argument("--width", type=int, default=1280, help="viewport width in CSS pixels (400 for a phone)")
+    screenshot.add_argument("--out", help="where to write the PNG (default: NAME.png)")
     args = parser.parse_args()
     load_dotenv()  # ANTHROPIC_API_KEY for the drift agent, if kept in .env
+
+    if args.command == "check":  # before loading the config: reporting on it is the point
+        sys.exit(check(Project(Path(args.config))))
+    if args.command == "screenshot":
+        sys.exit(take_screenshot(Project(Path(args.config)), args))
 
     platform = load_platform(args.config)
     if args.command == "setup":
@@ -170,10 +189,47 @@ def main() -> None:
     elif args.command == "serve":
         import uvicorn
 
-        app = create_app(Gateway.from_platform(platform), dashboards_dir=platform.config_dir / "dashboards")
+        project = Project(platform.config_dir)
+        app = create_app(Gateway.from_platform(platform), dashboards_dir=project.dashboards_dir, project=project)
         uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "mcp":
-        create_mcp_server(Gateway.from_platform(platform)).run("stdio")
+        create_mcp_server(Gateway.from_platform(platform), project=Project(platform.config_dir)).run("stdio")
+
+
+def check(project: Project) -> int:
+    """Print what's wrong with the project; 0 if nothing."""
+    result = project.check()
+    if result.config_error:
+        print(f"{project.config_dir}: {result.config_error}")
+        return 1
+    for dashboard in result.dashboards:
+        for problem in dashboard.problems:
+            print(problem)
+    problems = sum(len(d.problems) for d in result.dashboards)
+    counts = [(len(result.views), "view"), (len(result.dashboards), "dashboard"), (problems, "problem")]
+    print(f"{project.config_dir}: " + ", ".join(f"{n} {word}{'' if n == 1 else 's'}" for n, word in counts))
+    return 1 if problems else 0
+
+
+def take_screenshot(project: Project, args: argparse.Namespace) -> int:
+    for noisy in ("httpx", "mcp"):  # each request the page makes would be logged
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    out = Path(args.out or f"{args.name}.png")
+    try:
+        shot = project.screenshot(args.name, theme=args.theme, width=args.width)
+    except KeyError:
+        print(f"no dashboard named '{args.name}' in {project.dashboards_dir}")
+        return 1
+    except (BrowserError, ValueError) as e:  # ConfigError is a ValueError
+        print(e)
+        return 1
+    out.write_bytes(shot.png)
+    print(f"wrote {out}" + ("" if shot.settled else " (captured at the time limit: some tags were still loading)"))
+    for problem in shot.problems:
+        print(f"problem: {problem}")
+    for note in shot.notes:
+        print(f"note: {note}")
+    return 1 if shot.problems or not shot.settled else 0
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest
+      - run: pytest  # the runner has Chrome, so the dashboard browser tests run too
+      - run: python run.py check  # the project's config, views and dashboards
 
   app-image:
     runs-on: ubuntu-latest
