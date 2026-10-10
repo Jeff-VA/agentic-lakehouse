@@ -25,7 +25,7 @@ def test_a_missing_field_is_null_in_pinot_aggregates(platform):
     controller = platform.deployment.pinot.controller_url
     kafka = AdminClient({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers})
     [created] = kafka.create_topics([NewTopic(dataset.topic, num_partitions=1, replication_factor=1)]).values()
-    created.result()
+    created.result(timeout=30)
     try:
         sync_pinot_schema(controller, dataset, log=lambda m: None)
         config = pinot_table_config(dataset, platform.deployment.kafka.internal_bootstrap_servers)

@@ -12,7 +12,7 @@ from core.config import load_platform
 from core.engines import DuckDBEngine
 from core.events import generate_events
 from core.quality import QualityConfig
-from core.rollups import LAST_AUDIT, ROLLUP_THROUGH, QualityGateError, materialize, window
+from core.rollups import LAST_AUDIT, ROLLUP_THROUGH, QualityGateError, RollupStore, materialize, window
 from core.schema_compiler import arrow_schema
 
 PLATFORM = load_platform(Path(__file__).parents[1] / "config")
@@ -73,7 +73,9 @@ def test_first_run_publishes_complete_hours_only(source, catalog):
     assert max(r["event_ts"] for r in gold_rows(catalog)) == T0 + timedelta(hours=7)  # 08:00-08:30 isn't complete
     table = catalog.load_table("gold.hourly_isp_quality")
     assert table.properties[ROLLUP_THROUGH] == (T0 + timedelta(hours=8)).isoformat()
-    assert all(result["passed"] for result in json.loads(table.properties[LAST_AUDIT]) if result["severity"] == "error")
+    audit = json.loads(table.properties[LAST_AUDIT])
+    assert (audit["published"], audit["start"], audit["end"]) == (True, run.start.isoformat(), run.end.isoformat())
+    assert all(check["passed"] for check in audit["checks"] if check["severity"] == "error")
     assert table.properties["comment"] == HOURLY.description
 
 
@@ -105,7 +107,11 @@ def test_a_failed_quality_gate_publishes_nothing(source, catalog):
     )
     with pytest.raises(QualityGateError, match=r"gold.hourly_isp_quality: quality gate failed, nothing published \(row_count"):
         refresh(source, catalog, platform=strict, watermark=FLUSHED + timedelta(hours=1))
-    assert catalog.load_table("gold.hourly_isp_quality").current_snapshot().snapshot_id == snapshot
+    table = catalog.load_table("gold.hourly_isp_quality")
+    assert table.current_snapshot().snapshot_id == snapshot  # same data
+    audit = json.loads(table.properties[LAST_AUDIT])  # but the blocked audit is on record
+    assert (audit["published"], [c["passed"] for c in audit["checks"]]) == (False, [False])
+    assert table.properties[ROLLUP_THROUGH] == (T0 + timedelta(hours=8)).isoformat()  # still the last publish
 
 
 def test_failed_warn_checks_are_reported_but_publish(source, catalog):
@@ -130,3 +136,21 @@ def test_a_rollup_can_gain_a_metric(source, catalog):
     rows = gold_rows(catalog)
     assert rows[0]["rebuffer_event_count"] is None  # outside the recomputed window: written before the metric existed
     assert rows[-1]["rebuffer_event_count"] is not None
+
+
+def test_rollup_store_reports_status_and_reads_rows(source, catalog):
+    store = RollupStore(PLATFORM, catalog)
+    assert [(s.table, s.complete_through, s.last_audit) for s in store.statuses()] == [
+        ("gold.hourly_isp_quality", None, None),
+        ("gold.daily_device_quality", None, None),
+    ]
+    refresh(source, catalog)
+
+    [hourly, _] = store.statuses()
+    assert (hourly.grain, hourly.complete_through, hourly.last_audit["published"]) == ("hour", T0 + timedelta(hours=8), True)
+    assert hourly.columns[:2] == ["event_ts", "isp_provider"]
+    rows = store.rows("gold.hourly_isp_quality", since=T0 + timedelta(hours=6)).to_pylist()
+    assert [r["event_ts"] for r in rows[::6]] == [T0 + timedelta(hours=6), T0 + timedelta(hours=7)]  # 6 ISPs an hour
+    assert [r["isp_provider"] for r in rows[:6]] == sorted(r["isp_provider"] for r in rows[:6])
+    with pytest.raises(KeyError):
+        store.rows("gold.nowhere", since=T0)

@@ -34,10 +34,11 @@ build-backend = "setuptools.build_meta"
 packages = ["core", "pipelines"]
 
 [tool.setuptools.package-data]
-core = ["templates/*.sql", "templates/macros/*.sql"]
+core = ["templates/*.sql", "templates/macros/*.sql", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Integration tests need the Docker stack; run them with `pytest -m integration`.
 addopts = "-m 'not integration'"
+faulthandler_timeout = 120  # a hung test dumps every thread's stack
 markers = ["integration: needs the local Docker stack (docker/docker-compose.yml), set up and seeded"]

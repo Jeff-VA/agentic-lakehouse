@@ -22,13 +22,13 @@ def scratch(platform):
     dataset = platform.dataset("telemetry").model_copy(update={"name": name, "topic": name.replace("_", "-")})
     kafka = AdminClient({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers})
     [created] = kafka.create_topics([NewTopic(dataset.topic, num_partitions=2, replication_factor=1)]).values()
-    created.result()
+    created.result(timeout=30)
     catalog = iceberg_catalog(platform)
     catalog.create_namespace_if_not_exists("test")
     table = catalog.create_table(f"test.{name}", schema=iceberg_schema(dataset))
     yield dataset, table
     [deleted] = kafka.delete_topics([dataset.topic]).values()
-    deleted.result()
+    deleted.result(timeout=30)
     catalog.purge_table(f"test.{name}")
 
 

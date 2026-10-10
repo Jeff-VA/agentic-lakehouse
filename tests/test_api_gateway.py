@@ -1,11 +1,13 @@
 import socket
 import sys
+from datetime import datetime
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 
 import anyio
+import pyarrow as pa
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -14,6 +16,7 @@ from test_router import FLUSHED, router
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
 from core.engines import EngineError
+from core.rollups import RollupStatus
 from core.router import Tier
 
 # The DuckDB stand-in tiers from test_router: six hours of events, the historical
@@ -117,7 +120,7 @@ def call_mcp(target, method, *args):
 
 def test_mcp_tools_are_listed_with_schemas():
     tools = {t.name: t for t in call_mcp(create_mcp_server(Gateway(router())), "list_tools").tools}
-    assert tools.keys() == {"list_metrics", "query_metrics"}
+    assert tools.keys() == {"list_metrics", "query_metrics", "data_status"}
     assert set(tools["query_metrics"].input_schema["required"]) == {"metrics", "start", "end"}
     assert tools["query_metrics"].annotations.read_only_hint is True
 
@@ -169,4 +172,65 @@ def test_run_py_serves_mcp_over_stdio():
     root = Path(__file__).parents[1]
     params = StdioServerParameters(command=sys.executable, args=[str(root / "run.py"), "mcp"], cwd=str(root))
     tools = call_mcp(params, "list_tools").tools
-    assert {t.name for t in tools} == {"list_metrics", "query_metrics"}
+    assert {t.name for t in tools} == {"list_metrics", "query_metrics", "data_status"}
+
+
+class FakeRollups:
+    """Stands in for core.rollups.RollupStore (tested in test_rollups.py): one rollup whose last gate blocked."""
+
+    def statuses(self):
+        audit = {
+            "at": "2026-01-01T05:00:10",
+            "published": False,
+            "start": "2026-01-01T00:00:00",
+            "end": "2026-01-01T05:00:00",
+            "checks": [{"check": "freshness(<= 2h)", "severity": "error", "passed": False, "detail": "stale"}],
+        }
+        return [RollupStatus("gold.hourly", "Plays per hour.", "hour", ["ts", "plays"], datetime(2026, 1, 1, 4), audit)]
+
+    def rows(self, table, since):
+        if table != "gold.hourly":
+            raise KeyError(table)
+        return pa.table({"ts": [datetime(2026, 1, 1, 3)], "plays": [12]})
+
+
+@pytest.fixture
+def status_client(tmp_path):
+    (tmp_path / "playback-0123abcd.patch").write_text(
+        "# Drift proposal for dataset 'playback' (raw.playback)\n"
+        "# Upstream added cdn_pop; proposed a dimension.\n"
+        "#\n# Review, then from the repository root: git apply <this file>\n\n--- a/config/ingestion.yaml\n"
+    )
+    gateway = Gateway(router(), rollups=FakeRollups(), proposals_dir=tmp_path)
+    with TestClient(create_app(gateway)) as client:
+        yield client
+
+
+def test_status_reports_freshness_gates_and_drift(status_client):
+    status = status_client.get("/status").json()
+    assert status["datasets"] == [{"name": "playback", "realtime_days": pytest.approx(4 / 24), "historical_through": "2026-01-01T04:00:00Z"}]
+    [rollup] = status["rollups"]
+    assert (rollup["table"], rollup["complete_through"]) == ("gold.hourly", "2026-01-01T04:00:00Z")
+    assert (rollup["last_audit"]["published"], rollup["last_audit"]["at"]) == (False, "2026-01-01T05:00:10Z")
+    [proposal] = status["drift_proposals"]
+    assert (proposal["dataset"], proposal["summary"]) == ("playback", "Upstream added cdn_pop; proposed a dimension.")
+
+
+def test_rollup_rows_are_served(status_client):
+    assert status_client.get("/rollups/gold.hourly").json() == {
+        "table": "gold.hourly",
+        "rows": [{"ts": "2026-01-01T03:00:00Z", "plays": 12}],
+    }
+    response = status_client.get("/rollups/gold.nowhere")
+    assert (response.status_code, response.json()) == (404, {"detail": "no rollup named 'gold.nowhere'"})
+
+
+def test_the_dashboard_is_served_at_the_root(status_client):
+    response = status_client.get("/")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("text/html")
+
+
+def test_mcp_data_status_tool(tmp_path):
+    result = call_mcp(create_mcp_server(Gateway(router(), rollups=FakeRollups(), proposals_dir=tmp_path)), "call_tool", "data_status", {})
+    assert result.is_error is False
+    assert result.structured_content["rollups"][0]["last_audit"]["checks"][0]["detail"] == "stale"

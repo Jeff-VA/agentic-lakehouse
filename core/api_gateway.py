@@ -1,32 +1,41 @@
 """The gateway clients use to ask the semantic layer for metrics.
 
-The same two operations are served over REST and over the Model Context
-Protocol (MCP), so dashboards and AI agents get identical answers:
+The same operations are served over REST and over the Model Context Protocol
+(MCP), so the dashboard and AI agents get identical answers:
 
 - catalog: the metrics and dimensions you can ask for, and what they mean
 - query: a MetricQuery, answered by the tier router
+- status: how fresh each tier is, each rollup's last quality gate, and drift
+  proposals waiting for review: whether the data can be trusted right now
 
-REST:  GET /catalog, POST /query (interactive docs at /docs)
+REST:  GET /catalog, POST /query, GET /status, GET /rollups/{table}
+       (interactive docs at /docs); the dashboard is at /
 MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
 
 import contextlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 
+from core.agent_sync import pending_proposals
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
+from core.config import Platform
 from core.engines import EngineError
 from core.ontology import AggregateMetric, Metric, SemanticModel
+from core.orchestrator import iceberg_catalog
+from core.rollups import RollupStore
 from core.router import Router
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
+DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
 
 
 class DimensionInfo(BaseModel):
@@ -76,12 +85,124 @@ class QueryResponse(BaseModel):
     sql: dict[str, str] | None = None  # per tier, when requested
 
 
-class Gateway:
-    """Catalog and query operations, independent of the transport serving them."""
+class DatasetStatus(BaseModel):
+    name: str
+    realtime_days: float
+    historical_through: datetime | None  # the flush watermark
 
-    def __init__(self, router: Router, max_rows: int = MAX_ROWS):
+
+class CheckInfo(BaseModel):
+    check: str
+    severity: Literal["error", "warn"]
+    passed: bool
+    detail: str
+
+
+class Audit(BaseModel):
+    at: datetime
+    published: bool  # false: an error check failed and the rows were held back
+    start: datetime  # the window the run recomputed
+    end: datetime
+    checks: list[CheckInfo]
+
+
+class RollupInfo(BaseModel):
+    table: str
+    description: str
+    grain: str
+    columns: list[str]
+    complete_through: datetime | None  # None until the first publish
+    last_audit: Audit | None
+
+
+class DriftProposalInfo(BaseModel):
+    file: str
+    dataset: str
+    summary: str
+    created: datetime
+
+
+class Status(BaseModel):
+    now: datetime
+    datasets: list[DatasetStatus]
+    rollups: list[RollupInfo]
+    drift_proposals: list[DriftProposalInfo]  # config patches waiting for review
+
+
+class RollupRows(BaseModel):
+    table: str
+    rows: list[dict[str, Any]]
+
+
+class Gateway:
+    """The gateway's operations, independent of the transport serving them.
+
+    `rollups` and `proposals_dir` are optional: without them the status reports
+    no rollups or drift proposals.
+    """
+
+    def __init__(
+        self,
+        router: Router,
+        *,
+        rollups: RollupStore | None = None,
+        proposals_dir: str | Path | None = None,
+        max_rows: int = MAX_ROWS,
+    ):
         self.router = router
+        self.rollups = rollups
+        self.proposals_dir = Path(proposals_dir) if proposals_dir else None
         self.max_rows = max_rows
+
+    @classmethod
+    def from_platform(cls, platform: Platform, proposals_dir: str | Path = "proposals") -> "Gateway":
+        return cls(
+            Router.from_platform(platform),
+            rollups=RollupStore(platform, iceberg_catalog(platform)),
+            proposals_dir=proposals_dir,
+        )
+
+    def status(self) -> Status:
+        datasets = []
+        for name, placement in self.router.placements.items():
+            flushed = placement.flushed_through()
+            datasets.append(
+                DatasetStatus(
+                    name=name,
+                    realtime_days=placement.retention.total_seconds() / 86400,
+                    historical_through=_utc(flushed) if flushed else None,
+                )
+            )
+        rollups = []
+        for status in self.rollups.statuses() if self.rollups else []:
+            audit = status.last_audit
+            rollups.append(
+                RollupInfo(
+                    table=status.table,
+                    description=status.description,
+                    grain=status.grain,
+                    columns=status.columns,
+                    complete_through=_utc(status.complete_through) if status.complete_through else None,
+                    last_audit=None
+                    if audit is None
+                    else Audit(**audit | {key: _utc(datetime.fromisoformat(audit[key])) for key in ("at", "start", "end")}),
+                )
+            )
+        proposals = pending_proposals(self.proposals_dir) if self.proposals_dir and self.proposals_dir.is_dir() else []
+        return Status(
+            now=datetime.now(UTC),
+            datasets=datasets,
+            rollups=rollups,
+            drift_proposals=[DriftProposalInfo(**vars(p)) for p in proposals],
+        )
+
+    def rollup_rows(self, table: str, hours: float) -> RollupRows:
+        """A rollup's rows from the last `hours`. Raises KeyError for an unknown rollup."""
+        if self.rollups is None:
+            raise KeyError(table)
+        since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+        rows = self.rollups.rows(table, since).to_pylist()
+        return RollupRows(table=table, rows=[{k: _utc(v) if isinstance(v, datetime) else v for k, v in r.items()} for r in rows])
 
     def catalog(self) -> Catalog:
         models = []
@@ -180,6 +301,12 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
         return gateway.catalog()
 
     @mcp.tool(annotations=read_only)
+    def data_status() -> Status:
+        """How fresh each tier's data is, whether each rollup passed its last quality gate, and any
+        schema drift waiting for review. Check it before trusting numbers that matter."""
+        return gateway.status()
+
+    @mcp.tool(annotations=read_only)
     def query_metrics(
         metrics: Annotated[list[str], Field(description="Metric names from list_metrics, all from the same model")],
         start: Annotated[datetime, Field(description="Start of the time range, inclusive. ISO 8601; UTC if no offset")],
@@ -250,6 +377,21 @@ def create_app(gateway: Gateway) -> FastAPI:
     @app.post("/query")
     def query(query: MetricQuery, include_sql: bool = False) -> QueryResponse:
         return gateway.query(query, include_sql)
+
+    @app.get("/status")
+    def status() -> Status:
+        return gateway.status()
+
+    @app.get("/rollups/{table}")
+    def rollup_rows(table: str, hours: Annotated[float, Query(gt=0, le=24 * 400)] = 48) -> RollupRows:
+        try:
+            return gateway.rollup_rows(table, hours)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no rollup named '{table}'") from None
+
+    @app.get("/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        return FileResponse(DASHBOARD, media_type="text/html")
 
     app.mount("/", mcp_app)  # after the REST routes, which match first
     return app

@@ -17,11 +17,12 @@ One run of one rollup:
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
 from pyiceberg.catalog import Catalog
 from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.expressions import GreaterThanOrEqual
 from pyiceberg.table import Table
 from pyiceberg.transforms import DayTransform, MonthTransform
 
@@ -31,7 +32,7 @@ from core.engines import QueryEngine
 from core.quality import CheckResult, blocking, run_checks
 
 ROLLUP_THROUGH = "male.rollup-through"  # the gold table is complete before this time (ISO, UTC)
-LAST_AUDIT = "male.last-audit"  # JSON results of the checks run before the last publish
+LAST_AUDIT = "male.last-audit"  # JSON: when the last run audited its rows, whether it published, the check results
 
 Log = Callable[[str], None]
 
@@ -102,6 +103,9 @@ def materialize(
         rows, platform.quality.checks_for(rollup.table), time_column=model.time_dimension, window_end=run.end
     )
     if blocking(run.checks):
+        if gold is not None:  # record the blocked audit; the data stays as it was
+            with gold.transaction() as transaction:
+                transaction.set_properties({LAST_AUDIT: _audit(run, published=False)})
         raise QualityGateError(rollup.table, run.checks)
 
     gold = gold or _create(catalog, rollup, rows.schema, model.time_dimension)
@@ -116,11 +120,69 @@ def materialize(
             transaction.overwrite(
                 rows, overwrite_filter=f"{time} >= '{run.start.isoformat()}' AND {time} < '{run.end.isoformat()}'"
             )
-        transaction.set_properties(
-            {ROLLUP_THROUGH: run.end.isoformat(), LAST_AUDIT: json.dumps([asdict(r) for r in run.checks])}
-        )
+        transaction.set_properties({ROLLUP_THROUGH: run.end.isoformat(), LAST_AUDIT: _audit(run, published=True)})
     log(f"rollup {rollup.table}: replaced {run.start:%Y-%m-%d %H:%M} to {run.end:%Y-%m-%d %H:%M} UTC with {run.rows} rows")
     return run
+
+
+def _audit(run: RollupRun, *, published: bool) -> str:
+    return json.dumps(
+        {
+            "at": datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds"),
+            "published": published,
+            "start": run.start.isoformat(),
+            "end": run.end.isoformat(),
+            "checks": [asdict(r) for r in run.checks],
+        }
+    )
+
+
+@dataclass
+class RollupStatus:
+    table: str
+    description: str
+    grain: str
+    columns: list[str]
+    complete_through: datetime | None  # None until the first publish
+    last_audit: dict | None  # see _audit
+
+
+class RollupStore:
+    """Read side of the gold tables, for the gateway: their status and rows."""
+
+    def __init__(self, platform: Platform, catalog: Catalog):
+        self.platform, self.catalog = platform, catalog
+
+    def statuses(self) -> list[RollupStatus]:
+        statuses = []
+        for rollup in self.platform.storage.rollups:
+            gold = _load(self.catalog, rollup.table)
+            properties = gold.properties if gold else {}
+            through = properties.get(ROLLUP_THROUGH)
+            audit = properties.get(LAST_AUDIT)
+            statuses.append(
+                RollupStatus(
+                    table=rollup.table,
+                    description=rollup.description,
+                    grain=rollup.query.grain,
+                    columns=self.platform.rollup_columns(rollup),
+                    complete_through=datetime.fromisoformat(through) if through else None,
+                    last_audit=json.loads(audit) if audit else None,
+                )
+            )
+        return statuses
+
+    def rows(self, table: str, since: datetime) -> pa.Table:
+        """The rollup's rows from `since` (naive UTC) on, oldest first. Raises KeyError for an unknown rollup."""
+        rollup = next((r for r in self.platform.storage.rollups if r.table == table), None)
+        if rollup is None:
+            raise KeyError(table)
+        time = self.platform.rollup_model(rollup).time_dimension
+        gold = _load(self.catalog, table)
+        if gold is None:
+            return pa.table({name: pa.array([], pa.null()) for name in self.platform.rollup_columns(rollup)})
+        rows = gold.scan(row_filter=GreaterThanOrEqual(time, since.isoformat())).to_arrow()
+        return rows.sort_by([(time, "ascending"), *((d, "ascending") for d in rollup.query.dimensions)])
 
 
 def _load(catalog: Catalog, name: str) -> Table | None:

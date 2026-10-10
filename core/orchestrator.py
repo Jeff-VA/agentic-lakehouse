@@ -54,7 +54,7 @@ def setup(platform: Platform, log: Log = print) -> None:
 def _create_topic(kafka: AdminClient, dataset: Dataset, log: Log) -> None:
     [future] = kafka.create_topics([NewTopic(dataset.topic, num_partitions=1, replication_factor=1)]).values()
     try:
-        future.result()
+        future.result(timeout=30)
         log(f"kafka: created topic {dataset.topic}")
     except KafkaException as e:
         if e.args[0].code() != KafkaError.TOPIC_ALREADY_EXISTS:
@@ -121,7 +121,8 @@ def sync_iceberg_columns(table: Table, dataset: Dataset, log: Log = print) -> No
 
 
 def teardown(platform: Platform, log: Log = print) -> None:
-    """Delete every dataset's Kafka topic, Pinot table and schema, and Iceberg table, with their data."""
+    """Delete every dataset's Kafka topic, Pinot table and schema, and Iceberg table, and every
+    rollup's gold table, with their data."""
     kafka = AdminClient({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers})
     catalog = iceberg_catalog(platform)
     controller = platform.deployment.pinot.controller_url
@@ -134,12 +135,16 @@ def teardown(platform: Platform, log: Log = print) -> None:
             httpx.delete(f"{controller}/schemas/{table}").raise_for_status()
         if dataset.topic in kafka.list_topics(timeout=10).topics:
             [future] = kafka.delete_topics([dataset.topic]).values()
-            future.result()
+            future.result(timeout=30)
             log(f"kafka: deleted topic {dataset.topic}")
         iceberg_table = platform.iceberg_table(dataset.name).table
         if catalog.table_exists(iceberg_table):
             catalog.purge_table(iceberg_table)
             log(f"iceberg: dropped table {iceberg_table}")
+    for rollup in platform.storage.rollups:
+        if catalog.table_exists(rollup.table):
+            catalog.purge_table(rollup.table)
+            log(f"iceberg: dropped rollup table {rollup.table}")
 
 
 def flushed_through(platform: Platform, dataset: str) -> datetime | None:

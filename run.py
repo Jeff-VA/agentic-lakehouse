@@ -24,7 +24,6 @@ from core.api_gateway import Gateway, create_app, create_mcp_server
 from core.config import load_platform
 from core.events import LiveSource, generate_events
 from core.orchestrator import EventPublisher, publish_events, setup, teardown
-from core.router import Router
 
 
 def utc_now() -> datetime:
@@ -116,9 +115,9 @@ def main() -> None:
     elif args.command == "serve":
         import uvicorn
 
-        uvicorn.run(create_app(Gateway(Router.from_platform(platform))), host=args.host, port=args.port)
+        uvicorn.run(create_app(Gateway.from_platform(platform)), host=args.host, port=args.port)
     elif args.command == "mcp":
-        create_mcp_server(Gateway(Router.from_platform(platform))).run("stdio")
+        create_mcp_server(Gateway.from_platform(platform)).run("stdio")
 
 
 if __name__ == "__main__":

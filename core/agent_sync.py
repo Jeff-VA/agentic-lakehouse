@@ -27,7 +27,7 @@ import tempfile
 import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from functools import reduce
 from pathlib import Path
 from typing import Literal
@@ -452,3 +452,27 @@ def check_drift(
         log(f"drift: {dataset.name}: wrote {path} ({result.attempts} attempt(s)); review it, then git apply it")
         written.append(path)
     return written
+
+
+@dataclass
+class PendingProposal:
+    file: str
+    dataset: str
+    summary: str
+    created: datetime  # UTC
+
+
+def pending_proposals(out_dir: str | Path) -> list[PendingProposal]:
+    """Proposal patches waiting for review in `out_dir`, newest first."""
+    proposals = []
+    for path in Path(out_dir).glob("*.patch"):
+        header = []
+        for line in path.read_text().splitlines():
+            if not line.startswith("#"):
+                break
+            header.append(line.removeprefix("#").strip())
+        dataset = re.search(r"dataset '([^']+)'", header[0]) if header else None
+        summary = " ".join(header[1 : header.index("")] if "" in header else header[1:])
+        created = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        proposals.append(PendingProposal(path.name, dataset.group(1) if dataset else "?", summary, created))
+    return sorted(proposals, key=lambda p: p.created, reverse=True)
