@@ -45,7 +45,7 @@ from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
 from core.config import Platform
 from core.engines import EngineError, QueryEngine, TrinoEngine
 from core.live import LiveViews
-from core.ontology import AggregateMetric, Metric, SemanticModel
+from core.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
 from core.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from core.rollups import ROLLUP_THROUGH, RollupStore
 from core.router import QueryResult, Router
@@ -59,12 +59,17 @@ class DimensionInfo(BaseModel):
     name: str
     type: str
     description: str
+    label: str
 
 
 class MetricInfo(BaseModel):
     name: str
     description: str
     calculation: str  # e.g. "99th percentile of request_latency_ms where stream_start_event = TRUE"
+    label: str
+    format: str  # number, integer or percent (0.05 reads as 5%)
+    unit: str
+    better: str | None  # "higher" or "lower": which way a change is good news
 
 
 class ModelInfo(BaseModel):
@@ -327,12 +332,20 @@ class Gateway:
                     time_dimension=model.time_dimension,
                     grains=list(get_args(Grain)),
                     dimensions=[
-                        DimensionInfo(name=d.name, type=d.type, description=d.description)
+                        DimensionInfo(name=d.name, type=d.type, description=d.description, label=d.label or words(d.name))
                         for d in model.dimensions
                         if d.name != model.time_dimension
                     ],
                     metrics=[
-                        MetricInfo(name=m.name, description=m.description, calculation=_calculation(m, model))
+                        MetricInfo(
+                            name=m.name,
+                            description=m.description,
+                            calculation=_calculation(m, model),
+                            label=m.label or words(m.name),
+                            format=display_format(m),
+                            unit=m.unit,
+                            better=m.better,
+                        )
                         for m in model.metrics
                     ],
                     realtime_days=placement.retention.total_seconds() / 86400,

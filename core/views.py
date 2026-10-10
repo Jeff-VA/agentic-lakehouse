@@ -56,7 +56,19 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler, bucket_start
-from core.ontology import Identifier, Ontology, SemanticModel, StrictModel
+from core.ontology import (
+    AggregateMetric,
+    Better,
+    Dimension,
+    Format,
+    Identifier,
+    Metric,
+    Ontology,
+    SemanticModel,
+    StrictModel,
+    display_format,
+    words,
+)
 
 VIEW_DIALECT = "trino"  # views over tables run on Trino as written
 VIEW_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -165,11 +177,33 @@ class ViewHeader(StrictModel):
 
 
 class ViewColumn(BaseModel):
-    """One column of a view's result."""
+    """One column of a view's result, and how people read it (from the ontology, when the column
+    holds a metric or dimension)."""
 
     name: str
     type: ValueType
+    label: str  # the metric's or dimension's label, else the name in words
     role: Role | None = None  # views over models: whether the column is the time bucket, a dimension or a metric
+    format: Format | None = None  # metrics: number, integer or percent
+    unit: str = ""
+    better: Better | None = None  # metrics: which way a change is good news
+    grain: Grain | None = None  # the time bucket's size, in views over models
+
+
+def _column(name: str, value_type: ValueType, field: Metric | Dimension | None, **extra: Any) -> ViewColumn:
+    if isinstance(field, Dimension):
+        return ViewColumn(name=name, type=value_type, label=field.label or words(name), **extra)
+    if field is not None:  # a metric
+        return ViewColumn(
+            name=name,
+            type=value_type,
+            label=field.label or words(name),
+            format=display_format(field),
+            unit=field.unit,
+            better=field.better,
+            **extra,
+        )
+    return ViewColumn(name=name, type=value_type, label=words(name), **extra)
 
 
 @dataclass(frozen=True)
@@ -531,8 +565,11 @@ def _model_source(
 
     columns = []
     for o in outputs:
-        value_type = "number" if o.role == "metric" else dimensions[o.field].type
-        columns.append(ViewColumn(name=o.name, type=value_type, role=o.role))
+        if o.role == "metric":
+            columns.append(_column(o.name, "number", metrics[o.field], role="metric"))
+        else:
+            extra = {"grain": grain} if o.role == "time" else {}
+            columns.append(_column(o.name, dimensions[o.field].type, dimensions[o.field], role=o.role, **extra))
     return source, columns
 
 
@@ -650,7 +687,10 @@ _FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Dro
 
 
 def _table_source(
-    tree: exp.Query, params: Mapping[str, ViewParam], tables: TableSchemas, models: Mapping[str, SemanticModel]
+    tree: exp.Query,
+    params: Mapping[str, ViewParam],
+    tables: TableSchemas,
+    models: Mapping[str, SemanticModel],
 ) -> tuple[TableSource, list[ViewColumn]]:
     if forbidden := tree.find(*_FORBIDDEN):
         raise ViewError(f"views only read data; remove {forbidden.key.upper()}")
@@ -689,7 +729,16 @@ def _table_source(
         typed = annotate_types(qualify(sample, schema=schema, dialect=VIEW_DIALECT), schema=schema, dialect=VIEW_DIALECT)
     except SqlglotError as e:  # e.g. "Column 'x' could not be resolved"
         raise ViewError(str(e).split(". Line:")[0]) from None
-    columns = [ViewColumn(name=s.alias_or_name, type=_value_type(s.type)) for s in typed.selects]
+    # A column read as-is (aliased or not) keeps the label and format of the metric or dimension it holds.
+    fields: dict[str, Metric | Dimension] = {}
+    for model in models.values():
+        for field in [*model.metrics, *model.dimensions]:
+            fields.setdefault(field.name, field)
+    columns = []
+    for select in typed.selects:
+        source_column = select.this if isinstance(select, exp.Alias) else select
+        field = fields.get(source_column.name) if isinstance(source_column, exp.Column) else None
+        columns.append(_column(select.alias_or_name, _value_type(select.type), field))
     names = [c.name for c in columns]
     if repeated := sorted({n for n in names if names.count(n) > 1}):
         raise ViewError(f"column names must be unique: {', '.join(repeated)}")

@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -7,6 +8,7 @@ import sqlglot
 import yaml
 
 from core.compiler import Filter, MetricQuery, OrderBy
+from core.config import load_platform
 from core.views import View, ViewError, load_views, parse_view
 from test_compiler import ONTOLOGY
 
@@ -342,3 +344,25 @@ def test_a_view_can_set_how_often_it_refreshes_live():
     assert parse_view("test", header + f"SELECT plays FROM playback WHERE {LAST_HOUR}", ONTOLOGY, TABLES).refresh_seconds == 30
     with pytest.raises(ViewError, match="refresh_seconds: Input should be greater than or equal to 1"):
         parse_view("test", header.replace("30", "0.1") + "SELECT 1 AS a", ONTOLOGY, TABLES)
+
+
+def test_columns_say_how_to_read_them():
+    """Labels, formats, units and which way is better come from the ontology, for views over
+    models and for columns a view over tables reads as they are."""
+    views = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config").views
+    by_name = {c.name: c for c in views["isp_now"].columns}
+    assert by_name["isp_provider"].label == "ISP"
+    rate = by_name["rebuffer_incidence_rate"]
+    assert (rate.label, rate.format, rate.better) == ("Rebuffer rate", "percent", "lower")
+    hourly = {c.name: c for c in views["isp_hourly"].columns}  # gold-table columns keep their metric's metadata
+    assert (hourly["p99_ttfb"].label, hourly["p99_ttfb"].format, hourly["p99_ttfb"].unit) == ("p99 time to first byte", "integer", "ms")
+    assert (hourly["hour"].label, hourly["hour"].type) == ("Time", "timestamp")  # event_ts AS hour
+
+    grained = view(f"SELECT date_trunc('hour', ts) AS hour, viewers, avg_latency_ms FROM playback WHERE {LAST_HOUR}")
+    assert [(c.label, c.format, c.grain) for c in grained.columns] == [
+        ("Hour", None, "hour"),
+        ("Viewers", "integer", None),  # counts read as whole numbers unless the ontology says otherwise
+        ("Avg latency ms", "number", None),
+    ]
+    computed = view("SELECT isp, sum(plays) AS total FROM gold.hourly GROUP BY isp")
+    assert [(c.label, c.format) for c in computed.columns] == [("Isp", None), ("Total", None)]

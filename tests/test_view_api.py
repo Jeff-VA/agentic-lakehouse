@@ -71,10 +71,11 @@ def test_views_are_listed_with_their_parameters_columns_and_sql(client):
     assert model_view["params"] == [
         {"name": "hours", "type": "int", "description": "", "required": False, "default": 6, "min": 1, "max": 24, "values": None}
     ]
+    plain = {"format": None, "unit": "", "better": None, "grain": None}
     assert model_view["columns"] == [
-        {"name": "isp", "type": "string", "role": "dimension"},
-        {"name": "plays", "type": "number", "role": "metric"},
-        {"name": "slow", "type": "number", "role": "metric"},
+        {"name": "isp", "type": "string", "label": "Isp", "role": "dimension"} | plain,
+        {"name": "plays", "type": "number", "label": "Plays", "role": "metric"} | plain | {"format": "integer"},
+        {"name": "slow", "type": "number", "label": "Slow", "role": "metric"} | plain | {"format": "number"},
     ]
     assert model_view["sql"].startswith("SELECT isp, plays, slow_rate AS slow")
     assert (views["hourly"]["source"], views["hourly"]["reads"]) == ("tables", ["gold.hourly"])

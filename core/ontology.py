@@ -73,6 +73,15 @@ SqlExpression = Annotated[str, AfterValidator(_check_fragment)]
 
 DimensionType = Literal["string", "number", "boolean", "timestamp"]
 Aggregation = Literal["count", "count_distinct", "sum", "avg", "min", "max", "percentile"]
+# How people read a metric's values: dashboards and agents format them the same way.
+Format = Literal["number", "integer", "percent"]  # percent: 0.05 reads as 5%
+Better = Literal["higher", "lower"]  # which way a change is good news
+
+
+def words(name: str) -> str:
+    """A name as words, for when no label is set: rebuffer_incidence_rate -> Rebuffer incidence rate."""
+    text = name.replace("_", " ").strip()
+    return text[:1].upper() + text[1:]
 
 
 class StrictModel(BaseModel):
@@ -86,6 +95,7 @@ class Dimension(StrictModel):
     type: DimensionType
     description: str = ""
     sql: SqlExpression | None = None  # defaults to the column of the same name
+    label: str = ""  # how people say it, e.g. "ISP"; empty means the name in words
 
     @property
     def expr(self) -> str:
@@ -102,6 +112,10 @@ class AggregateMetric(StrictModel):
     sql: SqlExpression | None = None  # expression to aggregate; omit it with `count` for COUNT(*)
     percentile: float | None = Field(default=None, gt=0, lt=1)  # 0.99 means p99
     filters: list[SqlExpression] = []  # SQL predicates, ANDed together
+    label: str = ""  # how people say it, e.g. "p99 time to first byte"
+    format: Format | None = None  # counts default to integer, everything else to number
+    unit: str = ""  # shown after values, e.g. "ms"
+    better: Better | None = None
 
     @model_validator(mode="after")
     def _check_agg_params(self) -> Self:
@@ -128,6 +142,10 @@ class RatioMetric(StrictModel):
     description: str = Field(min_length=1)
     numerator: Identifier
     denominator: Identifier
+    label: str = ""
+    format: Format | None = None  # defaults to number
+    unit: str = ""
+    better: Better | None = None
 
 
 def _metric_type(value: Any) -> str:
@@ -141,6 +159,12 @@ Metric = Annotated[
     Union[Annotated[AggregateMetric, Tag("aggregate")], Annotated[RatioMetric, Tag("ratio")]],
     Discriminator(_metric_type),
 ]
+
+
+def display_format(metric: "AggregateMetric | RatioMetric") -> Format:
+    if metric.format:
+        return metric.format
+    return "integer" if isinstance(metric, AggregateMetric) and metric.agg in ("count", "count_distinct") else "number"
 
 
 def index_by_name(items: list, kind: str, where: str) -> dict:

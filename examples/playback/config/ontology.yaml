@@ -13,12 +13,15 @@ models:
       - name: event_ts
         type: timestamp
         description: When the client emitted the playback event.
+        label: Time
       - name: isp_provider
         type: string
         sql: client_isp
+        label: ISP
       - name: is_mobile_device
         type: boolean
         sql: "CASE WHEN client_device IN ('ios', 'android') THEN true ELSE false END"
+        label: Mobile device
 
     metrics:
       - name: p99_ttfb
@@ -28,29 +31,45 @@ models:
         sql: request_latency_ms
         filters:
           - "stream_start_event = true"
+        label: p99 time to first byte
+        format: integer
+        unit: ms
+        better: lower
 
       - name: event_count
         description: Number of playback events.
         agg: count
+        label: Events
 
       - name: rebuffer_event_count
         description: Playback events that buffered for more than 200 ms.
         agg: count
         filters:
           - "buffer_duration_ms > 200"
+        label: Rebuffer events
+        better: lower
 
       - name: rebuffer_incidence_rate
         description: Share of playback events that buffered for more than 200 ms.
         type: ratio
         numerator: rebuffer_event_count
         denominator: event_count
+        label: Rebuffer rate
+        format: percent
+        better: lower
 
       - name: unique_sessions
         description: Number of distinct playback sessions.
         agg: count_distinct
         sql: session_id
+        label: Sessions
+        better: higher
 
       - name: avg_bitrate_kbps
         description: Average delivered video bitrate (kbps).
         agg: avg
         sql: bitrate_kbps
+        label: Average bitrate
+        format: integer
+        unit: kbps
+        better: higher
