@@ -5,38 +5,45 @@ The same operations are served over REST and over the Model Context Protocol
 
 - catalog: the metrics and dimensions you can ask for, and what they mean
 - query: a MetricQuery, answered by the tier router
+- views: the project's named queries (views/*.sql, see core/views.py), which
+  dashboards read by name with parameters
 - status: how fresh each tier is, each rollup's last quality gate, and drift
   proposals waiting for review: whether the data can be trusted right now
 
-REST:  GET /catalog, POST /query, GET /status, GET /rollups/{table}
-       (interactive docs at /docs)
+REST:  GET /catalog, POST /query, GET /views, GET /views/{name}?<params>,
+       GET /status, GET /rollups/{table} (interactive docs at /docs)
 Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one)
 MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
 
 import contextlib
 import html
+import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
+import pyarrow as pa
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
+from pyiceberg.exceptions import NoSuchTableError
 
 from core.agent_sync import pending_proposals, unmodeled_columns
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
 from core.config import Platform
-from core.engines import EngineError
+from core.engines import EngineError, QueryEngine, TrinoEngine
 from core.ontology import AggregateMetric, Metric, SemanticModel
-from core.orchestrator import iceberg_catalog
-from core.rollups import RollupStore
-from core.router import Router
+from core.orchestrator import FLUSHED_THROUGH, iceberg_catalog
+from core.rollups import ROLLUP_THROUGH, RollupStore
+from core.router import QueryResult, Router
+from core.views import ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
 DASHBOARD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -139,24 +146,84 @@ class RollupRows(BaseModel):
     rows: list[dict[str, Any]]
 
 
+class ViewParamInfo(BaseModel):
+    name: str
+    type: str
+    description: str
+    required: bool
+    default: Any = None
+    min: float | None = None
+    max: float | None = None
+    values: list[Any] | None = None  # the only values allowed
+
+
+class ViewInfo(BaseModel):
+    name: str
+    description: str
+    # "model": answered by the tier router, up to the second. "tables": SQL over Iceberg
+    # tables, complete up to their last flush or rollup run.
+    source: Literal["model", "tables"]
+    reads: list[str]  # the model, or the tables
+    params: list[ViewParamInfo]
+    columns: list[ViewColumn]
+    sql: str
+
+
+class ViewCatalog(BaseModel):
+    views: list[ViewInfo]
+
+
+class ViewResult(BaseModel):
+    view: str
+    params: dict[str, Any]  # every parameter's value, defaults filled in
+    columns: list[ViewColumn]
+    rows: list[dict[str, Any]]
+    coverage: Coverage | None  # views over a model: the time range the rows cover (see notes)
+    data_through: datetime | None  # views over tables: they hold every row before this time
+    notes: list[str]
+    truncated: bool  # more rows matched than were returned
+    computed_at: datetime
+    sql: dict[str, str] | None = None  # what each engine ran, when requested
+
+
+@dataclass(frozen=True)
+class TableState:
+    exists: bool
+    complete_through: datetime | None = None  # the table holds every row before this time (naive UTC)
+
+
+@dataclass(frozen=True)
+class Warehouse:
+    """Where views over tables run (Trino over Iceberg, in the platform)."""
+
+    engine: QueryEngine
+    catalog: str | None = None  # qualifies <namespace>.<table>, e.g. "iceberg"
+    table_state: Callable[[str], TableState] = lambda table: TableState(exists=True)
+
+
 class Gateway:
     """The gateway's operations, independent of the transport serving them.
 
-    `rollups`, `proposals_dir` and `schema_drift` (dataset name -> columns the
-    config doesn't describe) are optional; without them the status leaves out
-    rollups, drift proposals and unmodeled columns.
+    `views` (by name) and the `warehouse` that runs views over tables are
+    optional, and so are `rollups`, `proposals_dir` and `schema_drift` (dataset
+    name -> columns the config doesn't describe); without them the status
+    leaves out rollups, drift proposals and unmodeled columns.
     """
 
     def __init__(
         self,
         router: Router,
         *,
+        views: Mapping[str, View] | None = None,
+        warehouse: Warehouse | None = None,
         rollups: RollupStore | None = None,
         proposals_dir: str | Path | None = None,
         schema_drift: Callable[[str], list[str]] | None = None,
         max_rows: int = MAX_ROWS,
     ):
         self.router = router
+        self.views = dict(views or {})
+        self.warehouse = warehouse
         self.rollups = rollups
         self.proposals_dir = Path(proposals_dir) if proposals_dir else None
         self.schema_drift = schema_drift
@@ -170,7 +237,25 @@ class Gateway:
             table = rollups.catalog.load_table(platform.iceberg_table(dataset).table)
             return unmodeled_columns(platform.dataset(dataset), table)
 
-        return cls(Router.from_platform(platform), rollups=rollups, proposals_dir=proposals_dir, schema_drift=schema_drift)
+        def table_state(name: str) -> TableState:
+            try:
+                properties = rollups.catalog.load_table(name).properties
+            except NoSuchTableError:
+                return TableState(exists=False)
+            except Exception as e:  # e.g. the catalog is unreachable: a failing engine, like Trino being down
+                raise EngineError(f"iceberg catalog: {e}") from e
+            through = properties.get(FLUSHED_THROUGH) or properties.get(ROLLUP_THROUGH)
+            return TableState(exists=True, complete_through=datetime.fromisoformat(through) if through else None)
+
+        warehouse = Warehouse(TrinoEngine(platform.deployment.trino), platform.deployment.trino.catalog, table_state)
+        return cls(
+            Router.from_platform(platform),
+            views=platform.views,
+            warehouse=warehouse,
+            rollups=rollups,
+            proposals_dir=proposals_dir,
+            schema_drift=schema_drift,
+        )
 
     def status(self) -> Status:
         datasets = []
@@ -245,19 +330,9 @@ class Gateway:
 
     def query(self, query: MetricQuery, include_sql: bool = False) -> QueryResponse:
         """Run `query`. Raises QueryError if it doesn't fit the ontology, EngineError if an engine fails."""
-        capped = query.limit is None or query.limit > self.max_rows
-        if capped:  # fetch one extra row to tell whether anything was cut off
-            query = query.model_copy(update={"limit": self.max_rows + 1})
-        result = self.router.run(query)
-        rows = [{k: _utc(v) if isinstance(v, datetime) else v for k, v in row.items()} for row in result.table.to_pylist()]
-        notes = list(result.notes)
-        truncated = capped and len(rows) > self.max_rows
-        if truncated:
-            rows = rows[: self.max_rows]
-            notes.append(
-                f"Only the first {self.max_rows} rows are returned; narrow the query with filters, "
-                "a coarser grain or fewer dimensions, or set order_by and limit for a top-N."
-            )
+        result, rows, notes, truncated = self._run(
+            query, "narrow the query with filters, a coarser grain or fewer dimensions, or set order_by and limit for a top-N"
+        )
         model = self.router.compiler.model_for(query)
         columns = [ResultColumn(name=model.time_dimension, role="time")] if query.grain else []
         columns += [ResultColumn(name=d, role="dimension") for d in query.dimensions]
@@ -271,10 +346,119 @@ class Gateway:
             sql=result.sql if include_sql else None,
         )
 
+    def view_catalog(self) -> ViewCatalog:
+        return ViewCatalog(views=[_view_info(view) for view in self.views.values()])
+
+    def view(self, name: str, params: Mapping[str, Any] | None = None, include_sql: bool = False) -> ViewResult:
+        """Run view `name` with `params` (missing ones take their defaults).
+
+        Raises KeyError for an unknown view, ViewError for bad parameters, and
+        QueryError or EngineError like a query.
+        """
+        view = self.views[name]
+        values = view.bind(params or {})
+        computed_at = datetime.now(UTC)
+        advice = "narrow the view with its parameters, or give it a LIMIT"
+        if isinstance(view.source, ModelSource):
+            query = view.source.query(values, now=_utc(self.router.clock()))
+            result, rows, notes, truncated = self._run(query, advice)
+            return ViewResult(
+                view=name,
+                params=values,
+                columns=list(view.columns),
+                rows=[{o.name: row[o.field] for o in view.source.outputs} for row in rows],
+                coverage=Coverage(start=result.start, end=result.end),
+                data_through=None,
+                notes=notes,
+                truncated=truncated,
+                computed_at=computed_at,
+                sql=result.sql if include_sql else None,
+            )
+
+        if self.warehouse is None:
+            raise ViewError(f"view '{name}' reads tables, and this gateway has no warehouse engine to run it on")
+        states = {table: self.warehouse.table_state(table) for table in view.source.tables}
+        engine = self.warehouse.engine
+        sql = view.source.sql(values, dialect=engine.name, catalog=self.warehouse.catalog, limit=self.max_rows + 1)
+        notes = []
+        if missing := [table for table, state in states.items() if not state.exists]:
+            rows = []  # e.g. a rollup that hasn't run yet; its first run creates the table
+            notes.append(f"{', '.join(missing)} doesn't exist yet, so there are no rows")
+        else:
+            rows = _rows(engine.execute(sql))
+        truncated = len(rows) > self.max_rows
+        if truncated:
+            rows = rows[: self.max_rows]
+            notes.append(f"Only the first {self.max_rows} rows are returned; {advice}.")
+        through = [state.complete_through for state in states.values()]
+        return ViewResult(
+            view=name,
+            params=values,
+            columns=list(view.columns),
+            rows=rows,
+            coverage=None,
+            data_through=_utc(min(through)) if through and None not in through else None,
+            notes=notes,
+            truncated=truncated,
+            computed_at=computed_at,
+            sql={"warehouse": sql} if include_sql else None,
+        )
+
+    def _run(self, query: MetricQuery, advice: str) -> tuple[QueryResult, list[dict[str, Any]], list[str], bool]:
+        """Route `query`, returning at most max_rows rows and notes on what the result covers."""
+        capped = query.limit is None or query.limit > self.max_rows
+        if capped:  # fetch one extra row to tell whether anything was cut off
+            query = query.model_copy(update={"limit": self.max_rows + 1})
+        result = self.router.run(query)
+        rows = _rows(result.table)
+        notes = list(result.notes)
+        truncated = capped and len(rows) > self.max_rows
+        if truncated:
+            rows = rows[: self.max_rows]
+            notes.append(f"Only the first {self.max_rows} rows are returned; {advice}.")
+        return result, rows, notes, truncated
+
 
 def _utc(ts: datetime) -> datetime:
     # Engines return naive timestamps; every time in the platform is UTC.
     return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
+
+
+def _rows(table: pa.Table) -> list[dict[str, Any]]:
+    """Result rows ready for JSON: times in UTC, NaN and infinity as null."""
+
+    def plain(value: Any) -> Any:
+        if isinstance(value, datetime):
+            return _utc(value)
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
+
+    return [{key: plain(value) for key, value in row.items()} for row in table.to_pylist()]
+
+
+def _view_info(view: View) -> ViewInfo:
+    return ViewInfo(
+        name=view.name,
+        description=view.description,
+        source="model" if isinstance(view.source, ModelSource) else "tables",
+        reads=view.reads,
+        params=[
+            ViewParamInfo(
+                name=name,
+                type=param.type,
+                description=param.description,
+                required=param.required,
+                default=param.default,
+                min=param.min,
+                max=param.max,
+                values=param.values,
+            )
+            for name, param in view.params.items()
+        ],
+        columns=list(view.columns),
+        sql=view.sql,
+    )
 
 
 def _calculation(metric: Metric, model: SemanticModel) -> str:
@@ -301,10 +485,34 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
             "Answers questions with governed metrics from the lakehouse semantic layer. Call list_metrics "
             "first to see which metrics and dimensions exist and what they mean, then query_metrics. "
             "Times are UTC; ranges are half-open [start, end). Read `coverage` and `notes` in every result: "
-            "an answer can cover less than the requested range, and the notes say why."
+            "an answer can cover less than the requested range, and the notes say why. "
+            "Views are the project's named queries, which its dashboards read: list_views shows each "
+            "one's parameters, columns and SQL, and query_view runs one."
         ),
     )
     read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+    @mcp.tool(annotations=read_only)
+    def list_views() -> ViewCatalog:
+        """List the project's views (config/views/*.sql): named, parameterized queries that dashboards
+        read. Each comes with its description, parameters, result columns and SQL."""
+        return gateway.view_catalog()
+
+    @mcp.tool(annotations=read_only)
+    def query_view(
+        name: Annotated[str, Field(description="A view name from list_views")],
+        params: Annotated[
+            dict[str, Any] | None, Field(description="Parameter values by name; parameters left out take their defaults")
+        ] = None,
+        include_sql: Annotated[bool, Field(description="Also return the SQL each engine ran")] = False,
+    ) -> ViewResult:
+        """Run a view and get its rows as a dashboard does, with how fresh the data is."""
+        if name not in gateway.views:
+            raise ToolError(f"no view named '{name}'. Views: {', '.join(gateway.views) or 'none'}")
+        try:
+            return gateway.view(name, params or {}, include_sql)
+        except (ViewError, QueryError, EngineError) as e:
+            raise ToolError(str(e)) from e
 
     @mcp.tool(annotations=read_only)
     def list_metrics() -> Catalog:
@@ -378,7 +586,8 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> Fa
     )
 
     @app.exception_handler(QueryError)
-    async def bad_query(request: Request, exc: QueryError) -> JSONResponse:
+    @app.exception_handler(ViewError)
+    async def bad_query(request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(EngineError)
@@ -396,6 +605,18 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> Fa
     @app.post("/query")
     def query(query: MetricQuery, include_sql: bool = False) -> QueryResponse:
         return gateway.query(query, include_sql)
+
+    @app.get("/views")
+    def views() -> ViewCatalog:
+        return gateway.view_catalog()
+
+    @app.get("/views/{name}")
+    def view(name: str, request: Request, include_sql: bool = False) -> ViewResult:
+        """Run a view. Its parameters go in the query string: /views/isp_now?minutes=30"""
+        if name not in gateway.views:
+            raise HTTPException(status_code=404, detail=f"no view named '{name}'")
+        params = {key: value for key, value in request.query_params.items() if key != "include_sql"}
+        return gateway.view(name, params, include_sql)
 
     @app.get("/status")
     def status() -> Status:

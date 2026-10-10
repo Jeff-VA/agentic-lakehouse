@@ -6,13 +6,15 @@
 - quality_rules.yaml: checks a rollup's rows must pass before they're published
   (schema in core/quality.py)
 - deployment.yaml: where the services are reachable
+- views/*.sql: named queries for dashboards and agents (core/views.py)
 
-load_platform() loads all five files and checks that they agree with each
-other, e.g. that every column an ontology model reads exists in its source
-dataset. Comparing against the live tables is the drift agent's job.
+load_platform() loads them all and checks that they agree with each other,
+e.g. that every column an ontology model reads exists in its source dataset,
+and that every view reads known models, tables and columns. Comparing against
+the live tables is the drift agent's job.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Self
@@ -23,6 +25,7 @@ from pydantic import Field, model_validator
 from core.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
 from core.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
 from core.quality import QualityConfig, TableName
+from core.views import View, ViewError, load_views
 
 ColumnType = Literal["string", "int", "long", "double", "boolean", "timestamp"]
 
@@ -174,7 +177,8 @@ class Platform:
     storage: StorageConfig
     quality: QualityConfig
     deployment: DeploymentConfig
-    config_dir: Path | None = None  # also holds the project's dashboards/
+    config_dir: Path | None = None  # also holds the project's views/ and dashboards/
+    views: dict[str, View] = field(default_factory=dict)
 
     def dataset(self, name: str) -> Dataset:
         return next(d for d in self.ingestion.datasets if d.name == name)
@@ -193,6 +197,24 @@ class Platform:
         """The gold table's columns: time bucket, dimensions, metrics."""
         return [self.rollup_model(rollup).time_dimension, *rollup.query.dimensions, *rollup.query.metrics]
 
+    def table_schemas(self) -> dict[str, dict[str, str]]:
+        """Column -> SQL type of each Iceberg table views can read: every dataset's raw table and every rollup."""
+        schemas = {
+            table.table: {c.name: _SQL_TYPES[c.type] for c in self.dataset(table.dataset).columns} for table in self.storage.tables
+        }
+        for rollup in self.storage.rollups:
+            model = self.rollup_model(rollup)
+            dimensions = {d.name: d for d in model.dimensions}
+            metrics = {m.name: m for m in model.metrics}
+            columns = {model.time_dimension: "TIMESTAMP"}
+            columns |= {name: _DIMENSION_SQL_TYPES[dimensions[name].type] for name in rollup.query.dimensions}
+            columns |= {
+                name: "BIGINT" if getattr(metrics[name], "agg", None) in ("count", "count_distinct") else "DOUBLE"
+                for name in rollup.query.metrics
+            }
+            schemas[rollup.table] = columns
+        return schemas
+
     def table_for(self, dataset: str, engine: Engine) -> str:
         """The relation that holds `dataset` in `engine`, ready to put in a FROM clause."""
         if engine == "pinot":
@@ -208,12 +230,16 @@ def _load_yaml(path: Path) -> dict:
 
 
 _EPOCH = datetime(1970, 1, 1)
+_SQL_TYPES = {"string": "VARCHAR", "int": "INTEGER", "long": "BIGINT", "double": "DOUBLE", "boolean": "BOOLEAN", "timestamp": "TIMESTAMP"}
+_DIMENSION_SQL_TYPES = {"string": "VARCHAR", "number": "DOUBLE", "boolean": "BOOLEAN", "timestamp": "TIMESTAMP"}
 
 
 def load_platform(config_dir: str | Path) -> Platform:
-    """Load and cross-check the ontology, ingestion, storage, quality and deployment YAML in `config_dir`.
+    """Load and cross-check the ontology, ingestion, storage, quality and deployment YAML in
+    `config_dir`, and the views in its views/ folder.
 
-    Raises pydantic.ValidationError for a malformed file, ConfigError when files disagree.
+    Raises pydantic.ValidationError for a malformed file, ConfigError when files disagree or a
+    view is invalid.
     """
     config_dir = Path(config_dir)
     platform = Platform(
@@ -225,7 +251,11 @@ def load_platform(config_dir: str | Path) -> Platform:
         config_dir=config_dir,
     )
     _check_consistency(platform)
-    return platform
+    try:
+        views = load_views(config_dir / "views", platform.ontology, platform.table_schemas())
+    except ViewError as e:
+        raise ConfigError(str(e)) from None
+    return replace(platform, views=views)
 
 
 def _check_consistency(platform: Platform) -> None:

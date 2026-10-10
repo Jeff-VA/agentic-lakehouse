@@ -79,3 +79,27 @@ def test_a_rollup_cannot_reuse_a_table_name(config_dir):
     edit(config_dir / "storage.yaml", lambda d: d["rollups"][0].update(table="raw.telemetry"))
     with pytest.raises(ValidationError, match="tables defined more than once: raw.telemetry"):
         load_platform(config_dir)
+
+
+def test_the_sample_views_load_with_the_platform():
+    platform = load_platform(SAMPLE_CONFIG)
+    assert set(platform.views) == {"isp_now", "quality_overall", "isp_hourly"}
+    assert platform.table_schemas()["gold.hourly_isp_quality"]["unique_sessions"] == "BIGINT"
+    assert platform.table_schemas()["raw.telemetry"]["client_isp"] == "VARCHAR"
+
+
+def test_a_broken_view_stops_the_platform_from_loading(config_dir):
+    (config_dir / "views").mkdir()
+    (config_dir / "views" / "typo.sql").write_text("/* description: A typo. */\nSELECT isp_providr FROM gold.hourly_isp_quality")
+    with pytest.raises(ConfigError, match="views/typo.sql: Column 'isp_providr' could not be resolved"):
+        load_platform(config_dir)
+
+
+@pytest.mark.parametrize("view", ["isp_now", "isp_hourly"])
+def test_views_break_when_the_metric_they_read_is_renamed(config_dir, view):
+    """Renaming a metric in every YAML file but forgetting a view fails at load, not in front of a viewer."""
+    shutil.copytree(SAMPLE_CONFIG / "views", config_dir / "views")
+    for path in config_dir.glob("*.yaml"):
+        path.write_text(path.read_text().replace("unique_sessions", "sessions"))
+    with pytest.raises(ConfigError, match=f"views/{view}.sql: .*unique_sessions"):
+        load_platform(config_dir)

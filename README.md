@@ -31,6 +31,11 @@ ontology changes as a reviewable patch.
   dimensions and metrics. A proposal has to pass the platform's own validation
   and run on real data before it is written as a git patch for a person to
   review.
+- **Views in plain SQL.** Dashboards read named, parameterized views from
+  `config/views/*.sql`. A view over an ontology model selects metrics by name
+  and is routed across both tiers, so it is live to the second; a view over
+  Iceberg tables is ordinary Trino SQL. Every view is checked against the
+  config when it loads, so renaming a metric fails a test, not a dashboard.
 - **The same answers for people and agents.** A REST API, an MCP server for
   Claude Code or Claude Desktop, and a dashboard all go through one gateway, so
   they report the same numbers with the same caveats.
@@ -48,7 +53,7 @@ flowchart LR
     rollups --> gold[("Gold Iceberg tables")]
     iceberg --> drift["Drift agent<br/>(Claude)"]
     drift --> patch["Config patch<br/>for review"]
-    ontology[["config/*.yaml<br/>ontology, ingestion, storage, quality"]] --> router
+    ontology[["config/*.yaml, views/*.sql<br/>ontology, ingestion, storage, quality, views"]] --> router
     router["Compiler + tier router<br/>(Jinja, sqlglot, DuckDB merge)"] --> pinot
     router --> trino
     router --> gateway["Gateway<br/>REST · MCP · dashboard"]
@@ -87,8 +92,9 @@ claude mcp add --transport http lakehouse http://127.0.0.1:8000/mcp
 
 Then ask something like *"Which ISP had the worst rebuffering over the last 6
 hours, and can I trust the data right now?"* The agent can list the metrics
-(`list_metrics`), query them (`query_metrics`) and check freshness and
-quality gates (`data_status`).
+(`list_metrics`), query them (`query_metrics`), run the project's views
+(`list_views`, `query_view`) and check freshness and quality gates
+(`data_status`).
 
 **Watch the drift agent.** Put `ANTHROPIC_API_KEY=...` in a `.env` file at the
 repository root (it is git-ignored) and restart the `drift` service. Then
@@ -117,7 +123,8 @@ and it is yours to change:
    YAML; you only write SQL for small expressions, like a `CASE` that turns a
    device name into a mobile flag.
 3. **Optionally** add rollups to `config/storage.yaml`, their checks to
-   `config/quality_rules.yaml`, and HTML dashboards to `config/dashboards/`.
+   `config/quality_rules.yaml`, views to `config/views/` and HTML dashboards
+   to `config/dashboards/`.
 4. **Run it:** `docker compose -f docker/docker-compose.yml up -d --build`.
    Setup creates the topics and tables, then publishes synthetic events with
    random values that fit your columns until your real producers write to
@@ -200,6 +207,40 @@ published: `row_count`, `not_null`, `unique`, `range`, `accepted_values`,
 a `warn` check is only reported. Results appear on the dashboard, in
 `data_status`, and in the Prefect UI.
 
+### Views
+
+A view is a SQL file in [`config/views/`](config/views/): a YAML header, then
+one SELECT. It is served at `GET /views/<name>?<params>` and over MCP.
+
+```sql
+/*
+description: Playback quality per ISP over the last hour.
+params:
+  minutes: {type: int, default: 60, min: 5, max: 1440}
+*/
+SELECT isp_provider, rebuffer_incidence_rate, p99_ttfb
+FROM playback_telemetry
+WHERE event_ts >= now() - INTERVAL :minutes MINUTE
+ORDER BY rebuffer_incidence_rate DESC
+```
+
+What it reads decides how it runs:
+
+- **From an ontology model** (above), the columns are metric and dimension
+  names, so metric math stays in `ontology.yaml`. The view becomes a semantic
+  query that the router answers from Pinot, Iceberg or both, so it includes
+  events from seconds ago. `date_trunc('hour', event_ts)` groups by time, and
+  WHERE bounds the time dimension (`>=` and `<`) and filters dimensions.
+- **From Iceberg tables** (`gold.hourly_isp_quality`, `raw.telemetry`), it is
+  any SELECT, run on Trino as written. Its data ends at each table's last flush
+  or rollup run, which the response reports as `data_through`.
+
+Parameters are typed, checked (`min`, `max`, `values`) and bound as SQL
+literals, never pasted in as text. A parameter with `default: null` is
+optional, and a condition on it is dropped while it has no value ("all ISPs").
+Each view is checked when the platform loads: one SELECT, known models,
+tables and columns. Its result columns are known up front.
+
 ### The drift agent
 
 [`core/agent_sync.py`](core/agent_sync.py) compares the live Iceberg schema
@@ -221,11 +262,12 @@ that already has a pending patch isn't proposed (or paid for) again.
 | [`storage.yaml`](config/storage.yaml) | Iceberg tables, flush schedule and lateness, rollups |
 | [`quality_rules.yaml`](config/quality_rules.yaml) | the checks each rollup must pass |
 | [`deployment.yaml`](config/deployment.yaml) | service endpoints (a container-network version lives in `docker/config/`) |
+| `views/*.sql` | named queries that dashboards and agents read, at `/views/<name>` |
 | `dashboards/*.html` | dashboards, served at `/d/<name>` (and at `/` when there is just one) |
 
-All five files are strictly validated (unknown keys are errors) and checked
-against each other when they load. For example, every column a metric reads
-must exist in its dataset.
+All of it is strictly validated (unknown keys are errors) and checked against
+the rest when it loads. For example, every column a metric reads must exist in
+its dataset, and every column a view reads must exist in its model or table.
 
 ## Development
 
@@ -244,11 +286,11 @@ run one on the host, for example `docker compose -f docker/docker-compose.yml
 stop stream`.
 
 ```
-config/            your project: YAML config and dashboards/ (starts as a copy of the example)
+config/            your project: YAML config, views/ and dashboards/ (starts as a copy of the example)
 core/              the engine: compiler, router, engines, flush, rollups, quality,
                    drift agent, gateway, synthetic events (simulate.py)
   templates/       the query skeleton and one macro file per engine
-examples/playback/ the reference project: config/, dashboards, simulator.py
+examples/playback/ the reference project: config/ (with views and a dashboard), simulator.py
 pipelines/         Prefect flows: flush, rollups, drift check
 docker/            docker-compose.yml, Trino catalog, container deployment config
 tests/             unit tests; tests/integration/ runs against the stack

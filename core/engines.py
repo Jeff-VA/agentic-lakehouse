@@ -77,7 +77,11 @@ class TrinoEngine:
 
     def execute(self, sql: str) -> pa.Table:
         conn = trino.dbapi.connect(
-            host=self.endpoint.host, port=self.endpoint.port, user=self.endpoint.user, catalog=self.endpoint.catalog
+            host=self.endpoint.host,
+            port=self.endpoint.port,
+            user=self.endpoint.user,
+            catalog=self.endpoint.catalog,
+            timezone="UTC",  # like every time in the platform, so now() compares right with stored timestamps
         )
         try:
             cursor = conn.cursor()
@@ -90,11 +94,13 @@ class TrinoEngine:
             raise EngineError(f"trino: {e}") from e
         finally:
             conn.close()
-        return pa.table(
-            {
-                column[0]: pa.array([row[i] for row in rows], type=_TRINO_TYPES.get(column[1].split("(")[0]))
-                for i, column in enumerate(description)
-            }
+        return plain_types(
+            pa.table(
+                {
+                    column[0]: pa.array([row[i] for row in rows], type=_TRINO_TYPES.get(column[1].split("(")[0]))
+                    for i, column in enumerate(description)
+                }
+            )
         )
 
 

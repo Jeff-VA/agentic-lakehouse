@@ -121,7 +121,7 @@ def call_mcp(target, method, *args):
 
 def test_mcp_tools_are_listed_with_schemas():
     tools = {t.name: t for t in call_mcp(create_mcp_server(Gateway(router())), "list_tools").tools}
-    assert tools.keys() == {"list_metrics", "query_metrics", "data_status"}
+    assert tools.keys() == {"list_metrics", "query_metrics", "data_status", "list_views", "query_view"}
     assert set(tools["query_metrics"].input_schema["required"]) == {"metrics", "start", "end"}
     assert tools["query_metrics"].annotations.read_only_hint is True
 
@@ -173,7 +173,7 @@ def test_run_py_serves_mcp_over_stdio():
     root = Path(__file__).parents[1]
     params = StdioServerParameters(command=sys.executable, args=[str(root / "run.py"), "mcp"], cwd=str(root))
     tools = call_mcp(params, "list_tools").tools
-    assert {t.name for t in tools} == {"list_metrics", "query_metrics", "data_status"}
+    assert {t.name for t in tools} == {"list_metrics", "query_metrics", "data_status", "list_views", "query_view"}
 
 
 class FakeRollups:
@@ -270,4 +270,6 @@ def test_the_gateway_starts_while_the_stack_is_unreachable():
         update={"iceberg": platform.deployment.iceberg.model_copy(update={"catalog_uri": "http://127.0.0.1:1"})}
     )
     gateway = Gateway.from_platform(replace(platform, deployment=unreachable))
-    assert {t.name for t in call_mcp(create_mcp_server(gateway), "list_tools").tools} == {"list_metrics", "query_metrics", "data_status"}
+    assert {t.name for t in call_mcp(create_mcp_server(gateway), "list_tools").tools} == {
+        "list_metrics", "query_metrics", "data_status", "list_views", "query_view"
+    }
