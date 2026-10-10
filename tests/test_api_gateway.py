@@ -202,14 +202,21 @@ def status_client(tmp_path):
         "# Upstream added cdn_pop; proposed a dimension.\n"
         "#\n# Review, then from the repository root: git apply <this file>\n\n--- a/config/ingestion.yaml\n"
     )
-    gateway = Gateway(router(), rollups=FakeRollups(), proposals_dir=tmp_path)
+    gateway = Gateway(router(), rollups=FakeRollups(), proposals_dir=tmp_path, schema_drift=lambda dataset: ["cdn_pop"])
     with TestClient(create_app(gateway)) as client:
         yield client
 
 
 def test_status_reports_freshness_gates_and_drift(status_client):
     status = status_client.get("/status").json()
-    assert status["datasets"] == [{"name": "playback", "realtime_days": pytest.approx(4 / 24), "historical_through": "2026-01-01T04:00:00Z"}]
+    assert status["datasets"] == [
+        {
+            "name": "playback",
+            "realtime_days": pytest.approx(4 / 24),
+            "historical_through": "2026-01-01T04:00:00Z",
+            "unmodeled_columns": ["cdn_pop"],
+        }
+    ]
     [rollup] = status["rollups"]
     assert (rollup["table"], rollup["complete_through"]) == ("gold.hourly", "2026-01-01T04:00:00Z")
     assert (rollup["last_audit"]["published"], rollup["last_audit"]["at"]) == (False, "2026-01-01T05:00:10Z")

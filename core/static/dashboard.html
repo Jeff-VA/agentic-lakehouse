@@ -531,13 +531,19 @@ function renderGates(rollups) {
     return el("div", { class: "gate" }, head, facts, list);
   }));
 }
-function renderDrift(proposals) {
+function renderDrift(proposals, datasets) {
   const box = document.getElementById("drift");
-  if (!proposals?.length) {
-    box.replaceChildren(el("div", { class: "empty", text: "No drift waiting for review. When producers add event fields, the drift agent proposes config changes here." }));
+  const unmodeled = (datasets ?? []).filter(d => d.unmodeled_columns?.length);
+  if (!proposals?.length && !unmodeled.length) {
+    box.replaceChildren(el("div", { class: "empty", text: "The config describes every field in the data. When producers add event fields, the drift agent proposes config changes here." }));
     return;
   }
-  box.replaceChildren(...proposals.map(p => el("div", { class: "proposal" },
+  const fields = unmodeled.map(d => el("div", { class: "proposal" },
+    el("div", { class: "status" }, icon("warn"), el("span", { text: `${d.name}: ${d.unmodeled_columns.length} field${d.unmodeled_columns.length > 1 ? "s" : ""} in the data that the config doesn't describe` })),
+    el("p", { class: "caption" }, el("code", { text: d.unmodeled_columns.join(", ") })),
+    proposals?.length ? null : el("p", { class: "caption", text: "The drift agent's hourly check proposes config changes for them (it needs ANTHROPIC_API_KEY in .env)." }),
+  ));
+  box.replaceChildren(...fields, ...(proposals ?? []).map(p => el("div", { class: "proposal" },
     el("div", { class: "status" }, icon("warn"), el("span", { text: `${p.dataset}: proposed ${ago(p.created)}` })),
     el("p", { class: "caption", text: p.summary || "(no summary)" }),
     el("div", { class: "caption" }, document.createTextNode("Review, then: "), el("code", { text: `git apply proposals/${p.file} && python run.py setup` })),
@@ -563,7 +569,7 @@ async function refresh() {
   if (byIsp) renderNow(byIsp.rows);
   renderKpis(current?.rows?.[0], previous?.rows?.[0], status);
   if (trend) { state.trendRows = trend.rows; renderTrend(); }
-  if (status) { renderGates(status.rollups); renderDrift(status.drift_proposals); }
+  if (status) { renderGates(status.rollups); renderDrift(status.drift_proposals, status.datasets); }
   banner.classList.toggle("show", errors.length > 0);
   banner.replaceChildren(...(errors.length ? [icon("bad"), el("span", { text: `Some panels couldn't refresh: ${errors[0]}` })] : []));
   document.getElementById("updated").textContent = `Updated ${now.toLocaleTimeString()}`;

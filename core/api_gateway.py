@@ -14,6 +14,7 @@ MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
 
 import contextlib
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
@@ -25,7 +26,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 
-from core.agent_sync import pending_proposals
+from core.agent_sync import pending_proposals, unmodeled_columns
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
 from core.config import Platform
 from core.engines import EngineError
@@ -89,6 +90,7 @@ class DatasetStatus(BaseModel):
     name: str
     realtime_days: float
     historical_through: datetime | None  # the flush watermark
+    unmodeled_columns: list[str] = []  # fields producers send that the config doesn't describe yet
 
 
 class CheckInfo(BaseModel):
@@ -137,8 +139,9 @@ class RollupRows(BaseModel):
 class Gateway:
     """The gateway's operations, independent of the transport serving them.
 
-    `rollups` and `proposals_dir` are optional: without them the status reports
-    no rollups or drift proposals.
+    `rollups`, `proposals_dir` and `schema_drift` (dataset name -> columns the
+    config doesn't describe) are optional; without them the status leaves out
+    rollups, drift proposals and unmodeled columns.
     """
 
     def __init__(
@@ -147,20 +150,24 @@ class Gateway:
         *,
         rollups: RollupStore | None = None,
         proposals_dir: str | Path | None = None,
+        schema_drift: Callable[[str], list[str]] | None = None,
         max_rows: int = MAX_ROWS,
     ):
         self.router = router
         self.rollups = rollups
         self.proposals_dir = Path(proposals_dir) if proposals_dir else None
+        self.schema_drift = schema_drift
         self.max_rows = max_rows
 
     @classmethod
     def from_platform(cls, platform: Platform, proposals_dir: str | Path = "proposals") -> "Gateway":
-        return cls(
-            Router.from_platform(platform),
-            rollups=RollupStore(platform, lambda: iceberg_catalog(platform)),
-            proposals_dir=proposals_dir,
-        )
+        rollups = RollupStore(platform, lambda: iceberg_catalog(platform))  # its catalog is created on first use
+
+        def schema_drift(dataset: str) -> list[str]:
+            table = rollups.catalog.load_table(platform.iceberg_table(dataset).table)
+            return unmodeled_columns(platform.dataset(dataset), table)
+
+        return cls(Router.from_platform(platform), rollups=rollups, proposals_dir=proposals_dir, schema_drift=schema_drift)
 
     def status(self) -> Status:
         datasets = []
@@ -171,6 +178,7 @@ class Gateway:
                     name=name,
                     realtime_days=placement.retention.total_seconds() / 86400,
                     historical_through=_utc(flushed) if flushed else None,
+                    unmodeled_columns=self.schema_drift(name) if self.schema_drift else [],
                 )
             )
         rollups = []
@@ -302,8 +310,9 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
 
     @mcp.tool(annotations=read_only)
     def data_status() -> Status:
-        """How fresh each tier's data is, whether each rollup passed its last quality gate, and any
-        schema drift waiting for review. Check it before trusting numbers that matter."""
+        """How fresh each tier's data is, whether each rollup passed its last quality gate, fields
+        producers send that the config doesn't describe yet, and drift proposals waiting for review.
+        Check it before trusting numbers that matter."""
         return gateway.status()
 
     @mcp.tool(annotations=read_only)

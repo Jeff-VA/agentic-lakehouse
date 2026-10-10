@@ -20,6 +20,7 @@ from core.agent_sync import (
     detect_drift,
     propose_changes,
     render_patch,
+    unmodeled_columns,
 )
 from core.config import load_platform
 from core.flush import flush
@@ -247,3 +248,7 @@ def test_missing_credentials_are_reported_before_calling_claude(table, repo, mon
     report, sample = detect_drift("telemetry", PLATFORM, table)
     with pytest.raises(DriftAgentError, match="no Claude API credentials: put ANTHROPIC_API_KEY"):
         propose_changes(report, sample, "config", log=lambda m: None)
+
+
+def test_unmodeled_columns_lists_every_field_the_config_lacks(table):
+    assert unmodeled_columns(DATASET, table) == ["cdn_pop", "dropped_frames", "is_live", "droppedFrames"]

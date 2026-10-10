@@ -45,7 +45,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 from core.compiler import MetricQuery, QueryError, SqlCompiler
-from core.config import ColumnType, ConfigError, Platform, load_platform
+from core.config import ColumnType, ConfigError, Dataset, Platform, load_platform
 from core.engines import DuckDBEngine, EngineError
 from core.orchestrator import iceberg_catalog
 
@@ -164,6 +164,13 @@ answers a real question (e.g. an average or p95 for latencies, a sum for totals)
 suit count_distinct, or nothing. Prefer a few well-described definitions over one per column, and \
 don't duplicate existing ones. Use the column profiles to choose types and infer units. List \
 every new column you don't model in not_modeled, with the reason."""
+
+
+def unmodeled_columns(dataset: Dataset, table: Table) -> list[str]:
+    """Columns the dataset's Iceberg table has but ingestion.yaml doesn't list: fields producers
+    send that the config doesn't describe yet. Reads only the table's schema."""
+    configured = {c.name for c in dataset.columns}
+    return [f.name for f in table.schema().fields if f.name not in configured]
 
 
 def detect_drift(dataset_name: str, platform: Platform, table: Table, sample_rows: int = 10_000) -> tuple[DriftReport, pa.Table | None]:
