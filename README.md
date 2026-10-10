@@ -36,9 +36,11 @@ ontology changes as a reviewable patch.
   and is routed across both tiers, so it is live to the second; a view over
   Iceberg tables is ordinary Trino SQL. Every view is checked against the
   config when it loads, so renaming a metric fails a test, not a dashboard.
-- **Live without polling.** A dashboard subscribes to a view and the server
-  pushes a new result when the data changes. Everyone watching the same view
-  shares one query, however many dashboards are open.
+- **Dashboards are HTML with live chart tags.** `<male-lines view="isp_hourly"
+  x="hour" y="p99_ttfb" series="isp_provider">` draws a view and keeps it
+  current: the server pushes a new result when the data changes, and everyone
+  watching the same view shares one query. Labels and number formats come from
+  the ontology, so the example dashboard is about 90 lines of HTML.
 - **The same answers for people and agents.** A REST API, an MCP server for
   Claude Code or Claude Desktop, and a dashboard all go through one gateway, so
   they report the same numbers with the same caveats.
@@ -255,6 +257,34 @@ one of its tables. Either way, a result is pushed only if it changed. A
 dashboard watches all its views over one connection,
 `GET /live?view=isp_now&view=isp_hourly%3Fhours%3D24`, since browsers allow
 only about six open connections to a server.
+
+### Dashboards
+
+A dashboard is an HTML file in [`config/dashboards/`](config/dashboards/),
+served at `/d/<name>`. It loads [`/male.js`](core/static/male.js) and draws
+views with tags:
+
+```html
+<script type="module" src="/male.js"></script>
+
+<male-kpi view="quality_overall" value="p99_ttfb" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></male-kpi>
+<male-bars view="isp_now" category="isp_provider" value="rebuffer_incidence_rate" highlight="first"></male-bars>
+<male-param name="hours" options="24=24 h,48=48 h,168=7 days" value="48"></male-param>
+<male-lines view="isp_hourly" x="hour" y="p99_ttfb" series="isp_provider"></male-lines>
+```
+
+Every tag is live: the page keeps one connection to `/live` and redraws a
+chart when its view's result changes. Labels, number formats and which way is
+better (for coloring a change) come from the ontology, so a tag rarely needs
+more than names. A `<male-param>` sets a page parameter that fills every view
+parameter of the same name, and the URL keeps it, so a link reopens the same
+state. Charts use one validated palette, keep an entity's color on every chart
+of the page, and come with a table view, a keyboard crosshair, and light and
+dark themes. `<male-freshness>`, `<male-gates>` and `<male-drift>` show the
+platform's own status. Custom code reads the same live data with
+`import { subscribe } from "/male.js"`. The full list of tags is at the top of
+[`male.js`](core/static/male.js), and the example's
+[dashboard](examples/playback/config/dashboards/playback.html) uses most of them.
 
 ### The drift agent
 

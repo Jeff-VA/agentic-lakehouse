@@ -21,6 +21,7 @@ dependencies = [
     "sqlglot>=30.21,<31",  # majors break dialect internals; core.compiler subclasses Dialect
     "trino>=0.330",
     "uvicorn>=0.30",
+    "websockets>=13",  # drives headless Chrome for dashboard screenshots (core/browser.py)
 ]
 
 [project.optional-dependencies]
@@ -34,7 +35,7 @@ build-backend = "setuptools.build_meta"
 include = ["core*", "pipelines*", "examples*"]
 
 [tool.setuptools.package-data]
-core = ["templates/*.sql", "templates/macros/*.sql"]
+core = ["templates/*.sql", "templates/macros/*.sql", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

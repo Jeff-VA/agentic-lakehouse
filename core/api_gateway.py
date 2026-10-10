@@ -15,7 +15,8 @@ REST:  GET /catalog, POST /query, GET /views, GET /views/{name}?<params>,
 Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
        view's result each time it changes, and GET /live?view=<name>&view=...
        for several views over one connection (core/live.py)
-Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one)
+Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one);
+       they draw views with the chart tags in /male.js (core/static/male.js)
 MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
 
@@ -53,6 +54,7 @@ from core.views import ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
 DASHBOARD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+STATIC = Path(__file__).parent / "static"  # male.js, the chart tags dashboards use
 
 
 class DimensionInfo(BaseModel):
@@ -711,6 +713,10 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live:
             '<body style="font: 15px system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px">'
             f'<h1 style="font-size: 20px">Dashboards</h1>{body}<p><a href="/docs">API docs</a></p></body>'
         )
+
+    @app.get("/male.js", include_in_schema=False)
+    def male_js() -> FileResponse:
+        return FileResponse(STATIC / "male.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/d/{name}", include_in_schema=False)
     def dashboard(name: str) -> FileResponse:
