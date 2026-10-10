@@ -15,6 +15,7 @@ from mcp import Client, StdioServerParameters
 from test_router import FLUSHED, router
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
+from core.config import load_platform
 from core.engines import EngineError
 from core.rollups import RollupStatus
 from core.router import Tier
@@ -234,3 +235,14 @@ def test_mcp_data_status_tool(tmp_path):
     result = call_mcp(create_mcp_server(Gateway(router(), rollups=FakeRollups(), proposals_dir=tmp_path)), "call_tool", "data_status", {})
     assert result.is_error is False
     assert result.structured_content["rollups"][0]["last_audit"]["checks"][0]["detail"] == "stale"
+
+
+def test_the_gateway_starts_while_the_stack_is_unreachable():
+    """Nothing connects until a request needs it: run.py serve and run.py mcp start even when
+    the engines or the Iceberg catalog are down (as in CI, where none of them run)."""
+    platform = load_platform(Path(__file__).parents[1] / "config")
+    unreachable = platform.deployment.model_copy(
+        update={"iceberg": platform.deployment.iceberg.model_copy(update={"catalog_uri": "http://127.0.0.1:1"})}
+    )
+    gateway = Gateway.from_platform(replace(platform, deployment=unreachable))
+    assert {t.name for t in call_mcp(create_mcp_server(gateway), "list_tools").tools} == {"list_metrics", "query_metrics", "data_status"}

@@ -52,6 +52,18 @@ def generate_events(start: datetime, end: datetime, *, sessions_per_minute: floa
     return events
 
 
+# What an upstream release might start sending: which CDN point of presence
+# served the stream, and frames dropped since the last event. Used by
+# `run.py stream --new-fields` to show the flush and the drift agent at work.
+CDN_POPS = ["den-1", "sea-2", "ord-1", "iad-3", "dfw-1"]
+
+
+def add_release_fields(events: list[dict], rng: random.Random) -> None:
+    for event in events:
+        event["cdn_pop"] = rng.choice(CDN_POPS)
+        event["dropped_frames"] = round(rng.expovariate(1 / 3)) if event["buffer_duration_ms"] > 200 else 0
+
+
 class LiveSource:
     """Synthetic telemetry in real time, for `run.py stream`.
 

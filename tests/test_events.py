@@ -1,3 +1,4 @@
+import random
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -6,7 +7,7 @@ from statistics import mean
 import pyarrow as pa
 
 from core.config import load_platform
-from core.events import ISPS, LiveSource, generate_events
+from core.events import CDN_POPS, ISPS, LiveSource, add_release_fields, generate_events
 from core.schema_compiler import arrow_schema
 
 START, END = datetime(2026, 1, 1), datetime(2026, 1, 1, 2)
@@ -67,3 +68,11 @@ def test_live_source_streams_sessions_across_polls():
 def test_live_source_returns_nothing_until_time_passes():
     source = LiveSource(START, seed=1)
     assert source.poll(START) == []
+
+
+def test_release_fields_simulate_an_upstream_change():
+    events = generate_events(START, END, seed=2)
+    add_release_fields(events, random.Random(0))
+    assert {e["cdn_pop"] for e in events} <= set(CDN_POPS)
+    assert all(e["dropped_frames"] == 0 for e in events if e["buffer_duration_ms"] <= 200)  # only stalls drop frames
+    assert any(e["dropped_frames"] > 0 for e in events)

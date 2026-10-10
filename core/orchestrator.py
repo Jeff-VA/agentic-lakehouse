@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import httpx
-from confluent_kafka import KafkaError, KafkaException, Producer
+from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
 from confluent_kafka.admin import AdminClient, NewTopic
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
@@ -145,6 +145,18 @@ def teardown(platform: Platform, log: Log = print) -> None:
         if catalog.table_exists(rollup.table):
             catalog.purge_table(rollup.table)
             log(f"iceberg: dropped rollup table {rollup.table}")
+
+
+def topic_is_empty(platform: Platform, dataset: Dataset) -> bool:
+    """Whether the dataset's topic has never held an event (its offsets all start at 0)."""
+    consumer = Consumer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "group.id": "male-setup"})
+    try:
+        partitions = consumer.list_topics(dataset.topic, timeout=10).topics[dataset.topic].partitions
+        return all(
+            consumer.get_watermark_offsets(TopicPartition(dataset.topic, p), timeout=10)[1] == 0 for p in partitions
+        )
+    finally:
+        consumer.close()
 
 
 def flushed_through(platform: Platform, dataset: str) -> datetime | None:

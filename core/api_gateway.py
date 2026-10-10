@@ -158,7 +158,7 @@ class Gateway:
     def from_platform(cls, platform: Platform, proposals_dir: str | Path = "proposals") -> "Gateway":
         return cls(
             Router.from_platform(platform),
-            rollups=RollupStore(platform, iceberg_catalog(platform)),
+            rollups=RollupStore(platform, lambda: iceberg_catalog(platform)),
             proposals_dir=proposals_dir,
         )
 

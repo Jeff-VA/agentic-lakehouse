@@ -148,10 +148,21 @@ class RollupStatus:
 
 
 class RollupStore:
-    """Read side of the gold tables, for the gateway: their status and rows."""
+    """Read side of the gold tables, for the gateway: their status and rows.
 
-    def __init__(self, platform: Platform, catalog: Catalog):
-        self.platform, self.catalog = platform, catalog
+    `catalog` may be a function that creates it, called on first use, so the
+    gateway starts even while the Iceberg catalog is unreachable.
+    """
+
+    def __init__(self, platform: Platform, catalog: Catalog | Callable[[], Catalog]):
+        self.platform = platform
+        self._catalog = catalog
+
+    @property
+    def catalog(self) -> Catalog:
+        if not isinstance(self._catalog, Catalog):
+            self._catalog = self._catalog()
+        return self._catalog
 
     def statuses(self) -> list[RollupStatus]:
         statuses = []

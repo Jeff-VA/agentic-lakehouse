@@ -6,12 +6,39 @@
 #   python run.py setup    # creates the topic, bucket and tables from config/
 #
 #   Orchestration:   Prefect server, for the flush and other pipelines
+#   The platform:    one image (../Dockerfile) running setup, the live event
+#                    stream, the flush / rollup / drift schedules and the API
 #
-# Host ports: Kafka 9092, Pinot controller UI 9000, Pinot broker 8099,
-# Trino 8080, Iceberg REST 8181, MinIO S3 API 9100 and console 9101,
-# Prefect UI 4200.
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# On a first start, setup publishes 24 hours of synthetic history; after that
+# the stream keeps data live. Dashboard and API: http://127.0.0.1:8000
+#
+# Host ports: API and dashboard 8000, Kafka 9092, Pinot controller UI 9000,
+# Pinot broker 8099, Trino 8080, Iceberg REST 8181, MinIO S3 API 9100 and
+# console 9101, Prefect UI 4200.
 # Credentials here are for this local stack only.
 name: male
+
+x-app: &app
+  build:
+    context: ..
+  image: male-app:latest
+  restart: unless-stopped
+  volumes:
+    - ../config:/app/config:ro
+    - ./config/deployment.yaml:/app/config/deployment.yaml:ro  # container-network addresses
+    - proposals:/app/proposals
+  env_file:
+    - path: ../.env  # ANTHROPIC_API_KEY for the drift agent, if present
+      required: false
+  mem_limit: 512m
+
+x-after-setup: &after-setup
+  setup:
+    condition: service_completed_successfully
+  prefect:
+    condition: service_healthy
 
 x-pinot: &pinot
   image: apachepinot/pinot:1.5.0
@@ -173,6 +200,50 @@ services:
       timeout: 5s
       retries: 30
 
+  setup:
+    <<: *app
+    restart: "no"
+    command: [setup, --seed-hours, "24"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      pinot-controller: {condition: service_healthy}
+      pinot-broker: {condition: service_healthy}
+      pinot-server: {condition: service_healthy}
+      iceberg-rest: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+      trino: {condition: service_healthy}
+
+  stream:
+    <<: *app
+    command: [stream]
+    depends_on: *after-setup
+
+  flush:
+    <<: *app
+    command: [flush, --serve]
+    depends_on: *after-setup
+
+  rollups:
+    <<: *app
+    command: [rollups, --serve]
+    depends_on: *after-setup
+
+  drift:
+    <<: *app
+    command: [drift, --serve]
+    depends_on: *after-setup
+
+  api:
+    <<: *app
+    command: [serve, --host, 0.0.0.0, --port, "8000"]
+    ports: ["8000:8000"]
+    depends_on: *after-setup
+    healthcheck:
+      test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 volumes:
   kafka-data:
   zookeeper-data:
@@ -182,3 +253,4 @@ volumes:
   minio-data:
   iceberg-catalog:
   prefect-data:
+  proposals:
