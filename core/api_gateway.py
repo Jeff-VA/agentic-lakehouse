@@ -12,6 +12,9 @@ The same operations are served over REST and over the Model Context Protocol
 
 REST:  GET /catalog, POST /query, GET /views, GET /views/{name}?<params>,
        GET /status, GET /rollups/{table} (interactive docs at /docs)
+Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
+       view's result each time it changes, and GET /live?view=<name>&view=...
+       for several views over one connection (core/live.py)
 Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one)
 MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
@@ -20,15 +23,17 @@ import contextlib
 import html
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from urllib.parse import parse_qsl
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
 import pyarrow as pa
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -39,6 +44,7 @@ from core.agent_sync import pending_proposals, unmodeled_columns
 from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
 from core.config import Platform
 from core.engines import EngineError, QueryEngine, TrinoEngine
+from core.live import LiveViews
 from core.ontology import AggregateMetric, Metric, SemanticModel
 from core.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from core.rollups import ROLLUP_THROUGH, RollupStore
@@ -167,6 +173,7 @@ class ViewInfo(BaseModel):
     params: list[ViewParamInfo]
     columns: list[ViewColumn]
     sql: str
+    refresh_seconds: float | None  # how often its live feed rechecks, if the view sets it
 
 
 class ViewCatalog(BaseModel):
@@ -190,6 +197,7 @@ class ViewResult(BaseModel):
 class TableState:
     exists: bool
     complete_through: datetime | None = None  # the table holds every row before this time (naive UTC)
+    snapshot: int | None = None  # the current Iceberg snapshot: it changes with every commit of data
 
 
 @dataclass(frozen=True)
@@ -239,13 +247,18 @@ class Gateway:
 
         def table_state(name: str) -> TableState:
             try:
-                properties = rollups.catalog.load_table(name).properties
+                table = rollups.catalog.load_table(name)
             except NoSuchTableError:
                 return TableState(exists=False)
             except Exception as e:  # e.g. the catalog is unreachable: a failing engine, like Trino being down
                 raise EngineError(f"iceberg catalog: {e}") from e
-            through = properties.get(FLUSHED_THROUGH) or properties.get(ROLLUP_THROUGH)
-            return TableState(exists=True, complete_through=datetime.fromisoformat(through) if through else None)
+            through = table.properties.get(FLUSHED_THROUGH) or table.properties.get(ROLLUP_THROUGH)
+            snapshot = table.current_snapshot()
+            return TableState(
+                exists=True,
+                complete_through=datetime.fromisoformat(through) if through else None,
+                snapshot=snapshot.snapshot_id if snapshot else None,
+            )
 
         warehouse = Warehouse(TrinoEngine(platform.deployment.trino), platform.deployment.trino.catalog, table_state)
         return cls(
@@ -458,6 +471,7 @@ def _view_info(view: View) -> ViewInfo:
         ],
         columns=list(view.columns),
         sql=view.sql,
+        refresh_seconds=view.refresh_seconds,
     )
 
 
@@ -562,10 +576,11 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
     return mcp
 
 
-def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> FastAPI:
-    """REST endpoints, the MCP server (Streamable HTTP) at /mcp, and the HTML
-    dashboards in `dashboards_dir` (the project's config/dashboards)."""
+def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None, live: LiveViews | None = None) -> FastAPI:
+    """REST endpoints, live views, the MCP server (Streamable HTTP) at /mcp, and
+    the HTML dashboards in `dashboards_dir` (the project's config/dashboards)."""
     dashboards = Path(dashboards_dir) if dashboards_dir else None
+    live = live or LiveViews(gateway)
 
     def dashboard_files() -> dict[str, Path]:
         if dashboards is None or not dashboards.is_dir():
@@ -577,7 +592,10 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> Fa
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         async with mcp.session_manager.run():  # mounted apps don't get their own lifespan run
-            yield
+            try:
+                yield
+            finally:
+                live.close()
 
     app = FastAPI(
         title="Modular Agentic Lakehouse Engine",
@@ -617,6 +635,45 @@ def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> Fa
             raise HTTPException(status_code=404, detail=f"no view named '{name}'")
         params = {key: value for key, value in request.query_params.items() if key != "include_sql"}
         return gateway.view(name, params, include_sql)
+
+    def subscription(name: str, request: Request) -> tuple[str, dict[str, Any]]:
+        # A dependency, so a bad request gets its 404 or 400 before the stream starts.
+        if name not in gateway.views:
+            raise HTTPException(status_code=404, detail=f"no view named '{name}'")
+        return name, gateway.views[name].bind(dict(request.query_params))
+
+    @app.get("/views/{name}/live", response_class=EventSourceResponse)
+    async def live_view(
+        subscribed: Annotated[tuple[str, dict[str, Any]], Depends(subscription)],
+    ) -> AsyncIterator[ServerSentEvent]:
+        """Server-Sent Events: the view's result now (event `result`), then again each time it
+        changes. Event `error` means a refresh failed; the last result still stands."""
+        async for event in live.events(*subscribed):
+            yield event
+
+    def subscriptions(request: Request) -> list[tuple[str, str, dict[str, Any]]]:
+        requested = request.query_params.getlist("view")
+        if not requested:
+            raise HTTPException(status_code=400, detail="name the views to watch: /live?view=<name>&view=<name>?<param>=<value>")
+        subscribed = []
+        for key in dict.fromkeys(requested):  # each once, in order
+            name, _, query = key.partition("?")
+            if name not in gateway.views:
+                raise HTTPException(status_code=404, detail=f"no view named '{name}'")
+            subscribed.append((key, name, gateway.views[name].bind(dict(parse_qsl(query, keep_blank_values=True)))))
+        return subscribed
+
+    @app.get("/live", response_class=EventSourceResponse)
+    async def live_views(
+        subscribed: Annotated[list[tuple[str, str, dict[str, Any]]], Depends(subscriptions)],
+    ) -> AsyncIterator[ServerSentEvent]:
+        """Server-Sent Events for several views over one connection, as a dashboard needs: each
+        `view` is a name, with its parameters after a ?, URL-encoded (isp_hourly%3Fhours%3D24).
+        Events are `result` ({subscription, result}) and `error` ({subscription, detail}), where
+        `subscription` is the `view` value as requested."""
+        async for key, event in live.watch(subscribed):
+            body = {"result": event.data} if event.event == "result" else event.data
+            yield ServerSentEvent(event=event.event, data={"subscription": key, **body})
 
     @app.get("/status")
     def status() -> Status:

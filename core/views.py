@@ -26,8 +26,9 @@ What the SELECT reads decides how it runs:
   the gold rollups in storage.yaml): any SELECT, run on Trino as written. Its
   data ends where each table's last flush or rollup run did.
 
-Parameters are written :name and declared in the header with a type and an
-optional default. Values are bound as SQL literals, never pasted in as text. A
+The header can also set `refresh_seconds`: how often a live view rechecks its
+data (core/live.py). Parameters are written :name and declared in the header
+with a type and an optional default. Values are bound as SQL literals, never pasted in as text. A
 parameter declared with `default: null` is optional: in a view over a model, a
 dimension condition comparing with it is dropped while it has no value, which
 is how a dashboard offers "all ISPs".
@@ -160,6 +161,7 @@ class ViewParam(StrictModel):
 class ViewHeader(StrictModel):
     description: str = Field(min_length=1)  # agents and people pick views by reading this
     params: dict[Identifier, ViewParam] = {}
+    refresh_seconds: float | None = Field(default=None, ge=1)  # how often a live view rechecks (core/live.py)
 
 
 class ViewColumn(BaseModel):
@@ -268,6 +270,7 @@ class View:
     sql: str  # the SELECT as written, without the header
     columns: tuple[ViewColumn, ...]
     source: ModelSource | TableSource
+    refresh_seconds: float | None = None
 
     @property
     def reads(self) -> list[str]:
@@ -337,7 +340,7 @@ def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas) -
         source, columns = _model_source(tree, model, header.params, ontology)
     else:
         source, columns = _table_source(tree, header.params, tables, models)
-    return View(name, header.description, dict(header.params), sql, tuple(columns), source)
+    return View(name, header.description, dict(header.params), sql, tuple(columns), source, header.refresh_seconds)
 
 
 def _validation_message(error: ValidationError) -> str:

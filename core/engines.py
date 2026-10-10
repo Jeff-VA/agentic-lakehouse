@@ -6,6 +6,7 @@ types so results from different engines can be compared or combined directly.
 """
 
 import math
+import threading
 from datetime import datetime
 from typing import Protocol
 
@@ -45,10 +46,12 @@ class DuckDBEngine:
 
     def __init__(self, con: duckdb.DuckDBPyConnection | None = None):
         self.con = con or duckdb.connect()
+        self._lock = threading.Lock()  # a DuckDB connection runs one query at a time
 
     def execute(self, sql: str) -> pa.Table:
         try:
-            return plain_types(self.con.execute(sql).to_arrow_table())
+            with self._lock:
+                return plain_types(self.con.execute(sql).to_arrow_table())
         except duckdb.Error as e:
             raise EngineError(f"duckdb: {e}") from e
 

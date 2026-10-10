@@ -1,13 +1,20 @@
 """The example project's views on the real stack, served as `python run.py serve` serves them."""
 
+import json
+import socket
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import anyio
+import httpx
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 from mcp import Client
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
+from core.live import LiveViews
 
 pytestmark = pytest.mark.integration
 
@@ -78,3 +85,42 @@ def test_agents_run_views_over_mcp(platform):
     result = anyio.run(main)
     assert result.is_error is False
     assert [c["name"] for c in result.structured_content["columns"]] == ["rebuffer_incidence_rate", "p99_ttfb", "unique_sessions"]
+
+
+@pytest.fixture(scope="module")
+def server(platform):
+    """The gateway on a real HTTP server, with live views refreshing every second."""
+    gateway = Gateway.from_platform(platform)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    app = create_app(gateway, live=LiveViews(gateway, refresh_seconds=1))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        assert time.monotonic() < deadline, "server didn't start"
+        time.sleep(0.05)
+    yield f"http://127.0.0.1:{port}"
+    server.should_exit = True
+    thread.join(timeout=10)
+
+
+def test_new_events_reach_a_live_view(server):
+    """Kafka -> Pinot -> the view's feed -> Server-Sent Events, while the stream service publishes."""
+    results = []
+    with httpx.Client(base_url=server, timeout=30) as client:
+        with client.stream("GET", "/views/isp_now/live", params={"minutes": 5}) as response:
+            event = None
+            for line in response.iter_lines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ")
+                elif line.startswith("data: ") and event == "result":
+                    results.append(json.loads(line.removeprefix("data: ")))
+                    if len(results) == 2:
+                        break
+    if not results[0]["rows"]:
+        pytest.skip("no events in the last 5 minutes; start the stream: python run.py stream")
+    sessions = [sum(row["unique_sessions"] for row in result["rows"]) for result in results]
+    assert results[0]["rows"] != results[1]["rows"], sessions  # pushed because the numbers moved

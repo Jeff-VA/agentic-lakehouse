@@ -334,3 +334,11 @@ def test_load_views_checks_every_file_and_names_the_bad_ones(tmp_path):
     (tmp_path / "Bad-Name.sql").unlink()
     assert list(load_views(tmp_path, ONTOLOGY, TABLES)) == ["good"]
     assert load_views(tmp_path / "missing", ONTOLOGY, TABLES) == {}  # a project without views
+
+
+def test_a_view_can_set_how_often_it_refreshes_live():
+    assert view(f"SELECT plays FROM playback WHERE {LAST_HOUR}").refresh_seconds is None  # the server's default
+    header = "/*\ndescription: d\nrefresh_seconds: 30\n*/\n"
+    assert parse_view("test", header + f"SELECT plays FROM playback WHERE {LAST_HOUR}", ONTOLOGY, TABLES).refresh_seconds == 30
+    with pytest.raises(ViewError, match="refresh_seconds: Input should be greater than or equal to 1"):
+        parse_view("test", header.replace("30", "0.1") + "SELECT 1 AS a", ONTOLOGY, TABLES)

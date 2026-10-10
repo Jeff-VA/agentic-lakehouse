@@ -36,6 +36,9 @@ ontology changes as a reviewable patch.
   and is routed across both tiers, so it is live to the second; a view over
   Iceberg tables is ordinary Trino SQL. Every view is checked against the
   config when it loads, so renaming a metric fails a test, not a dashboard.
+- **Live without polling.** A dashboard subscribes to a view and the server
+  pushes a new result when the data changes. Everyone watching the same view
+  shares one query, however many dashboards are open.
 - **The same answers for people and agents.** A REST API, an MCP server for
   Claude Code or Claude Desktop, and a dashboard all go through one gateway, so
   they report the same numbers with the same caveats.
@@ -240,6 +243,18 @@ literals, never pasted in as text. A parameter with `default: null` is
 optional, and a condition on it is dropped while it has no value ("all ISPs").
 Each view is checked when the platform loads: one SELECT, known models,
 tables and columns. Its result columns are known up front.
+
+**Live views.** `GET /views/<name>/live?<params>` is a Server-Sent Events
+stream ([`core/live.py`](core/live.py)): the view's result now, then again each
+time it changes, and an `error` event if a refresh fails (the last result
+still stands). Everyone watching a view with the same parameters shares one
+feed, which runs only while someone watches. A view over a model reruns every
+10 seconds (or its header's `refresh_seconds`), since the real-time tier never
+stops changing; a view over tables reruns when a flush or rollup commits to
+one of its tables. Either way, a result is pushed only if it changed. A
+dashboard watches all its views over one connection,
+`GET /live?view=isp_now&view=isp_hourly%3Fhours%3D24`, since browsers allow
+only about six open connections to a server.
 
 ### The drift agent
 
