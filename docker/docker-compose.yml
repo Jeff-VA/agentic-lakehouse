@@ -28,7 +28,7 @@ x-app: &app
   volumes:
     - ../config:/app/config:ro
     - ./config/deployment.yaml:/app/config/deployment.yaml:ro  # container-network addresses
-    - proposals:/app/proposals
+    - ../proposals:/app/proposals  # drift proposals land in the checkout, ready for git apply
   env_file:
     - path: ../.env  # ANTHROPIC_API_KEY for the drift agent, if present
       required: false
@@ -253,4 +253,3 @@ volumes:
   minio-data:
   iceberg-catalog:
   prefect-data:
-  proposals:

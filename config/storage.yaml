@@ -24,7 +24,7 @@ rollups:
       grain: hour
     lookback_hours: 6
     backfill_days: 14
-    every_minutes: 15
+    every_minutes: 5  # cheap when no hour has completed since: the run is skipped without a query
 
   - table: gold.daily_device_quality
     description: Daily playback quality for mobile versus other devices.

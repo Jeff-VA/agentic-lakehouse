@@ -526,7 +526,8 @@ function renderGates(rollups) {
       list.append(el("li", {}, icon(c.severity === "error" ? "bad" : "warn"), el("span", {}, el("span", { class: "what", text: c.check }), document.createTextNode(` — ${c.detail}`))));
     }
     const passed = audit ? audit.checks.length - failed.length : 0;
-    if (passed) list.append(el("li", { class: "muted" }, icon("good"), el("span", { text: `${passed} other check${passed > 1 ? "s" : ""} passed` })));
+    const passedText = failed.length ? `${passed} other check${passed > 1 ? "s" : ""} passed` : `All ${passed} check${passed > 1 ? "s" : ""} passed`;
+    if (passed) list.append(el("li", { class: "muted" }, icon("good"), el("span", { text: passedText })));
     return el("div", { class: "gate" }, head, facts, list);
   }));
 }
