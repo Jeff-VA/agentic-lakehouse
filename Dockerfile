@@ -16,6 +16,7 @@ RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml
 
 COPY core core
 COPY pipelines pipelines
+COPY examples examples
 COPY run.py .
 RUN useradd --create-home --uid 1000 app && mkdir proposals && chown app proposals
 USER app

@@ -1,0 +1,44 @@
+# What "good" looks like for each rollup. A run's new rows are checked before
+# they're published (write-audit-publish): if an `error` check fails, the gold
+# table keeps its last good contents and the run fails, visible in the Prefect
+# UI. `warn` checks are reported but don't block.
+# Schema and check types: core/quality.py
+version: "1.0.0"
+
+rules:
+  - table: gold.hourly_isp_quality
+    checks:
+      - type: row_count
+        min: 1
+      - type: unique  # one row per hour and ISP
+        columns: [event_ts, isp_provider]
+      - type: not_null
+        columns: [isp_provider, event_count, unique_sessions]
+      - type: range
+        column: rebuffer_incidence_rate
+        min: 0
+        max: 1
+      - type: expression
+        description: Every session has at least one event.
+        sql: unique_sessions <= event_count
+      - type: freshness  # events stopped arriving
+        max_lag_hours: 2
+      - type: accepted_values  # a new ISP is worth a look, not a blocked pipeline
+        column: isp_provider
+        values: [comcast, verizon, att, spectrum, cox, frontier]
+        severity: warn
+      - type: range  # degraded service rather than broken data
+        column: p99_ttfb
+        max: 2000
+        severity: warn
+
+  - table: gold.daily_device_quality
+    checks:
+      - type: row_count
+        min: 1
+      - type: unique
+        columns: [event_ts, is_mobile_device]
+      - type: range
+        column: rebuffer_incidence_rate
+        min: 0
+        max: 1

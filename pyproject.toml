@@ -30,11 +30,11 @@ dev = ["pytest>=8"]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["core", "pipelines"]
+[tool.setuptools.packages.find]
+include = ["core*", "pipelines*", "examples*"]
 
 [tool.setuptools.package-data]
-core = ["templates/*.sql", "templates/macros/*.sql", "static/*"]
+core = ["templates/*.sql", "templates/macros/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

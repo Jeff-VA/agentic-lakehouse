@@ -96,13 +96,36 @@ simulate an upstream release that adds two event fields:
 
 ```bash
 docker compose -f docker/docker-compose.yml stop stream
-docker compose -f docker/docker-compose.yml run --rm stream stream --new-fields
+docker compose -f docker/docker-compose.yml run --rm stream stream --add-field cdn_pop=string --add-field dropped_frames=double
 ```
 
 Within one flush the fields become Iceberg columns. The next drift check, or
 `docker compose -f docker/docker-compose.yml exec drift python run.py drift`,
 writes a proposal that the dashboard lists. Apply it with
 `git apply proposals/<file> && python run.py setup`.
+
+## Start your own project
+
+The engine in `core/` knows nothing about playback data. Everything specific
+to the example lives in [`examples/playback/`](examples/playback/): its config,
+its simulator and its dashboard. `config/` starts as a copy of that example,
+and it is yours to change:
+
+1. **Describe your events** in `config/ingestion.yaml`: a Kafka topic, columns
+   and a time column per dataset.
+2. **Define your metrics and dimensions** in `config/ontology.yaml`. They are
+   YAML; you only write SQL for small expressions, like a `CASE` that turns a
+   device name into a mobile flag.
+3. **Optionally** add rollups to `config/storage.yaml`, their checks to
+   `config/quality_rules.yaml`, and HTML dashboards to `config/dashboards/`.
+4. **Run it:** `docker compose -f docker/docker-compose.yml up -d --build`.
+   Setup creates the topics and tables, then publishes synthetic events with
+   random values that fit your columns until your real producers write to
+   Kafka. For realistic fake data, point the dataset's `simulator` at a
+   function of your own, as the example does.
+
+The tests always run against `examples/playback/config`, so your changes to
+`config/` never break them.
 
 ## How it works
 
@@ -198,6 +221,7 @@ that already has a pending patch isn't proposed (or paid for) again.
 | [`storage.yaml`](config/storage.yaml) | Iceberg tables, flush schedule and lateness, rollups |
 | [`quality_rules.yaml`](config/quality_rules.yaml) | the checks each rollup must pass |
 | [`deployment.yaml`](config/deployment.yaml) | service endpoints (a container-network version lives in `docker/config/`) |
+| `dashboards/*.html` | dashboards, served at `/d/<name>` (and at `/` when there is just one) |
 
 All five files are strictly validated (unknown keys are errors) and checked
 against each other when they load. For example, every column a metric reads
@@ -213,18 +237,21 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 `run.py` drives each component directly against the same stack: `setup`,
 `seed`, `stream`, `flush`, `rollups`, `drift`, `serve`, `mcp` (stdio, for
-Claude Desktop) and `reset --yes`. Stop the matching container first if you
+Claude Desktop) and `reset --yes`. The tests use the example project in
+`examples/playback/config`; the integration tests expect the stack to be
+running it, as `config/` does by default. Stop the matching container first if you
 run one on the host, for example `docker compose -f docker/docker-compose.yml
 stop stream`.
 
 ```
-config/       the declarative configuration
-core/         compiler, router, engines, flush, rollups, quality, drift agent, gateway
-  templates/  the query skeleton and one macro file per engine
-  static/     the dashboard
-pipelines/    Prefect flows: flush, rollups, drift check
-docker/       docker-compose.yml, Trino catalog, container deployment config
-tests/        unit tests; tests/integration/ runs against the stack
+config/            your project: YAML config and dashboards/ (starts as a copy of the example)
+core/              the engine: compiler, router, engines, flush, rollups, quality,
+                   drift agent, gateway, synthetic events (simulate.py)
+  templates/       the query skeleton and one macro file per engine
+examples/playback/ the reference project: config/, dashboards, simulator.py
+pipelines/         Prefect flows: flush, rollups, drift check
+docker/            docker-compose.yml, Trino catalog, container deployment config
+tests/             unit tests; tests/integration/ runs against the stack
 ```
 
 ## How it's tested

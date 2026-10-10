@@ -10,12 +10,12 @@ from pyiceberg.catalog.sql import SqlCatalog
 from core.compiler import SqlCompiler
 from core.config import load_platform
 from core.engines import DuckDBEngine
-from core.events import generate_events
+from core.simulate import generate_events
 from core.quality import QualityConfig
 from core.rollups import LAST_AUDIT, ROLLUP_THROUGH, QualityGateError, RollupStore, materialize, window
 from core.schema_compiler import arrow_schema
 
-PLATFORM = load_platform(Path(__file__).parents[1] / "config")
+PLATFORM = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
 DATASET = PLATFORM.dataset("telemetry")
 HOURLY = PLATFORM.rollup("gold.hourly_isp_quality")  # lookback 6 h, backfill 14 days
 T0 = datetime(2026, 1, 1)
@@ -26,7 +26,7 @@ FLUSHED = T0 + timedelta(hours=8, minutes=30)  # the historical tier is complete
 def source():
     """DuckDB standing in for the historical tier: eight and a half hours of telemetry."""
     engine = DuckDBEngine()
-    events = generate_events(T0, FLUSHED, seed=3)
+    events = generate_events(DATASET, T0, FLUSHED, seed=3)
     engine.con.register("telemetry", pa.Table.from_pylist(events, schema=arrow_schema(DATASET)))
     return engine
 
@@ -87,7 +87,7 @@ def test_rerunning_replaces_rather_than_duplicates(source, catalog):
 
 def test_late_events_inside_the_lookback_are_recounted(source, catalog):
     refresh(source, catalog)
-    late = generate_events(T0 + timedelta(hours=5), T0 + timedelta(hours=6), seed=99)  # arrives after the first run
+    late = generate_events(DATASET, T0 + timedelta(hours=5), T0 + timedelta(hours=6), seed=99)  # arrives after the first run
     events = source.con.execute("SELECT * FROM telemetry").to_arrow_table()
     source.con.register("telemetry", pa.concat_tables([events, pa.Table.from_pylist(late, schema=arrow_schema(DATASET))]))
 

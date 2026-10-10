@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from core.ontology import AggregateMetric, Ontology, RatioMetric, load_ontology
 
-SAMPLE_CONFIG = Path(__file__).parents[1] / "config" / "ontology.yaml"
+SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config" / "ontology.yaml"
 
 # Smallest valid ontology. Each test breaks one thing in a fresh copy of it.
 MINIMAL = {

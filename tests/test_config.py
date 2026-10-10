@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from core.config import ConfigError, load_platform
 
-SAMPLE_CONFIG = Path(__file__).parents[1] / "config"
+SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config"
 
 
 @pytest.fixture

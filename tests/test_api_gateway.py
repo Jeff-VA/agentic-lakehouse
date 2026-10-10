@@ -233,9 +233,27 @@ def test_rollup_rows_are_served(status_client):
     assert (response.status_code, response.json()) == (404, {"detail": "no rollup named 'gold.nowhere'"})
 
 
-def test_the_dashboard_is_served_at_the_root(status_client):
-    response = status_client.get("/")
-    assert response.status_code == 200 and response.headers["content-type"].startswith("text/html")
+def test_dashboards_are_served_from_the_project(tmp_path):
+    (tmp_path / "ops.html").write_text("<p>ops</p>")
+    with TestClient(create_app(Gateway(router()), dashboards_dir=tmp_path)) as client:
+        assert client.get("/").text == "<p>ops</p>"  # the only dashboard is the home page
+        assert client.get("/d/ops").text == "<p>ops</p>"
+        (tmp_path / "sales.html").write_text("<p>sales</p>")
+        home = client.get("/").text  # with several, the home page lists them
+        assert '<a href="/d/ops">ops</a>' in home and '<a href="/d/sales">sales</a>' in home
+        assert client.get("/d/missing").status_code == 404
+        assert client.get("/d/..%2Fsecret").status_code == 404
+
+
+def test_without_dashboards_the_home_page_says_how_to_add_one():
+    with TestClient(create_app(Gateway(router()))) as client:
+        assert "add HTML files to the project's dashboards/ folder" in client.get("/").text
+
+
+def test_the_example_dashboard_is_served():
+    dashboards = Path(__file__).parents[1] / "examples" / "playback" / "config" / "dashboards"
+    with TestClient(create_app(Gateway(router()), dashboards_dir=dashboards)) as client:
+        assert "<title>Playback Quality</title>" in client.get("/").text
 
 
 def test_mcp_data_status_tool(tmp_path):
@@ -247,7 +265,7 @@ def test_mcp_data_status_tool(tmp_path):
 def test_the_gateway_starts_while_the_stack_is_unreachable():
     """Nothing connects until a request needs it: run.py serve and run.py mcp start even when
     the engines or the Iceberg catalog are down (as in CI, where none of them run)."""
-    platform = load_platform(Path(__file__).parents[1] / "config")
+    platform = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
     unreachable = platform.deployment.model_copy(
         update={"iceberg": platform.deployment.iceberg.model_copy(update={"catalog_uri": "http://127.0.0.1:1"})}
     )

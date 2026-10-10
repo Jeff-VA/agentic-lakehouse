@@ -46,6 +46,9 @@ class Dataset(StrictModel):
     time_column: Identifier
     columns: list[Column] = Field(min_length=1)
     realtime: RealtimeTable
+    # Synthetic events for `run.py seed` and `stream`: "package.module:function" making one
+    # episode (core/simulate.py). Without it, events get random values from the column types.
+    simulator: str | None = Field(default=None, pattern=r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
 
     @model_validator(mode="after")
     def _check_time_column(self) -> Self:
@@ -171,6 +174,7 @@ class Platform:
     storage: StorageConfig
     quality: QualityConfig
     deployment: DeploymentConfig
+    config_dir: Path | None = None  # also holds the project's dashboards/
 
     def dataset(self, name: str) -> Dataset:
         return next(d for d in self.ingestion.datasets if d.name == name)
@@ -218,6 +222,7 @@ def load_platform(config_dir: str | Path) -> Platform:
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
         quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),
         deployment=DeploymentConfig.model_validate(_load_yaml(config_dir / "deployment.yaml")),
+        config_dir=config_dir,
     )
     _check_consistency(platform)
     return platform

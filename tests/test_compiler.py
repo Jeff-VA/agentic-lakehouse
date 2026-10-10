@@ -219,7 +219,7 @@ SAMPLE_QUERY = MetricQuery.model_validate(
 
 @pytest.mark.parametrize("engine", SAMPLE_TABLES)
 def test_sample_query_matches_golden_sql(engine):
-    sql = SqlCompiler(load_ontology(ROOT / "config" / "ontology.yaml")).compile(
+    sql = SqlCompiler(load_ontology(ROOT / "examples" / "playback" / "config" / "ontology.yaml")).compile(
         SAMPLE_QUERY, engine=engine, table=SAMPLE_TABLES[engine]
     )
     golden = GOLDEN / f"sample_query.{engine}.sql"

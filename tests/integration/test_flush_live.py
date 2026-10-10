@@ -7,7 +7,7 @@ import pytest
 from confluent_kafka.admin import AdminClient, NewTopic
 
 from core.engines import TrinoEngine
-from core.events import generate_events
+from core.simulate import generate_events
 from core.flush import flush, kafka_consumer
 from core.orchestrator import iceberg_catalog, publish_events
 from core.schema_compiler import iceberg_schema
@@ -42,7 +42,7 @@ def run_flush(platform, dataset, table):
 
 def test_flush_evolves_the_table_and_loads_each_event_once(platform, scratch):
     dataset, table = scratch
-    events = generate_events(datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 10))
+    events = generate_events(dataset, datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 10))
     for event in events[::2]:  # upstream starts sending a new field on some events
         event["dropped_frames_count"] = 3
     publish_events(platform, dataset, events, log=lambda message: None)

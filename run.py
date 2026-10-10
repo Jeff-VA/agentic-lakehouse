@@ -2,9 +2,9 @@
 
     python run.py setup [--seed-hours 24]  create topics and tables from config/ (and, on a first
                                         start, publish that much synthetic history)
-    python run.py seed --hours 24       publish synthetic telemetry to Kafka (Pinot ingests it)
-    python run.py stream [--new-fields] publish live synthetic telemetry until stopped (Ctrl-C);
-                                        --new-fields simulates an upstream release adding two fields
+    python run.py seed --hours 24       publish synthetic events to Kafka (Pinot ingests them)
+    python run.py stream                publish live synthetic events until stopped (Ctrl-C);
+                                        --add-field name=type simulates an upstream release
     python run.py flush [--serve]       move new events from Kafka into Iceberg (once, or on schedule)
     python run.py rollups [--serve]     refresh the gold rollup tables, behind their quality gates
     python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
@@ -20,12 +20,13 @@ import argparse
 import os
 import time
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
 from dotenv import load_dotenv
 
 from core.api_gateway import Gateway, create_app, create_mcp_server
-from core.config import load_platform
-from core.events import LiveSource, add_release_fields, generate_events
+from core.config import ColumnType, Dataset, Platform, load_platform
+from core.simulate import LiveSource, add_fields, generate_events
 from core.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
 
 
@@ -33,13 +34,30 @@ def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-def seed_history(platform, *, hours: float, sessions_per_minute: float = 6, seed: int = 0) -> None:
-    """Publish `hours` of synthetic telemetry ending now, so a live stream can carry on from here."""
+def seed_history(platform: Platform, dataset: Dataset, *, hours: float, rate: float = 6, seed: int = 0) -> None:
+    """Publish `hours` of synthetic events ending now, so a live stream can carry on from here."""
     end = utc_now().replace(second=0, microsecond=0)
     start = end - timedelta(hours=hours)
-    events = generate_events(start, end, sessions_per_minute=sessions_per_minute, seed=seed)
-    print(f"generated {len(events)} events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC")
-    publish_events(platform, platform.dataset("telemetry"), events)
+    events = generate_events(dataset, start, end, rate=rate, seed=seed)
+    print(f"{dataset.name}: generated {len(events)} events from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC")
+    publish_events(platform, dataset, events)
+
+
+def pick_dataset(parser: argparse.ArgumentParser, platform: Platform, name: str | None) -> Dataset:
+    """The dataset named on the command line, or the only one in ingestion.yaml."""
+    datasets = {d.name: d for d in platform.ingestion.datasets}
+    if name is None and len(datasets) == 1:
+        return next(iter(datasets.values()))
+    if name not in datasets:
+        parser.error(f"pick a dataset with --dataset: {', '.join(datasets)}")
+    return datasets[name]
+
+
+def field_spec(text: str) -> tuple[str, str]:
+    name, _, column_type = text.partition("=")
+    if not name or column_type not in get_args(ColumnType):
+        raise argparse.ArgumentTypeError(f"expected name=type with type one of {', '.join(get_args(ColumnType))}")
+    return name, column_type
 
 
 def run_then_serve(flow, name: str, interval: timedelta, config_dir: str) -> None:
@@ -59,15 +77,23 @@ def main() -> None:
     setup_command.add_argument(
         "--seed-hours", type=float, default=0, help="if the topic has never had events, publish this many hours of history"
     )
-    seed = commands.add_parser("seed", help="generate synthetic telemetry and publish it to Kafka")
-    seed.add_argument("--hours", type=float, default=24, help="length of the window ending at the current hour")
-    seed.add_argument("--sessions-per-minute", type=float, default=6)
+    rate_help = "new episodes a minute (an episode is one event, or one session with a simulator)"
+    seed = commands.add_parser("seed", help="generate synthetic events and publish them to Kafka")
+    seed.add_argument("--dataset", help="which dataset in ingestion.yaml (default: the only one)")
+    seed.add_argument("--hours", type=float, default=24, help="length of the window ending now")
+    seed.add_argument("--rate", type=float, default=6, help=rate_help)
     seed.add_argument("--seed", type=int, default=0, help="random seed; the same seed and window give the same events")
-    stream = commands.add_parser("stream", help="publish live synthetic telemetry until stopped")
-    stream.add_argument("--sessions-per-minute", type=float, default=6)
+    stream = commands.add_parser("stream", help="publish live synthetic events until stopped")
+    stream.add_argument("--dataset", help="which dataset in ingestion.yaml (default: the only one)")
+    stream.add_argument("--rate", type=float, default=6, help=rate_help)
     stream.add_argument("--every", type=float, default=5, help="seconds between batches")
     stream.add_argument(
-        "--new-fields", action="store_true", help="simulate an upstream release: events also carry cdn_pop and dropped_frames"
+        "--add-field",
+        type=field_spec,
+        action="append",
+        default=[],
+        metavar="NAME=TYPE",
+        help="simulate an upstream release: events also carry this field (repeatable)",
     )
     reset = commands.add_parser("reset", help="delete all topics, tables and data, then recreate them empty")
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
@@ -87,27 +113,29 @@ def main() -> None:
     platform = load_platform(args.config)
     if args.command == "setup":
         setup(platform)
-        dataset = platform.dataset("telemetry")
-        if args.seed_hours and topic_is_empty(platform, dataset):
-            seed_history(platform, hours=args.seed_hours)
+        for dataset in platform.ingestion.datasets:
+            if args.seed_hours and topic_is_empty(platform, dataset):
+                seed_history(platform, dataset, hours=args.seed_hours)
     elif args.command == "reset":
         if not args.yes:
             parser.error("reset deletes all data in Kafka, Pinot and Iceberg; pass --yes to confirm")
         teardown(platform)
         setup(platform)
     elif args.command == "seed":
-        seed_history(platform, hours=args.hours, sessions_per_minute=args.sessions_per_minute, seed=args.seed)
+        dataset = pick_dataset(parser, platform, args.dataset)
+        seed_history(platform, dataset, hours=args.hours, rate=args.rate, seed=args.seed)
     elif args.command == "stream":
-        source = LiveSource(utc_now(), sessions_per_minute=args.sessions_per_minute)
-        publisher = EventPublisher(platform, platform.dataset("telemetry"))
+        dataset = pick_dataset(parser, platform, args.dataset)
+        source = LiveSource(dataset, utc_now(), rate=args.rate)
+        publisher = EventPublisher(platform, dataset)
+        extra = dict(args.add_field)
         published = 0
-        print(f"streaming live telemetry to {publisher.topic}, ~{args.sessions_per_minute:g} new sessions a minute; Ctrl-C stops")
+        print(f"streaming {dataset.name} to {publisher.topic}, ~{args.rate:g} new episodes a minute; Ctrl-C stops")
         try:
             while True:
                 time.sleep(args.every)
                 events = source.poll(utc_now())
-                if args.new_fields:
-                    add_release_fields(events, source.rng)
+                add_fields(events, extra, source.rng)
                 publisher.publish(events)
                 published += len(events)
         except KeyboardInterrupt:
@@ -142,7 +170,8 @@ def main() -> None:
     elif args.command == "serve":
         import uvicorn
 
-        uvicorn.run(create_app(Gateway.from_platform(platform)), host=args.host, port=args.port)
+        app = create_app(Gateway.from_platform(platform), dashboards_dir=platform.config_dir / "dashboards")
+        uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "mcp":
         create_mcp_server(Gateway.from_platform(platform)).run("stdio")
 

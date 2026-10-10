@@ -9,7 +9,7 @@ import pytest
 from confluent_kafka.admin import AdminClient, NewTopic
 
 from core.engines import PinotEngine
-from core.events import generate_events
+from core.simulate import generate_events
 from core.orchestrator import publish_events, sync_pinot_schema
 from core.schema_compiler import pinot_table_config
 
@@ -30,7 +30,7 @@ def test_a_missing_field_is_null_in_pinot_aggregates(platform):
         sync_pinot_schema(controller, dataset, log=lambda m: None)
         config = pinot_table_config(dataset, platform.deployment.kafka.internal_bootstrap_servers)
         httpx.post(f"{controller}/tables", json=config).raise_for_status()
-        events = generate_events(datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 1), seed=5)[:2]
+        events = generate_events(dataset, datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 1), seed=5)[:2]
         events[0]["bitrate_kbps"], events[1]["bitrate_kbps"] = 3000, None  # the second event lacks it
         events[1].pop("bitrate_kbps")
         publish_events(platform, dataset, events, log=lambda m: None)

@@ -9,18 +9,21 @@ The same operations are served over REST and over the Model Context Protocol
   proposals waiting for review: whether the data can be trusted right now
 
 REST:  GET /catalog, POST /query, GET /status, GET /rollups/{table}
-       (interactive docs at /docs); the dashboard is at /
+       (interactive docs at /docs)
+Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one)
 MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`
 """
 
 import contextlib
+import html
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -36,7 +39,7 @@ from core.rollups import RollupStore
 from core.router import Router
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
-DASHBOARD = Path(__file__).parent / "static" / "dashboard.html"
+DASHBOARD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class DimensionInfo(BaseModel):
@@ -351,8 +354,15 @@ def create_mcp_server(gateway: Gateway) -> MCPServer:
     return mcp
 
 
-def create_app(gateway: Gateway) -> FastAPI:
-    """REST endpoints plus the MCP server (Streamable HTTP) at /mcp."""
+def create_app(gateway: Gateway, dashboards_dir: str | Path | None = None) -> FastAPI:
+    """REST endpoints, the MCP server (Streamable HTTP) at /mcp, and the HTML
+    dashboards in `dashboards_dir` (the project's config/dashboards)."""
+    dashboards = Path(dashboards_dir) if dashboards_dir else None
+
+    def dashboard_files() -> dict[str, Path]:
+        if dashboards is None or not dashboards.is_dir():
+            return {}
+        return {p.stem: p for p in sorted(dashboards.glob("*.html")) if DASHBOARD_NAME.match(p.stem)}
     mcp = create_mcp_server(gateway)
     mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
@@ -398,9 +408,25 @@ def create_app(gateway: Gateway) -> FastAPI:
         except KeyError:
             raise HTTPException(status_code=404, detail=f"no rollup named '{table}'") from None
 
-    @app.get("/", include_in_schema=False)
-    def dashboard() -> FileResponse:
-        return FileResponse(DASHBOARD, media_type="text/html")
+    @app.get("/", include_in_schema=False, response_model=None)
+    def home() -> FileResponse | HTMLResponse:
+        files = dashboard_files()
+        if len(files) == 1:
+            return FileResponse(next(iter(files.values())), media_type="text/html")
+        items = "".join(f'<li><a href="/d/{html.escape(name)}">{html.escape(name)}</a></li>' for name in files)
+        body = f"<ul>{items}</ul>" if files else "<p>No dashboards yet: add HTML files to the project's dashboards/ folder.</p>"
+        return HTMLResponse(
+            '<!doctype html><meta charset="utf-8"><title>Dashboards</title>'
+            '<body style="font: 15px system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px">'
+            f'<h1 style="font-size: 20px">Dashboards</h1>{body}<p><a href="/docs">API docs</a></p></body>'
+        )
+
+    @app.get("/d/{name}", include_in_schema=False)
+    def dashboard(name: str) -> FileResponse:
+        path = dashboard_files().get(name)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"no dashboard named '{name}'")
+        return FileResponse(path, media_type="text/html")
 
     app.mount("/", mcp_app)  # after the REST routes, which match first
     return app

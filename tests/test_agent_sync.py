@@ -27,7 +27,7 @@ from core.flush import flush
 from core.orchestrator import sync_iceberg_columns
 from core.schema_compiler import iceberg_partition_spec, iceberg_schema
 
-SAMPLE_CONFIG = Path(__file__).parents[1] / "config"
+SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config"
 PLATFORM = load_platform(SAMPLE_CONFIG)
 DATASET = PLATFORM.dataset("telemetry")
 MODEL_NAME = "playback_telemetry"

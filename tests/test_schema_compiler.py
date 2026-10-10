@@ -5,7 +5,7 @@ import pyarrow as pa
 from core.config import load_platform
 from core.schema_compiler import arrow_schema, iceberg_partition_spec, iceberg_schema, pinot_schema, pinot_table_config
 
-PLATFORM = load_platform(Path(__file__).parents[1] / "config")
+PLATFORM = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
 DATASET = PLATFORM.dataset("telemetry")
 
 

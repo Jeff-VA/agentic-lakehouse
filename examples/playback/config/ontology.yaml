@@ -1,0 +1,56 @@
+# Semantic contract for the engine: what the data means, independent of where
+# it lives. The SQL compiler, query router, API/MCP gateway and drift agent all
+# read this file. Schema and validation rules: core/ontology.py
+version: "1.0.0"
+
+models:
+  - name: playback_telemetry
+    description: Granular network trace records and edge playback quality metrics.
+    source: telemetry  # logical dataset; storage config will map it to Pinot / Iceberg tables
+    time_dimension: event_ts
+
+    dimensions:
+      - name: event_ts
+        type: timestamp
+        description: When the client emitted the playback event.
+      - name: isp_provider
+        type: string
+        sql: client_isp
+      - name: is_mobile_device
+        type: boolean
+        sql: "CASE WHEN client_device IN ('ios', 'android') THEN true ELSE false END"
+
+    metrics:
+      - name: p99_ttfb
+        description: 99th percentile Time-to-First-Byte latency (ms), measured on stream starts.
+        agg: percentile
+        percentile: 0.99
+        sql: request_latency_ms
+        filters:
+          - "stream_start_event = true"
+
+      - name: event_count
+        description: Number of playback events.
+        agg: count
+
+      - name: rebuffer_event_count
+        description: Playback events that buffered for more than 200 ms.
+        agg: count
+        filters:
+          - "buffer_duration_ms > 200"
+
+      - name: rebuffer_incidence_rate
+        description: Share of playback events that buffered for more than 200 ms.
+        type: ratio
+        numerator: rebuffer_event_count
+        denominator: event_count
+
+      - name: unique_sessions
+        description: Number of distinct playback sessions.
+        agg: count_distinct
+        sql: session_id
+
+      - name: avg_bitrate_kbps
+        description: Average delivered video bitrate (kbps).
+        agg: avg
+        sql: bitrate_kbps

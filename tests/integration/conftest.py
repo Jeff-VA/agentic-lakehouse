@@ -25,7 +25,7 @@ ROOT = Path(__file__).parents[2]
 
 @pytest.fixture(scope="session")
 def platform():
-    platform = load_platform(ROOT / "config")
+    platform = load_platform(ROOT / "examples" / "playback" / "config")
     trino = platform.deployment.trino
     for url in (f"{platform.deployment.pinot.broker_url}/health", f"http://{trino.host}:{trino.port}/v1/info"):
         try:

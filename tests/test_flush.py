@@ -11,7 +11,7 @@ from core.flush import OFFSETS, FlushError, flush
 from core.orchestrator import FLUSHED_THROUGH
 from core.schema_compiler import iceberg_partition_spec, iceberg_schema
 
-PLATFORM = load_platform(Path(__file__).parents[1] / "config")
+PLATFORM = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
 DATASET = PLATFORM.dataset("telemetry")
 T0 = datetime(2026, 1, 1)
 NOW = T0 + timedelta(hours=1)
