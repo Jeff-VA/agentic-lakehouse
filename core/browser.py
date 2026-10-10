@@ -116,7 +116,9 @@ async def _capture(url: str, *, width: int, height: int, theme: str | None, time
     if chrome is None:
         raise BrowserError("Chrome isn't installed; install it or set CHROME to its path")
     with tempfile.TemporaryDirectory(prefix="male-chrome-") as profile:
-        sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []  # Chrome refuses root otherwise
+        # Chrome refuses to sandbox as root, and CI runners often can't give it the namespaces it needs.
+        root = hasattr(os, "geteuid") and os.geteuid() == 0
+        sandbox = ["--no-sandbox"] if root or os.environ.get("CI") else []
         process = subprocess.Popen(
             [
                 chrome,
