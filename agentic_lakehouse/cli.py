@@ -2,6 +2,8 @@
 config/ there (or --config), and imports project code, such as a dataset's
 simulator, from there too.
 
+    init PATH                create a new project in PATH: config, Docker stack, CI,
+                             tests and agent files, pinned to this engine version
     setup [--seed-hours 24]  create topics and tables from the config (and, on a first
                              start, publish that much synthetic history)
     seed --hours 24          publish synthetic events to Kafka (Pinot ingests them)
@@ -35,6 +37,7 @@ from dotenv import load_dotenv
 
 from agentic_lakehouse.api_gateway import Gateway, Project, create_app, create_mcp_server
 from agentic_lakehouse.browser import BrowserError
+from agentic_lakehouse.scaffold import create_project, engine_version
 from agentic_lakehouse.config import ColumnType, Dataset, Platform, load_platform
 from agentic_lakehouse.simulate import LiveSource, add_fields, generate_events
 from agentic_lakehouse.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
@@ -118,6 +121,9 @@ def main() -> None:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     commands.add_parser("mcp", help="run the MCP server over stdio")
+    init = commands.add_parser("init", help="create a new project in a folder")
+    init.add_argument("path", help="the new project's folder; it must not exist or be empty")
+    init.add_argument("--engine", help="requirements.txt line for the engine (default: this version's release)")
     commands.add_parser("check", help="check the config, views and dashboards")
     screenshot = commands.add_parser("screenshot", help="render a dashboard in headless Chrome, with live data")
     screenshot.add_argument("name", help="the dashboard: its file name in dashboards/ without .html")
@@ -127,6 +133,8 @@ def main() -> None:
     args = parser.parse_args()
     load_dotenv()  # ANTHROPIC_API_KEY for the drift agent, if kept in .env
 
+    if args.command == "init":
+        sys.exit(init_project(args.path, args.engine))
     if args.command == "check":  # before loading the config: reporting on it is the point
         sys.exit(check(Project(Path(args.config))))
     if args.command == "screenshot":
@@ -197,6 +205,20 @@ def main() -> None:
         uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "mcp":
         create_mcp_server(Gateway.from_platform(platform), project=Project(platform.config_dir)).run("stdio")
+
+
+def init_project(path: str, engine: str | None) -> int:
+    try:
+        files = create_project(path, engine=engine)
+    except (ValueError, FileExistsError) as e:
+        print(e)
+        return 1
+    print(f"Created {path}: {len(files)} files, on agentic-lakehouse {engine_version()}. Next:")
+    print(f"  cd {path}")
+    print("  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest")
+    print("  docker compose -f docker/docker-compose.yml up -d --build    # then open http://127.0.0.1:8000")
+    print("  .venv/bin/agentic-lakehouse check && .venv/bin/pytest")
+    return 0
 
 
 def check(project: Project) -> int:

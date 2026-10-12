@@ -1,0 +1,30 @@
+# Service endpoints as seen from inside the compose network. The app
+# containers mount this over config/deployment.yaml (which has the addresses
+# for running agentic-lakehouse on this machine). Schema: agentic_lakehouse/config.py
+version: "1.0.0"
+
+kafka:
+  bootstrap_servers: kafka:19092
+  internal_bootstrap_servers: kafka:19092
+
+pinot:
+  controller_url: http://pinot-controller:9000
+  broker_url: http://pinot-broker:8099
+
+trino:
+  host: trino
+  port: 8080
+  user: lakehouse
+  catalog: iceberg
+
+iceberg:
+  catalog_uri: http://iceberg-rest:8181
+
+s3:
+  endpoint: http://minio:9000
+  region: us-east-1
+  access_key: lakehouse
+  secret_key: lakehouse-local-secret  # local stack only
+
+prefect:
+  api_url: http://prefect:4200/api

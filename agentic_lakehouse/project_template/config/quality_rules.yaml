@@ -1,0 +1,15 @@
+# What "good" looks like for each rollup. If an `error` check fails, the gold
+# table keeps its last good contents; `warn` checks are only reported.
+version: "1.0.0"
+
+rules:
+  - table: gold.hourly_activity
+    checks:
+      - type: row_count
+        min: 1
+      - type: unique  # one row per hour and category
+        columns: [event_ts, category]
+      - type: not_null
+        columns: [category, event_count]
+      - type: freshness
+        max_lag_hours: 2

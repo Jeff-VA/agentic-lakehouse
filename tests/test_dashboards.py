@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from standin import standin_gateway
+from agentic_lakehouse.testing import standin_gateway
 from test_api_gateway import call_mcp
 
 from agentic_lakehouse.api_gateway import Project, create_app, create_mcp_server

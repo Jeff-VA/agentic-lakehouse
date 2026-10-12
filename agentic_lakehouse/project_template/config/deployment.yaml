@@ -1,0 +1,29 @@
+# Where the platform's services are reachable from this machine. The defaults
+# match docker/docker-compose.yml. Schema and validation rules: agentic_lakehouse/config.py
+version: "1.0.0"
+
+kafka:
+  bootstrap_servers: 127.0.0.1:9092
+  internal_bootstrap_servers: kafka:19092  # as seen by other containers, i.e. Pinot
+
+pinot:
+  controller_url: http://localhost:9000
+  broker_url: http://localhost:8099
+
+trino:
+  host: localhost
+  port: 8080
+  user: lakehouse
+  catalog: iceberg  # docker/trino/catalog/iceberg.properties
+
+iceberg:
+  catalog_uri: http://localhost:8181
+
+s3:
+  endpoint: http://localhost:9100
+  region: us-east-1
+  access_key: lakehouse
+  secret_key: lakehouse-local-secret  # local stack only
+
+prefect:
+  api_url: http://127.0.0.1:4200/api

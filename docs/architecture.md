@@ -123,6 +123,8 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 | Chart tags | `static/al.js` |
 | Dashboard checks and screenshots | `dashboards.py`, `browser.py` |
 | Setup and Kafka publishing | `orchestrator.py` |
+| A new project (`agentic-lakehouse init`) | `scaffold.py`, `project_template/` |
+| Views and dashboards without Docker, for tests | `testing.py` |
 
 One `docker compose -f docker/docker-compose.yml up -d --build` runs all of
 it: the engines (Kafka, Pinot, Trino, the Iceberg REST catalog, MinIO,

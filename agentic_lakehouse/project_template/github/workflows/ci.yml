@@ -1,0 +1,22 @@
+# The config, views and dashboards check out, and every view and dashboard
+# runs on stand-ins for the stack (the runner has Chrome for the dashboards).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: agentic-lakehouse check
+      - run: pytest

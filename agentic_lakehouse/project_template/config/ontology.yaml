@@ -1,0 +1,34 @@
+# What the data means: the dimensions to slice by and the metrics to ask for.
+# Every query, view and dashboard reads these definitions, and so do AI agents
+# through MCP, so describe each metric for a stranger.
+version: "1.0.0"
+
+models:
+  - name: activity
+    description: The starter events, by category.
+    source: events
+    time_dimension: event_ts
+    dimensions:
+      - {name: event_ts, type: timestamp, label: Time}
+      - {name: category, type: string, label: Category}
+    metrics:
+      - name: event_count
+        description: Number of events.
+        agg: count
+        label: Events
+      - name: total_amount
+        description: Sum of the events' amounts.
+        agg: sum
+        sql: amount
+        label: Amount
+      - name: avg_amount
+        description: Average amount per event.
+        agg: avg
+        sql: amount
+        label: Average amount
+      - name: total_units
+        description: Sum of the events' units.
+        agg: sum
+        sql: units
+        label: Units
+        format: integer

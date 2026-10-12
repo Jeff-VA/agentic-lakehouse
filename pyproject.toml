@@ -1,6 +1,6 @@
 [project]
 name = "agentic-lakehouse"
-version = "0.1.0"
+version = "0.2.0"
 description = "An AI-first lakehouse: metrics defined once over Kafka, Pinot and Iceberg, served live to dashboards and AI agents."
 readme = "README.md"
 license = "LicenseRef-All-Rights-Reserved"  # see LICENSE: public to read, no rights granted
@@ -46,7 +46,7 @@ build-backend = "setuptools.build_meta"
 include = ["agentic_lakehouse*"]  # examples/ is a project that uses the package, not part of it
 
 [tool.setuptools.package-data]
-agentic_lakehouse = ["templates/*.sql", "templates/macros/*.sql", "static/*"]
+agentic_lakehouse = ["templates/*.sql", "templates/macros/*.sql", "static/*", "project_template/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

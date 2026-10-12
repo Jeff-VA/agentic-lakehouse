@@ -1,0 +1,249 @@
+# This project's stack: the engines (Kafka, Pinot, the Iceberg REST catalog on
+# MinIO, Trino, Prefect) and the app's processes, each running this project's
+# image (../Dockerfile) with a different agentic-lakehouse command.
+#
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# On a first start, setup creates the topics and tables and publishes 24 hours
+# of synthetic history; the stream keeps data live until your producers write
+# to Kafka. Dashboards and API: http://127.0.0.1:8000
+#
+# Host ports: API and dashboards 8000, Kafka 9092, Pinot controller UI 9000,
+# Pinot broker 8099, Trino 8080, Iceberg REST 8181, MinIO S3 API 9100 and
+# console 9101, Prefect UI 4200: run one such stack at a time.
+# Credentials here are for this local stack only.
+name: "@@NAME@@"
+
+x-app: &app
+  build:
+    context: ..
+  image: "@@NAME@@-app:latest"
+  restart: unless-stopped
+  volumes:
+    - ../config:/app/config:ro
+    - ./config/deployment.yaml:/app/config/deployment.yaml:ro  # container-network addresses
+    - ../proposals:/app/proposals  # drift proposals land in the checkout, ready for git apply
+  env_file:
+    - path: ../.env  # ANTHROPIC_API_KEY for the drift agent, if present
+      required: false
+  mem_limit: 512m
+
+x-after-setup: &after-setup
+  setup:
+    condition: service_completed_successfully
+  prefect:
+    condition: service_healthy
+
+x-pinot: &pinot
+  image: apachepinot/pinot:1.5.0
+  restart: unless-stopped
+  depends_on:
+    zookeeper:
+      condition: service_healthy
+
+services:
+  kafka:
+    image: apache/kafka:4.3.1
+    restart: unless-stopped
+    ports: ["9092:9092"]
+    environment:
+      CLUSTER_ID: "@@CLUSTER_ID@@"  # fixed, so the persisted log survives restarts
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Containers (Pinot) connect to kafka:19092, this machine to 127.0.0.1:9092
+      # (an IPv4 address: Colima does not forward IPv6, which "localhost" may resolve to).
+      KAFKA_LISTENERS: INTERNAL://:19092,HOST://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,HOST://127.0.0.1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    mem_limit: 1g
+    healthcheck:
+      test: /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  zookeeper:
+    image: zookeeper:3.9.5
+    restart: unless-stopped
+    environment:
+      JVMFLAGS: -Xmx256m
+    volumes: [zookeeper-data:/data, zookeeper-datalog:/datalog]
+    mem_limit: 512m
+    healthcheck:
+      test: zkServer.sh status
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  pinot-controller:
+    <<: *pinot
+    command: StartController -zkAddress zookeeper:2181 -controllerPort 9000 -dataDir /var/pinot/controller
+    ports: ["9000:9000"]
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx1g -XX:+UseG1GC
+    volumes: [pinot-controller-data:/var/pinot/controller]
+    mem_limit: 1536m
+    healthcheck:
+      test: curl -sf localhost:9000/health
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  pinot-broker:
+    <<: *pinot
+    command: StartBroker -zkAddress zookeeper:2181 -brokerPort 8099
+    ports: ["8099:8099"]
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx1g -XX:+UseG1GC
+    mem_limit: 1536m
+    healthcheck:
+      test: curl -sf localhost:8099/health
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  pinot-server:
+    <<: *pinot
+    command: >-
+      StartServer -zkAddress zookeeper:2181 -serverPort 8098 -serverAdminPort 8097
+      -dataDir /var/pinot/server/index -segmentDir /var/pinot/server/segments
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms512m -Xmx2g -XX:+UseG1GC
+    volumes: [pinot-server-data:/var/pinot/server]
+    mem_limit: 2560m
+    healthcheck:
+      test: curl -sf localhost:8097/health
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    # MinIO no longer publishes images; Chainguard builds the same server from source.
+    image: cgr.dev/chainguard/minio:latest
+    restart: unless-stopped
+    user: root  # the image's default user can't write to a fresh named volume
+    command: server /data --console-address :9001
+    ports: ["9100:9000", "9101:9001"]
+    environment:
+      MINIO_ROOT_USER: lakehouse
+      MINIO_ROOT_PASSWORD: lakehouse-local-secret
+    volumes: [minio-data:/data]
+    mem_limit: 512m
+
+  minio-init:
+    # Creates the warehouse bucket, then exits. Retries until MinIO is up.
+    image: cgr.dev/chainguard/minio-client:latest
+    restart: on-failure
+    environment:
+      MC_HOST_local: http://lakehouse:lakehouse-local-secret@minio:9000
+    command: mb --ignore-existing local/warehouse
+    depends_on: [minio]
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    restart: unless-stopped
+    ports: ["8181:8181"]
+    environment:
+      CATALOG_URI: jdbc:sqlite:/home/iceberg/catalog.db  # the image runs as user iceberg
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_ACCESS_KEY_ID: lakehouse
+      AWS_SECRET_ACCESS_KEY: lakehouse-local-secret
+      AWS_REGION: us-east-1
+    volumes: [iceberg-catalog:/home/iceberg]
+    mem_limit: 768m
+    depends_on: [minio]
+
+  trino:
+    image: trinodb/trino:483
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    volumes: [./trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro]
+    mem_limit: 3g  # the JVM sizes its heap from this limit
+    depends_on: [iceberg-rest]
+    healthcheck:
+      test: /usr/lib/trino/bin/health-check
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  prefect:
+    image: prefecthq/prefect:3.8.8-python3.13  # same version as the prefect package in pyproject.toml
+    restart: unless-stopped
+    command: prefect server start --host 0.0.0.0
+    ports: ["4200:4200"]
+    environment:
+      PREFECT_UI_API_URL: http://127.0.0.1:4200/api  # the address the browser uses
+    volumes: [prefect-data:/root/.prefect]
+    mem_limit: 768m
+    healthcheck:
+      test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  setup:
+    <<: *app
+    restart: "no"
+    command: [setup, --seed-hours, "24"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      pinot-controller: {condition: service_healthy}
+      pinot-broker: {condition: service_healthy}
+      pinot-server: {condition: service_healthy}
+      iceberg-rest: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+      trino: {condition: service_healthy}
+
+  stream:
+    <<: *app
+    command: [stream]
+    depends_on: *after-setup
+
+  flush:
+    <<: *app
+    command: [flush, --serve]
+    depends_on: *after-setup
+
+  rollups:
+    <<: *app
+    command: [rollups, --serve]
+    depends_on: *after-setup
+
+  drift:
+    <<: *app
+    command: [drift, --serve]
+    depends_on: *after-setup
+
+  api:
+    <<: *app
+    command: [serve, --host, 0.0.0.0, --port, "8000"]
+    ports: ["8000:8000"]
+    depends_on: *after-setup
+    healthcheck:
+      test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-datalog:
+  pinot-controller-data:
+  pinot-server-data:
+  minio-data:
+  iceberg-catalog:
+  prefect-data:

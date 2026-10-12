@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lakehouse": {
+      "command": ".venv/bin/agentic-lakehouse",
+      "args": ["mcp"]
+    }
+  }
+}

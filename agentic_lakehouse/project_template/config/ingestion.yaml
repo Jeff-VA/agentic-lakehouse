@@ -1,0 +1,19 @@
+# What arrives on the event streams: each dataset's Kafka topic and raw event
+# schema, and the Pinot real-time table that consumes it. Ontology models name
+# a dataset as their `source`. Replace the starter dataset with yours.
+version: "1.0.0"
+
+datasets:
+  - name: events
+    description: Starter events, one per action, with a category and an amount.
+    topic: events
+    time_column: event_ts  # event time, UTC
+    # simulator: your_module:function  # realistic synthetic events; without it, random values that fit the columns
+    columns:
+      - {name: event_ts, type: timestamp}
+      - {name: category, type: string}
+      - {name: amount, type: double}
+      - {name: units, type: int}
+    realtime:
+      table: events
+      retention_days: 7  # older data is answered from the Iceberg table (storage.yaml)

@@ -118,38 +118,44 @@ writes a proposal that the dashboard lists. Apply it with
 
 ## Start your own project
 
-The engine in `agentic_lakehouse/` knows nothing about playback data. Everything specific
-to the example lives in [`examples/playback/`](examples/playback/): its config,
-its simulator and its dashboard. `config/` starts as a copy of that example,
-and it is yours to change:
+Install the engine and create a project in a folder of its own:
+
+```bash
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.2.0"
+agentic-lakehouse init my-project
+cd my-project
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+The new folder is a working project, pinned to the engine release it came
+from: a starter dataset with metrics, views, a rollup behind quality checks
+and a dashboard, plus its own Docker stack, CI, tests and agent files
+(`AGENTS.md`, `.mcp.json`). Then make it yours:
 
 1. **Describe your events** in `config/ingestion.yaml`: a Kafka topic, columns
    and a time column per dataset.
 2. **Define your metrics and dimensions** in `config/ontology.yaml`. They are
    YAML; you only write SQL for small expressions, like a `CASE` that turns a
    device name into a mobile flag.
-3. **Optionally** add rollups to `config/storage.yaml`, their checks to
-   `config/quality_rules.yaml`, views to `config/views/` and HTML dashboards
-   to `config/dashboards/`.
-4. **Run it:** `docker compose -f docker/docker-compose.yml up -d --build`.
-   Setup creates the topics and tables, then publishes synthetic events with
-   random values that fit your columns until your real producers write to
-   Kafka. For realistic fake data, point the dataset's `simulator` at a
-   function of your own, as the example does.
+3. **Add views and dashboards** in `config/views/` and `config/dashboards/`,
+   and rollups and their checks in `config/storage.yaml` and
+   `config/quality_rules.yaml`. With Claude Code, ask for a dashboard: the
+   project's `AGENTS.md` and MCP tools give it the workflow.
+4. **Run it** with the command above. Setup creates the topics and tables, then
+   publishes synthetic events with random values that fit your columns until
+   your real producers write to Kafka. For realistic fake data, point the
+   dataset's `simulator` at a function of your own: the command imports your
+   project's modules from the folder it runs in.
 
-The tests always run against `examples/playback/config`, so your changes to
-`config/` never break them.
+A project's tests use `agentic_lakehouse.testing`, which runs every view and
+dashboard on DuckDB stand-ins for the stack, so they need no Docker and run in
+CI. To upgrade the engine, change the version in `requirements.txt`.
 
-**Or install the engine as a package** (Python 3.11+) and keep your project
-in a repository of its own:
-
-```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.1.0"
-agentic-lakehouse check    # run from your project: it reads ./config and imports your code from .
-```
-
-Each release also publishes the app image, `ghcr.io/jeff-va/agentic-lakehouse`,
-for a project's own Dockerfile to start `FROM`.
+This repository works the same way: `config/` is a project (a copy of
+[`examples/playback/`](examples/playback/), which the tests use), and
+`agentic_lakehouse/` is the engine, which knows nothing about playback data.
+Each release also publishes the app image, `ghcr.io/jeff-va/agentic-lakehouse`.
 
 ## Endpoints
 
@@ -706,7 +712,8 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 The `agentic-lakehouse` command drives each component directly against the same stack: `setup`,
 `seed`, `stream`, `flush`, `rollups`, `drift`, `serve`, `mcp` (stdio, for
-Claude Code or Claude Desktop) and `reset --yes`. `agentic-lakehouse check` checks the
+Claude Code or Claude Desktop) and `reset --yes`. `agentic-lakehouse init <folder>` creates a
+new project, `agentic-lakehouse check` checks the
 config, views and dashboards (CI runs it), and `agentic-lakehouse screenshot <name>`
 renders a dashboard in headless Chrome and lists the problems it shows. The tests use the example project in
 `examples/playback/config`; the integration tests expect the stack to be

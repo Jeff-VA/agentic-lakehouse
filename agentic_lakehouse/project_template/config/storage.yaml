@@ -1,0 +1,22 @@
+# Long-term storage: one Iceberg table per dataset, filled by the flush, and
+# rollups: semantic queries kept as gold tables, published only after their
+# quality checks (quality_rules.yaml) pass.
+version: "1.0.0"
+
+tables:
+  - dataset: events
+    table: raw.events
+    partition_by: day
+    flush_every_minutes: 5
+    allowed_lateness_minutes: 2
+
+rollups:
+  - table: gold.hourly_activity
+    description: Hourly activity per category.
+    query:
+      metrics: [event_count, total_amount, avg_amount]
+      dimensions: [category]
+      grain: hour
+    lookback_hours: 6
+    backfill_days: 7
+    every_minutes: 5

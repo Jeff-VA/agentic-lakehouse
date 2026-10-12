@@ -1,0 +1,2 @@
+# The engine, pinned to a release. To upgrade, change the version in both places.
+@@ENGINE@@

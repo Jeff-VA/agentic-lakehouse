@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@@TITLE@@</title>
+<!-- Chart tags over the project's views (config/views/*.sql): the reference is at the top of /al.js. -->
+<script type="module" src="/al.js"></script>
+<style>
+  header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .controls { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>@@TITLE@@</h1>
+      <p class="al-caption">Live from the real-time tier; the hourly trend from the gold rollup. Times in UTC.</p>
+    </div>
+    <div class="controls"><al-live></al-live><al-theme></al-theme></div>
+  </header>
+
+  <section aria-labelledby="kpi-title">
+    <div class="al-head"><h2 id="kpi-title">Last 60 minutes</h2><span class="al-caption">change vs the hour before</span></div>
+    <div class="al-grid">
+      <al-kpi view="activity_total" value="event_count" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-kpi view="activity_total" value="total_amount" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-kpi view="activity_total" value="avg_amount" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-freshness></al-freshness>
+    </div>
+  </section>
+
+  <section class="al-section" aria-labelledby="now-title">
+    <div class="al-head"><h2 id="now-title">By category, right now</h2></div>
+    <div class="al-grid">
+      <al-bars view="activity_now" category="category" value="event_count" highlight="first"></al-bars>
+      <al-bars view="activity_now" category="category" value="total_amount" highlight="first"></al-bars>
+    </div>
+  </section>
+
+  <section class="al-section" aria-labelledby="trend-title">
+    <div class="al-head"><h2 id="trend-title">Hourly, by category</h2></div>
+    <div class="controls">
+      <al-param name="hours" options="24=24 h,72=3 days,168=7 days" value="24" label="Range"></al-param>
+      <al-param name="metric" kind="select" label="Metric" view="hourly_activity" options="event_count,total_amount,avg_amount"></al-param>
+    </div>
+    <al-lines view="hourly_activity" x="hour" y="$metric" series="category"></al-lines>
+  </section>
+
+  <section class="al-section al-card" aria-labelledby="gates-title">
+    <div class="al-head"><h2 id="gates-title">Quality gates</h2><span class="al-caption">checked before each publish</span></div>
+    <al-gates></al-gates>
+  </section>
+</main>
+</body>
+</html>
