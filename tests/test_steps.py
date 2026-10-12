@@ -175,6 +175,7 @@ def test_iceberg_keeps_replaced_and_appended_outputs(project, tmp_path):
     assert json.loads(catalog.load_table("gold.category_baselines").properties[STEP_RUN]) == {"at": "y"}
     assert store.last_run("gold.category_baselines") == {"at": "y"}
     assert store.last_run("gold.nothing_yet") is None
+    assert store.exists("gold.category_baselines") and not store.exists("gold.nothing_yet")
 
 
 @pytest.mark.parametrize(
@@ -221,3 +222,15 @@ def test_a_python_step_can_publish_nothing_this_run(project, warehouse, monkeypa
     assert run.skipped == "returned nothing to publish"
     assert "gold.category_baselines" not in store.tables
     assert store.records["gold.category_baselines"]["published"] is False
+
+
+def test_a_step_waits_for_the_tables_it_reads(project, warehouse):
+    """A rollup that hasn't run yet has no table: the step says so instead of failing."""
+    platform = load_platform(project)
+    store = MemoryStore()
+    run = run_step(
+        platform, platform.step("daily_activity"), query=duckdb_query(warehouse), store=store, now=NOW,
+        log=lambda m: None, exists=lambda table: table != "gold.hourly_activity",
+    )
+    assert run.skipped == "waiting for gold.hourly_activity, which doesn't exist yet"
+    assert store.records == {} and store.tables == {}

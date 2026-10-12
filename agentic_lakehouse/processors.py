@@ -34,13 +34,22 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
-from confluent_kafka import KafkaException, TopicPartition
+from confluent_kafka import KafkaError, KafkaException, TopicPartition
 
 from agentic_lakehouse.config import Dataset, Platform
 from agentic_lakehouse.hooks import load
 from agentic_lakehouse.sources import Publisher, conform
 
 _EPOCH = datetime(1970, 1, 1)
+# What a broker says while it's still starting, e.g. before its consumer groups' coordinator is up
+_NOT_READY = {
+    KafkaError.NOT_COORDINATOR,
+    KafkaError.COORDINATOR_NOT_AVAILABLE,
+    KafkaError.COORDINATOR_LOAD_IN_PROGRESS,
+    KafkaError.LEADER_NOT_AVAILABLE,
+    KafkaError._TIMED_OUT,
+    KafkaError._TRANSPORT,
+}
 
 
 @dataclass
@@ -68,6 +77,7 @@ def run_processor(
     commit_every: float = 5,
     report_every: float = 60,
     clock: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> Counter:
     """Run the dataset's processor until `stop()` is true. `consumer` is a confluent_kafka.Consumer
     in the dataset's consumer group (consumer_group()). Returns counts of what happened."""
@@ -75,14 +85,33 @@ def run_processor(
     source = platform.dataset(spec.input)
     processor = load(spec.run)(context)
     topic = source.topic
-    partitions = sorted(consumer.list_topics(topic, timeout=10).topics[topic].partitions)
-    committed = {tp.partition: tp.offset for tp in consumer.committed([TopicPartition(topic, p) for p in partitions], timeout=10)}
+
+    def ready(call):
+        """call(), retried while the broker is still starting."""
+        for attempt in range(30):
+            try:
+                return call()
+            except KafkaException as e:
+                error = e.args[0] if e.args and isinstance(e.args[0], KafkaError) else None
+                if attempt == 29 or error is None or error.code() not in _NOT_READY:
+                    raise
+                log(f"{dataset.name}: waiting for Kafka ({error.str()})")
+                sleep(2)
+
+    partitions = sorted(ready(lambda: consumer.list_topics(topic, timeout=10)).topics[topic].partitions)
+    committed = {
+        tp.partition: tp.offset
+        for tp in ready(lambda: consumer.committed([TopicPartition(topic, p) for p in partitions], timeout=10))
+    }
     warmup_ms = int((clock() - spec.warmup_minutes * 60) * 1000)
-    by_time = {tp.partition: tp.offset for tp in consumer.offsets_for_times([TopicPartition(topic, p, warmup_ms) for p in partitions], timeout=10)}
+    by_time = {
+        tp.partition: tp.offset
+        for tp in ready(lambda: consumer.offsets_for_times([TopicPartition(topic, p, warmup_ms) for p in partitions], timeout=10))
+    }
 
     positions, resume = {}, {}  # resume: where input not processed before starts; what's before only rebuilds state
     for p in partitions:
-        low, high = consumer.get_watermark_offsets(TopicPartition(topic, p), timeout=10)
+        low, high = ready(lambda: consumer.get_watermark_offsets(TopicPartition(topic, p), timeout=10))
         warm = by_time[p] if by_time[p] >= 0 else high  # no message that recent: start at the end
         resume[p] = committed[p] if committed[p] >= 0 else max(warm, low)
         positions[p] = max(min(warm, resume[p]), low)

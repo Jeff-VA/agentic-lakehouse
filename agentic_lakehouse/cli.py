@@ -122,8 +122,8 @@ def main() -> None:
         metavar="NAME=TYPE",
         help="simulate an upstream release: events also carry this field (repeatable)",
     )
-    ingest = commands.add_parser("ingest", help="read a dataset's live feed into Kafka until stopped")
-    ingest.add_argument("--dataset", help="which dataset with a source (default: the only one)")
+    ingest_command = commands.add_parser("ingest", help="read a dataset's live feed into Kafka until stopped")
+    ingest_command.add_argument("--dataset", help="which dataset with a source (default: the only one)")
     process = commands.add_parser("process", help="run a dataset's processor on its input stream until stopped")
     process.add_argument("--dataset", help="which dataset with a processor (default: the only one)")
     reset = commands.add_parser("reset", help="delete all topics, tables and data, then recreate them empty")

@@ -5,6 +5,9 @@ from collections import Counter
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+from confluent_kafka import KafkaError, KafkaException
+
 from agentic_lakehouse.config import Dataset
 from agentic_lakehouse.processors import ProcessorContext, run_processor
 from test_sources import EDITS, FakePublisher
@@ -89,12 +92,12 @@ def edit(minutes_ago: float, wiki: str) -> tuple[float, dict]:
     return published, {"event_ts": int(published * 1000), "wiki": wiki, "bytes": 1}
 
 
-def run(kafka: FakeKafka, loops: int):
+def run(kafka: FakeKafka, loops: int, sleep=lambda seconds: None):
     publisher, calls = FakePublisher(), iter(range(loops))
     context = ProcessorContext(COUNTS, EDITS, query=lambda sql: None, log=lambda m: None)
     counts = run_processor(
         PLATFORM, COUNTS, consumer=kafka, publisher=publisher, context=context, log=lambda m: None,
-        stop=lambda: next(calls, None) is None, commit_every=0, clock=lambda: NOW,
+        stop=lambda: next(calls, None) is None, commit_every=0, clock=lambda: NOW, sleep=sleep,
     )
     return [event for event, _ in publisher.messages], counts
 
@@ -130,3 +133,31 @@ def test_a_quiet_start_with_nothing_recent_waits_at_the_end():
     published, counts = run(kafka, loops=3)
     assert (published, counts["input events"]) == ([], 0)
     assert kafka.commits[-1] == 1
+
+
+def failing_first(kafka: FakeKafka, *codes: int) -> None:
+    """Make kafka.committed() fail with these error codes, once each, before it answers."""
+    errors, answer = iter(codes), kafka.committed
+
+    def committed(partitions, timeout=None):
+        if (code := next(errors, None)) is not None:
+            raise KafkaException(KafkaError(code))
+        return answer(partitions, timeout)
+
+    kafka.committed = committed
+
+
+def test_a_broker_still_starting_is_waited_for():
+    kafka = FakeKafka("edits", [edit(1, "dewiki")])
+    failing_first(kafka, KafkaError.NOT_COORDINATOR, KafkaError.COORDINATOR_LOAD_IN_PROGRESS)
+    waits = []
+    published, _ = run(kafka, loops=2, sleep=waits.append)
+    assert waits == [2, 2]
+    assert [(e["wiki"], e["edits"]) for e in published] == [("dewiki", 1)]
+
+
+def test_other_kafka_errors_stop_the_processor():
+    kafka = FakeKafka("edits", [edit(1, "dewiki")])
+    failing_first(kafka, KafkaError.UNKNOWN_TOPIC_OR_PART)
+    with pytest.raises(KafkaException):
+        run(kafka, loops=2)

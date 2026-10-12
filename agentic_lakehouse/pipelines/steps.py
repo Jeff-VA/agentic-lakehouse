@@ -24,13 +24,15 @@ def run_one_step(config_dir: str, name: str) -> dict:
     step = platform.step(name)
     trino = TrinoEngine(platform.deployment.trino)
     logger = get_run_logger()
+    store = IcebergStepStore(iceberg_catalog(platform))
     try:
         run = run_step(
             platform,
             step,
             query=lambda sql: trino.execute(qualify_tables(sql, platform.deployment.trino.catalog)),
-            store=IcebergStepStore(iceberg_catalog(platform)),
+            store=store,
             log=logger.info,
+            exists=store.exists,
         )
     except QualityGateError as e:
         _report(step.output, e.results, published=False)

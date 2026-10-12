@@ -93,14 +93,18 @@ def run_step(
     now: datetime | None = None,
     log: Callable[[str], None] = print,
     force: bool = False,
+    exists: Callable[[str], bool] = lambda table: True,
 ) -> StepRun:
-    """Run `step` if it's due (or `force`). A Python step may return None to publish nothing this
+    """Run `step` if it's due (or `force`) and the tables it reads exist (`exists`: a rollup or
+    step that hasn't run yet has no table). A Python step may return None to publish nothing this
     run. Raises StepError, or QualityGateError if its rows fail a blocking check (nothing is
     published then)."""
     now = now or datetime.now(UTC).replace(tzinfo=None)
     last = store.last_run(step.output)
     if not force and not due(step, last, now):
         return StepRun(step.name, skipped=f"ran less than {step.every_minutes:g} minutes ago")
+    if missing := sorted(table for table in step.inputs() if not exists(table)):
+        return StepRun(step.name, skipped=f"waiting for {', '.join(missing)}, which doesn't exist yet")
     published = (last or {}).get("published_at")
     context = StepContext(step, now, datetime.fromisoformat(published) if published else None, query, log)
     if step.sql:
@@ -160,6 +164,9 @@ class IcebergStepStore:
         if not isinstance(self._catalog, Catalog):
             self._catalog = self._catalog()  # created on first use
         return self._catalog
+
+    def exists(self, table: str) -> bool:
+        return _load(self.catalog, table) is not None
 
     def last_run(self, table: str) -> dict | None:
         found = _load(self.catalog, table)

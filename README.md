@@ -13,6 +13,12 @@ ontology changes as a reviewable patch.
 
 ![The dashboard: live ISP quality, hourly trends, quality gates and schema drift](docs/images/dashboard.png)
 
+**See it on live data:** [wiki-pulse](https://github.com/Jeff-VA/wiki-pulse) is
+a project built on this engine. It covers every edit to every Wikipedia, as
+it happens. A stream processor flags articles getting far more edits than
+usual, and Claude explains them. A classifier trained on Claude's labels
+scores every burst. The results show in three live dashboards.
+
 ## Highlights
 
 - **One ontology, three engines.** Dimensions and metrics are defined once in
@@ -126,7 +132,7 @@ writes a proposal that the dashboard lists. Apply it with
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.2"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.3"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
