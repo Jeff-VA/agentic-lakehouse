@@ -29,6 +29,11 @@ ontology changes as a reviewable patch.
 - **Rollups behind quality gates.** Gold tables are materialized semantic
   queries. Their new rows must pass checks before they're published
   (write-audit-publish); otherwise the table keeps its last good contents.
+- **Live feeds, stream processors and pipeline steps.** A dataset can come
+  from a public feed the platform reads itself, or be computed from another
+  dataset as it streams; SQL or Python steps build tables in dependency order,
+  behind quality checks. Models live in the lakehouse as tables, so training,
+  real-time scoring and dashboards share one source of truth.
 - **An agent for schema drift.** When new fields appear, Claude proposes
   dimensions and metrics. A proposal has to pass the platform's own validation
   and run on real data before it is written as a git patch for a person to
@@ -121,7 +126,7 @@ writes a proposal that the dashboard lists. Apply it with
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.2.0"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.0"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
@@ -392,8 +397,9 @@ source.addEventListener("reload", () => location.reload());
 Whether the data can be trusted right now. For each dataset:
 `historical_through` (the flush watermark) and `unmodeled_columns` (fields the
 config doesn't describe yet). For each rollup: `complete_through` and
-`last_audit` (every check, and whether the run published or was blocked).
-Then the drift proposals waiting for review.
+`last_audit` (every check, and whether the run published or was blocked). For
+each pipeline step: its `last_run`, likewise. Then the drift proposals waiting
+for review.
 
 ```bash
 curl http://127.0.0.1:8000/status
@@ -600,6 +606,51 @@ published: `row_count`, `not_null`, `unique`, `range`, `accepted_values`,
 a `warn` check is only reported. Results appear on the dashboard, in
 `data_status`, and in the Prefect UI.
 
+### Live feeds, processors and pipeline steps
+
+Three ways to make data beyond what producers write to Kafka, each a little
+config plus a function in your project's own code:
+
+- **A live feed** (`source` on a dataset in `ingestion.yaml`) is read by
+  `agentic-lakehouse ingest`: Server-Sent Events, reshaped by your `transform`,
+  checked against the dataset's columns, and published to Kafka. Each message
+  keeps the feed's event id, so a restarted ingest resumes after the last event
+  it published.
+
+  ```yaml
+  - name: edits
+    topic: wikipedia-edits
+    source:
+      kind: sse
+      url: https://stream.wikimedia.org/v2/stream/recentchange
+      transform: wiki_pulse.edits:from_recentchange  # a feed event -> an edit, or None to leave it out
+  ```
+
+- **A processor** (`processor` on a dataset) makes the dataset from another as
+  it streams: `agentic-lakehouse process` hands your class the input in
+  batches, and what it returns is published as this dataset's events, in Pinot
+  within seconds. It keeps state in memory; after a restart it replays
+  `warmup_minutes` of input to rebuild it, without publishing anything twice.
+- **Steps** ([`pipelines.yaml`](agentic_lakehouse/steps.py)) are SQL or Python
+  that each write one Iceberg table, run in the order their reads require,
+  behind the table's quality checks. A step that trains a model writes the
+  model's parameters as a table, which a processor or a view then reads, so
+  there's no separate model store.
+
+  ```yaml
+  steps:
+    - name: trend_baselines
+      description: Each wiki's usual edits per article, by hour of the day.
+      run: wiki_pulse.baselines:fit  # (StepContext) -> pyarrow.Table
+      reads: [gold.article_hourly]
+      output: gold.trend_baselines
+      columns: {wiki: string, hour_of_day: int, mean_edits: double}
+      every_minutes: 360
+  ```
+
+Each runs as a service in the project's Docker stack: `ingest`,
+`process --dataset <name>` and `steps --serve`.
+
 ### Views
 
 A view is a SQL file in [`config/views/`](config/views/): a YAML header, then
@@ -693,7 +744,8 @@ that already has a pending patch isn't proposed (or paid for) again.
 | [`ontology.yaml`](config/ontology.yaml) | models, dimensions and metrics: what the data means |
 | [`ingestion.yaml`](config/ingestion.yaml) | each dataset's Kafka topic, raw schema and Pinot table |
 | [`storage.yaml`](config/storage.yaml) | Iceberg tables, flush schedule and lateness, rollups |
-| [`quality_rules.yaml`](config/quality_rules.yaml) | the checks each rollup must pass |
+| [`quality_rules.yaml`](config/quality_rules.yaml) | the checks each rollup or step must pass |
+| `pipelines.yaml` | steps: SQL or Python transformations, each writing a table |
 | [`deployment.yaml`](config/deployment.yaml) | service endpoints (a container-network version lives in `docker/config/`) |
 | `views/*.sql` | named queries that dashboards and agents read, at `/views/<name>` |
 | `dashboards/*.html` | dashboards, served at `/d/<name>` (and at `/` when there is just one) |
@@ -711,7 +763,7 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
 The `agentic-lakehouse` command drives each component directly against the same stack: `setup`,
-`seed`, `stream`, `flush`, `rollups`, `drift`, `serve`, `mcp` (stdio, for
+`seed`, `stream`, `ingest`, `process`, `flush`, `rollups`, `steps`, `drift`, `serve`, `mcp` (stdio, for
 Claude Code or Claude Desktop) and `reset --yes`. `agentic-lakehouse init <folder>` creates a
 new project, `agentic-lakehouse check` checks the
 config, views and dashboards (CI runs it), and `agentic-lakehouse screenshot <name>`

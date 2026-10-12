@@ -38,6 +38,13 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
   a semantic query, run the checks in `quality_rules.yaml` on the new rows, and
   publish them as a gold table only if no `error` check failed
   (write-audit-publish).
+- **Live feeds, processors and steps** go beyond producers writing to
+  Kafka: `ingest` reads a public feed into a dataset
+  ([`agentic_lakehouse/sources.py`](../agentic_lakehouse/sources.py)),
+  `process` computes a dataset from another as it streams
+  ([`processors.py`](../agentic_lakehouse/processors.py)), and steps in
+  `pipelines.yaml` write tables with SQL or Python, in the order their reads
+  require, behind quality checks ([`steps.py`](../agentic_lakehouse/steps.py)).
 - **The drift agent** ([`agentic_lakehouse/agent_sync.py`](../agentic_lakehouse/agent_sync.py)) compares
   the Iceberg schema with the config, profiles new columns, and asks Claude
   which deserve dimensions or metrics. The proposal must pass the platform's
@@ -123,6 +130,7 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 | Chart tags | `static/al.js` |
 | Dashboard checks and screenshots | `dashboards.py`, `browser.py` |
 | Setup and Kafka publishing | `orchestrator.py` |
+| Live feeds, processors, pipeline steps | `sources.py`, `processors.py`, `steps.py` |
 | A new project (`agentic-lakehouse init`) | `scaffold.py`, `project_template/` |
 | Views and dashboards without Docker, for tests | `testing.py` |
 

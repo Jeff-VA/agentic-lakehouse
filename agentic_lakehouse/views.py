@@ -686,20 +686,72 @@ def _evaluate(node: exp.Expression, values: Mapping[str, Any], now: datetime) ->
 _FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter, exp.Command, exp.Into)
 
 
+def tables_in(sql: str) -> set[str]:
+    """The <namespace>.<table> names a query reads (not its CTEs). Raises ViewError for invalid SQL."""
+    try:
+        tree = sqlglot.parse_one(sql, read=VIEW_DIALECT)
+    except SqlglotError as e:
+        raise ViewError(f"invalid SQL: {e}") from None
+    return {f"{t.db}.{t.name}" for t in tree.find_all(exp.Table) if t.db}
+
+
+def describe_query(sql: str, tables: TableSchemas) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The tables a SELECT (Trino's dialect, without parameters) reads, and its columns with their
+    SQL types: how a pipeline step's output is known before it runs. Raises ViewError."""
+    try:
+        statements = [s for s in sqlglot.parse(sql, read=VIEW_DIALECT) if s is not None]
+    except SqlglotError as e:
+        raise ViewError(f"invalid SQL: {e}") from None
+    if len(statements) != 1 or not isinstance(statements[0], exp.Query):
+        raise ViewError("write exactly one SELECT statement")
+    read, typed = _analyze(statements[0], {}, tables, {}, kind="queries")
+    columns: dict[str, str] = {}
+    for select in typed.selects:
+        if select.alias_or_name in columns:
+            raise ViewError(f"column names must be unique: {select.alias_or_name}")
+        columns[select.alias_or_name] = select.type.sql(dialect=VIEW_DIALECT).upper() if select.type else "UNKNOWN"
+    return read, columns
+
+
 def _table_source(
     tree: exp.Query,
     params: Mapping[str, ViewParam],
     tables: TableSchemas,
     models: Mapping[str, SemanticModel],
 ) -> tuple[TableSource, list[ViewColumn]]:
+    read, typed = _analyze(tree, params, tables, models)
+    # A column read as-is (aliased or not) keeps the label and format of the metric or dimension it holds.
+    fields: dict[str, Metric | Dimension] = {}
+    for model in models.values():
+        for field in [*model.metrics, *model.dimensions]:
+            fields.setdefault(field.name, field)
+    columns = []
+    for select in typed.selects:
+        source_column = select.this if isinstance(select, exp.Alias) else select
+        field = fields.get(source_column.name) if isinstance(source_column, exp.Column) else None
+        columns.append(_column(select.alias_or_name, _value_type(select.type), field))
+    names = [c.name for c in columns]
+    if repeated := sorted({n for n in names if names.count(n) > 1}):
+        raise ViewError(f"column names must be unique: {', '.join(repeated)}")
+    return TableSource(tree, read), columns
+
+
+def _analyze(
+    tree: exp.Query,
+    params: Mapping[str, ViewParam],
+    tables: TableSchemas,
+    models: Mapping[str, SemanticModel],
+    kind: str = "views",
+) -> tuple[tuple[str, ...], exp.Query]:
+    """Check a SELECT over tables, and type it: the tables it reads, and the qualified, typed tree."""
     if forbidden := tree.find(*_FORBIDDEN):
-        raise ViewError(f"views only read data; remove {forbidden.key.upper()}")
+        raise ViewError(f"{kind} only read data; remove {forbidden.key.upper()}")
     ctes = {cte.alias_or_name for cte in tree.find_all(exp.CTE)}
     known = f"Models: {', '.join(models) or 'none'}. Tables: {', '.join(sorted(tables)) or 'none'}"
     read = []
     for table in tree.find_all(exp.Table):
         if not isinstance(table.this, exp.Identifier):
-            raise ViewError(f"views read models and tables, not table functions like {table.sql(VIEW_DIALECT)}")
+            raise ViewError(f"{kind} read models and tables, not table functions like {table.sql(VIEW_DIALECT)}")
         if table.catalog:
             raise ViewError(f"write tables as <namespace>.<table>, without a catalog: {table.sql(VIEW_DIALECT)}")
         if not table.db:
@@ -729,20 +781,11 @@ def _table_source(
         typed = annotate_types(qualify(sample, schema=schema, dialect=VIEW_DIALECT), schema=schema, dialect=VIEW_DIALECT)
     except SqlglotError as e:  # e.g. "Column 'x' could not be resolved"
         raise ViewError(str(e).split(". Line:")[0]) from None
-    # A column read as-is (aliased or not) keeps the label and format of the metric or dimension it holds.
-    fields: dict[str, Metric | Dimension] = {}
-    for model in models.values():
-        for field in [*model.metrics, *model.dimensions]:
-            fields.setdefault(field.name, field)
-    columns = []
-    for select in typed.selects:
-        source_column = select.this if isinstance(select, exp.Alias) else select
-        field = fields.get(source_column.name) if isinstance(source_column, exp.Column) else None
-        columns.append(_column(select.alias_or_name, _value_type(select.type), field))
-    names = [c.name for c in columns]
-    if repeated := sorted({n for n in names if names.count(n) > 1}):
-        raise ViewError(f"column names must be unique: {', '.join(repeated)}")
-    return TableSource(tree, tuple(sorted(set(read)))), columns
+    for select in typed.selects:  # sqlglot leaves date_trunc's type unknown: truncating a time gives a time
+        inner = select.this if isinstance(select, exp.Alias) else select
+        if isinstance(inner, _TRUNC) and (select.type is None or select.type.is_type(exp.DataType.Type.UNKNOWN)):
+            select.type = exp.DataType.build("TIMESTAMP")
+    return tuple(sorted(set(read))), typed
 
 
 def qualify_tables(sql: str, catalog: str | None, dialect: str = VIEW_DIALECT) -> str:

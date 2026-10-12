@@ -275,3 +275,13 @@ def test_the_gateway_starts_while_the_stack_is_unreachable():
     assert {t.name for t in call_mcp(create_mcp_server(gateway), "list_tools").tools} == {
         "list_metrics", "query_metrics", "data_status", "list_views", "query_view"
     }
+
+
+def test_status_reports_each_steps_last_run():
+    from agentic_lakehouse.api_gateway import StepInfo, StepRunInfo
+
+    run = StepRunInfo(at=datetime(2026, 1, 1, 5), published=True, rows=12, checks=[], published_at=datetime(2026, 1, 1, 5))
+    steps = [StepInfo(name="baselines", description="A model.", table="gold.baselines", last_run=run)]
+    with TestClient(create_app(Gateway(router(), step_runs=lambda: steps))) as client:
+        [step] = client.get("/status").json()["steps"]
+    assert (step["name"], step["table"], step["last_run"]["rows"], step["last_run"]["published"]) == ("baselines", "gold.baselines", 12, True)

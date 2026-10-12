@@ -13,6 +13,7 @@ simulator, from there too.
     process                  run a dataset's processor on its input stream until stopped
     flush [--serve]          move new events from Kafka into Iceberg (once, or on schedule)
     rollups [--serve]        refresh the gold rollup tables, behind their quality gates
+    steps [--serve]          run the steps in pipelines.yaml that are due, in order
     drift [--serve]          find new event fields; Claude proposes config patches (proposals/)
     reset --yes              delete all topics, tables and data, then run setup
     serve                    REST API, dashboards and MCP (HTTP) on http://127.0.0.1:8000;
@@ -131,6 +132,8 @@ def main() -> None:
     flush.add_argument("--serve", action="store_true", help="keep running, flushing on the configured schedule")
     rollups = commands.add_parser("rollups", help="refresh the gold rollup tables, behind their quality gates")
     rollups.add_argument("--serve", action="store_true", help="keep running on the configured schedule")
+    steps = commands.add_parser("steps", help="run the steps in pipelines.yaml that are due, in order")
+    steps.add_argument("--serve", action="store_true", help="keep running on the steps' schedules")
     drift = commands.add_parser("drift", help="find new event fields and have Claude propose config patches")
     drift.add_argument("--serve", action="store_true", help="keep running, checking every hour")
     serve = commands.add_parser("serve", help="run the REST API, with MCP at /mcp")
@@ -238,6 +241,18 @@ def main() -> None:
             run_then_serve(refresh_rollups, "rollups", timedelta(minutes=every), args.config)
         else:
             refresh_rollups(config_dir=args.config)
+    elif args.command == "steps":
+        if not platform.pipelines.steps:
+            print("no steps in pipelines.yaml; nothing to run")
+            return
+        os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
+        from agentic_lakehouse.pipelines.steps import run_steps  # after PREFECT_API_URL is set
+
+        if args.serve:
+            every = min(s.every_minutes for s in platform.pipelines.steps)
+            run_then_serve(run_steps, "steps", timedelta(minutes=every), args.config)
+        else:
+            run_steps(config_dir=args.config)
     elif args.command == "drift":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
         from agentic_lakehouse.pipelines.drift import drift_check  # after PREFECT_API_URL is set

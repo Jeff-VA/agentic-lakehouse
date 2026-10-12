@@ -6,6 +6,8 @@
 - quality_rules.yaml: checks a rollup's rows must pass before they're published
   (schema in agentic_lakehouse/quality.py)
 - deployment.yaml: where the services are reachable
+- pipelines.yaml (optional): steps, SQL or Python transformations that each
+  write a table, run in the order their inputs require (agentic_lakehouse/steps.py)
 - views/*.sql: named queries for dashboards and agents (agentic_lakehouse/views.py)
 
 load_platform() loads them all and checks that they agree with each other,
@@ -26,7 +28,7 @@ from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, Query
 from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
 from agentic_lakehouse.hooks import SPEC
 from agentic_lakehouse.quality import QualityConfig, TableName
-from agentic_lakehouse.views import View, ViewError, load_views
+from agentic_lakehouse.views import View, ViewError, describe_query, load_views, tables_in
 
 ColumnType = Literal["string", "int", "long", "double", "boolean", "timestamp"]
 
@@ -159,6 +161,50 @@ class StorageConfig(StrictModel):
         return self
 
 
+class Step(StrictModel):
+    """A transformation in pipelines.yaml: SQL or Python over lakehouse tables, writing one table
+    on a schedule, behind the table's quality checks (agentic_lakehouse/steps.py)."""
+
+    name: Identifier
+    description: str = Field(min_length=1)
+    output: TableName  # <namespace>.<table> it writes
+    sql: str | None = None  # a Trino SELECT over <namespace>.<table> names
+    run: str | None = Field(default=None, pattern=SPEC)  # module:function(StepContext) -> pyarrow.Table
+    reads: list[TableName] = []  # what a Python step reads (a SQL step's reads come from its SQL)
+    columns: dict[Identifier, ColumnType] = {}  # a Python step's output columns (a SQL step's are worked out)
+    mode: Literal["replace", "append"] = "replace"  # rewrite the table each run, or add the rows a run returns
+    time_column: Identifier | None = None  # the output's time column, for freshness checks
+    every_minutes: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if (self.sql is None) == (self.run is None):
+            raise ValueError(f"step '{self.name}': give it `sql` or `run`, one of them")
+        if self.sql is not None and (self.reads or self.columns):
+            raise ValueError(f"step '{self.name}': a SQL step's reads and columns come from its SQL; leave them out")
+        if self.run is not None and not self.columns:
+            raise ValueError(f"step '{self.name}': declare a Python step's output `columns`, so views and checks know them")
+        if self.run is not None and self.time_column and self.time_column not in self.columns:
+            raise ValueError(f"step '{self.name}': time_column '{self.time_column}' isn't one of its columns")
+        return self
+
+    def inputs(self) -> set[str]:
+        return tables_in(self.sql) if self.sql else set(self.reads)
+
+
+class PipelinesConfig(StrictModel):
+    version: str = "1.0.0"
+    steps: list[Step] = []
+
+    @model_validator(mode="after")
+    def _check_unique(self) -> Self:
+        index_by_name(self.steps, "step", "pipelines")
+        outputs = [s.output for s in self.steps]
+        if repeated := sorted({o for o in outputs if outputs.count(o) > 1}):
+            raise ValueError(f"pipelines: tables written by more than one step: {', '.join(repeated)}")
+        return self
+
+
 class KafkaEndpoints(StrictModel):
     bootstrap_servers: str
     internal_bootstrap_servers: str  # as seen from inside the container network
@@ -212,6 +258,7 @@ class Platform:
     storage: StorageConfig
     quality: QualityConfig
     deployment: DeploymentConfig
+    pipelines: PipelinesConfig = field(default_factory=PipelinesConfig)
     config_dir: Path | None = None  # also holds the project's views/ and dashboards/
     views: dict[str, View] = field(default_factory=dict)
 
@@ -232,8 +279,40 @@ class Platform:
         """The gold table's columns: time bucket, dimensions, metrics."""
         return [self.rollup_model(rollup).time_dimension, *rollup.query.dimensions, *rollup.query.metrics]
 
+    def step(self, name: str) -> Step:
+        return next(s for s in self.pipelines.steps if s.name == name)
+
+    def ordered_steps(self) -> list[Step]:
+        """The steps, each after the steps whose tables it reads. Raises ConfigError on a cycle."""
+        by_output = {s.output: s for s in self.pipelines.steps}
+        ordered, done, active = [], set(), []
+
+        def visit(step: Step) -> None:
+            if step.name in done:
+                return
+            if step.name in active:
+                raise ConfigError(f"steps read each other in a cycle: {' -> '.join(active[active.index(step.name):] + [step.name])}")
+            active.append(step.name)
+            for table in sorted(step.inputs()):
+                if table in by_output:
+                    visit(by_output[table])
+            active.pop()
+            done.add(step.name)
+            ordered.append(step)
+
+        for step in self.pipelines.steps:
+            visit(step)
+        return ordered
+
     def table_schemas(self) -> dict[str, dict[str, str]]:
-        """Column -> SQL type of each Iceberg table views can read: every dataset's raw table and every rollup."""
+        """Column -> SQL type of each Iceberg table views and steps can read: every dataset's raw
+        table, every rollup and every step's output."""
+        schemas = self._base_schemas()
+        for step in self.ordered_steps():
+            schemas[step.output] = _step_columns(step, schemas)
+        return schemas
+
+    def _base_schemas(self) -> dict[str, dict[str, str]]:
         schemas = {
             table.table: {c.name: _SQL_TYPES[c.type] for c in self.dataset(table.dataset).columns} for table in self.storage.tables
         }
@@ -264,6 +343,12 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _step_columns(step: Step, schemas: dict[str, dict[str, str]]) -> dict[str, str]:
+    if step.sql:
+        return describe_query(step.sql, schemas)[1]
+    return {name: _SQL_TYPES[column_type] for name, column_type in step.columns.items()}
+
+
 _EPOCH = datetime(1970, 1, 1)
 _SQL_TYPES = {"string": "VARCHAR", "int": "INTEGER", "long": "BIGINT", "double": "DOUBLE", "boolean": "BOOLEAN", "timestamp": "TIMESTAMP"}
 _DIMENSION_SQL_TYPES = {"string": "VARCHAR", "number": "DOUBLE", "boolean": "BOOLEAN", "timestamp": "TIMESTAMP"}
@@ -283,6 +368,7 @@ def load_platform(config_dir: str | Path) -> Platform:
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
         quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),
         deployment=DeploymentConfig.model_validate(_load_yaml(config_dir / "deployment.yaml")),
+        pipelines=PipelinesConfig.model_validate(_load_yaml(config_dir / "pipelines.yaml")) if (config_dir / "pipelines.yaml").exists() else PipelinesConfig(),
         config_dir=config_dir,
     )
     _check_consistency(platform)
@@ -291,6 +377,34 @@ def load_platform(config_dir: str | Path) -> Platform:
     except ViewError as e:
         raise ConfigError(str(e)) from None
     return replace(platform, views=views)
+
+
+def _check_steps(platform: Platform, problems: list[str]) -> dict[str, dict[str, str]]:
+    """Check pipelines.yaml against the rest; returns each step output's columns that could be worked out."""
+    if not platform.pipelines.steps:
+        return {}
+    schemas = platform._base_schemas()
+    for step in platform.pipelines.steps:
+        if step.output in schemas:
+            problems.append(f"step '{step.name}' writes {step.output}, which is already a raw table or rollup")
+    try:
+        ordered = platform.ordered_steps()
+    except (ConfigError, ViewError) as e:
+        problems.append(str(e))
+        return {}
+    outputs = {}
+    for step in ordered:
+        if unknown := sorted(step.inputs() - schemas.keys()):
+            problems.append(f"step '{step.name}' reads unknown tables: {', '.join(unknown)}")
+            continue
+        try:
+            schemas[step.output] = outputs[step.output] = _step_columns(step, schemas)
+        except ViewError as e:
+            problems.append(f"step '{step.name}': {e}")
+            continue
+        if step.sql and step.time_column and step.time_column not in outputs[step.output]:
+            problems.append(f"step '{step.name}': time_column '{step.time_column}' isn't one of its columns")
+    return outputs
 
 
 def _check_consistency(platform: Platform) -> None:
@@ -324,16 +438,23 @@ def _check_consistency(platform: Platform) -> None:
             rollup_columns[rollup.table] = set(platform.rollup_columns(rollup))
         except QueryError as e:
             problems.append(f"rollup '{rollup.table}': {e}")
+    step_columns = _check_steps(platform, problems)
     for rules in platform.quality.rules:
-        if rules.table not in rollup_columns:
+        if rules.table in step_columns:
+            columns, what = set(step_columns[rules.table]), "the step's output"
+            step = next(s for s in platform.pipelines.steps if s.output == rules.table)
+            if any(check.type == "freshness" for check in rules.checks) and not step.time_column:
+                problems.append(f"quality rules for '{rules.table}' check freshness; give step '{step.name}' a time_column")
+        elif rules.table in rollup_columns:
+            columns, what = rollup_columns[rules.table], "the rollup"
+        else:
             if rules.table not in {r.table for r in platform.storage.rollups}:
-                problems.append(f"quality rules for '{rules.table}', which isn't a rollup in storage.yaml")
+                problems.append(f"quality rules for '{rules.table}', which isn't a rollup in storage.yaml or a step's output")
             continue
         for check in rules.checks:
-            if missing := check.referenced_columns() - rollup_columns[rules.table]:
+            if missing := check.referenced_columns() - columns:
                 problems.append(
-                    f"quality check {check.type} on '{rules.table}' reads columns the rollup doesn't have: "
-                    + ", ".join(sorted(missing))
+                    f"quality check {check.type} on '{rules.table}' reads columns {what} doesn't have: " + ", ".join(sorted(missing))
                 )
     if problems:
         raise ConfigError("config files disagree:\n  - " + "\n  - ".join(problems))

@@ -58,6 +58,7 @@ from agentic_lakehouse.ontology import AggregateMetric, Metric, SemanticModel, d
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
 from agentic_lakehouse.router import QueryResult, Router
+from agentic_lakehouse.steps import IcebergStepStore
 from agentic_lakehouse.views import ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
@@ -150,6 +151,21 @@ class RollupInfo(BaseModel):
     last_audit: Audit | None
 
 
+class StepRunInfo(BaseModel):
+    at: datetime  # when the step last ran
+    published: bool  # false: an error check failed and its rows were held back
+    rows: int
+    checks: list[CheckInfo]
+    published_at: datetime | None  # when it last published
+
+
+class StepInfo(BaseModel):
+    name: str
+    description: str
+    table: str  # the table it writes
+    last_run: StepRunInfo | None  # None until it first runs
+
+
 class DriftProposalInfo(BaseModel):
     file: str
     dataset: str
@@ -161,6 +177,7 @@ class Status(BaseModel):
     now: datetime
     datasets: list[DatasetStatus]
     rollups: list[RollupInfo]
+    steps: list[StepInfo] = []  # pipelines.yaml's steps, in the order they run
     drift_proposals: list[DriftProposalInfo]  # config patches waiting for review
 
 
@@ -305,6 +322,7 @@ class Gateway:
         rollups: RollupStore | None = None,
         proposals_dir: str | Path | None = None,
         schema_drift: Callable[[str], list[str]] | None = None,
+        step_runs: Callable[[], list[StepInfo]] | None = None,
         max_rows: int = MAX_ROWS,
     ):
         self.router = router
@@ -313,6 +331,7 @@ class Gateway:
         self.rollups = rollups
         self.proposals_dir = Path(proposals_dir) if proposals_dir else None
         self.schema_drift = schema_drift
+        self.step_runs = step_runs
         self.max_rows = max_rows
 
     @classmethod
@@ -339,6 +358,14 @@ class Gateway:
             )
 
         warehouse = Warehouse(TrinoEngine(platform.deployment.trino), platform.deployment.trino.catalog, table_state)
+        store = IcebergStepStore(lambda: rollups.catalog)
+
+        def step_runs() -> list[StepInfo]:
+            return [
+                StepInfo(name=s.name, description=s.description, table=s.output, last_run=_step_run(store.last_run(s.output)))
+                for s in platform.ordered_steps()
+            ]
+
         return cls(
             Router.from_platform(platform),
             views=platform.views,
@@ -346,6 +373,7 @@ class Gateway:
             rollups=rollups,
             proposals_dir=proposals_dir,
             schema_drift=schema_drift,
+            step_runs=step_runs,
         )
 
     def status(self) -> Status:
@@ -380,6 +408,7 @@ class Gateway:
             now=datetime.now(UTC),
             datasets=datasets,
             rollups=rollups,
+            steps=self.step_runs() if self.step_runs else [],
             drift_proposals=[DriftProposalInfo(**vars(p)) for p in proposals],
         )
 
@@ -516,6 +545,19 @@ class Gateway:
             rows = rows[: self.max_rows]
             notes.append(f"Only the first {self.max_rows} rows are returned; {advice}.")
         return result, rows, notes, truncated
+
+
+def _step_run(record: dict | None) -> StepRunInfo | None:
+    if record is None:
+        return None
+    published = record.get("published_at")
+    return StepRunInfo(
+        at=_utc(datetime.fromisoformat(record["at"])),
+        published=record["published"],
+        rows=record["rows"],
+        checks=record["checks"],
+        published_at=_utc(datetime.fromisoformat(published)) if published else None,
+    )
 
 
 def _utc(ts: datetime) -> datetime:

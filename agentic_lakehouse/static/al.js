@@ -978,32 +978,54 @@ class FreshnessTag extends StatusTag {
   }
 }
 
-// <al-gates>: each rollup's last quality gate.
+// <al-gates>: the last quality gate of each rollup and pipeline step.
+function gateItem({ name, kind, audit, facts }) {
+  const failed = audit ? audit.checks.filter(c => !c.passed) : [];
+  const state = !audit ? "none" : !audit.published ? "bad" : failed.length ? "warn" : "good";
+  const words = { none: "Not run yet", bad: "Blocked", warn: `Published with ${failed.length} warning${failed.length > 1 ? "s" : ""}`, good: "Published" }[state];
+  const list = el("ul", { class: "al-checks" });
+  for (const check of failed) {
+    list.append(el("li", {}, icon(check.severity === "error" ? "bad" : "warn"), el("span", {}, el("span", { class: "what", text: check.check }), document.createTextNode(` — ${check.detail}`))));
+  }
+  const passed = audit ? audit.checks.length - failed.length : 0;
+  if (passed) list.append(el("li", { class: "al-muted" }, icon("good"), el("span", { text: failed.length ? `${passed} other check${passed > 1 ? "s" : ""} passed` : `All ${passed} check${passed > 1 ? "s" : ""} passed` })));
+  return el("div", { class: "al-item" },
+    el("div", { class: "al-item-head" }, el("span", { class: "al-item-name", text: name, title: kind }), el("span", { class: "al-status" }, icon(state), el("span", { text: words }))),
+    el("div", { class: "al-caption", text: facts.filter(Boolean).join(" · ") }),
+    list,
+  );
+}
+
 class GatesTag extends StatusTag {
   render(body) {
-    if (!body.rollups.length) return this.replaceChildren(el("div", { class: "al-empty", text: "No rollups are configured." }));
-    this.replaceChildren(...body.rollups.map(rollup => {
+    const items = body.rollups.map(rollup => {
       const audit = rollup.last_audit;
-      const failed = audit ? audit.checks.filter(c => !c.passed) : [];
-      const kind = !audit ? "none" : !audit.published ? "bad" : failed.length ? "warn" : "good";
-      const words = { none: "Not run yet", bad: "Blocked", warn: `Published with ${failed.length} warning${failed.length > 1 ? "s" : ""}`, good: "Published" }[kind];
-      const facts = [
-        rollup.complete_through ? `complete through ${utcDay(rollup.complete_through)} ${utcTime(rollup.complete_through)} UTC` : "never published",
-        audit ? `last checked ${ago(audit.at)}` : null,
-        audit && !audit.published ? "the table keeps its last good contents" : null,
-      ].filter(Boolean).join(" · ");
-      const list = el("ul", { class: "al-checks" });
-      for (const check of failed) {
-        list.append(el("li", {}, icon(check.severity === "error" ? "bad" : "warn"), el("span", {}, el("span", { class: "what", text: check.check }), document.createTextNode(` — ${check.detail}`))));
-      }
-      const passed = audit ? audit.checks.length - failed.length : 0;
-      if (passed) list.append(el("li", { class: "al-muted" }, icon("good"), el("span", { text: failed.length ? `${passed} other check${passed > 1 ? "s" : ""} passed` : `All ${passed} check${passed > 1 ? "s" : ""} passed` })));
-      return el("div", { class: "al-item" },
-        el("div", { class: "al-item-head" }, el("span", { class: "al-item-name", text: rollup.table }), el("span", { class: "al-status" }, icon(kind), el("span", { text: words }))),
-        el("div", { class: "al-caption", text: facts }),
-        list,
-      );
-    }));
+      return gateItem({
+        name: rollup.table,
+        kind: `rollup, ${rollup.grain}ly`,
+        audit,
+        facts: [
+          rollup.complete_through ? `complete through ${utcDay(rollup.complete_through)} ${utcTime(rollup.complete_through)} UTC` : "never published",
+          audit ? `last checked ${ago(audit.at)}` : null,
+          audit && !audit.published ? "the table keeps its last good contents" : null,
+        ],
+      });
+    });
+    for (const step of body.steps ?? []) {
+      const run = step.last_run;
+      items.push(gateItem({
+        name: step.table,
+        kind: `step ${step.name}`,
+        audit: run,
+        facts: [
+          `step ${step.name}`,
+          run ? `ran ${ago(run.at)}, ${run.rows.toLocaleString("en-US")} rows` : "never ran",
+          run && !run.published ? "the table keeps its last good contents" : null,
+        ],
+      }));
+    }
+    if (!items.length) return this.replaceChildren(el("div", { class: "al-empty", text: "No rollups or steps are configured." }));
+    this.replaceChildren(...items);
   }
 }
 
