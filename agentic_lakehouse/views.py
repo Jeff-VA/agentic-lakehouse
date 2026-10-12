@@ -27,7 +27,13 @@ What the SELECT reads decides how it runs:
   data ends where each table's last flush or rollup run did.
 
 The header can also set `refresh_seconds`: how often a live view rechecks its
-data (agentic_lakehouse/live.py). Parameters are written :name and declared in the header
+data (agentic_lakehouse/live.py), and `columns`: how to read columns the
+ontology doesn't describe, such as one a view over tables computes:
+
+    columns:
+      accuracy: {label: Accuracy, format: percent}
+
+Parameters are written :name and declared in the header
 with a type and an optional default. Values are bound as SQL literals, never pasted in as text. A
 parameter declared with `default: null` is optional: in a view over a model, a
 dimension condition comparing with it is dropped while it has no value, which
@@ -170,9 +176,20 @@ class ViewParam(StrictModel):
         return value
 
 
+class ColumnDisplay(StrictModel):
+    """How people read one of a view's columns, set in its header: for a column the ontology
+    doesn't describe (one the view computes, say), or to say something else than it does."""
+
+    label: str = ""
+    format: Format | None = None
+    unit: str = ""
+    better: Better | None = None
+
+
 class ViewHeader(StrictModel):
     description: str = Field(min_length=1)  # agents and people pick views by reading this
     params: dict[Identifier, ViewParam] = {}
+    columns: dict[str, ColumnDisplay] = {}  # by column name
     refresh_seconds: float | None = Field(default=None, ge=1)  # how often a live view rechecks (agentic_lakehouse/live.py)
 
 
@@ -374,7 +391,26 @@ def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas) -
         source, columns = _model_source(tree, model, header.params, ontology)
     else:
         source, columns = _table_source(tree, header.params, tables, models)
+    columns = _described(columns, header.columns)
     return View(name, header.description, dict(header.params), sql, tuple(columns), source, header.refresh_seconds)
+
+
+def _described(columns: list["ViewColumn"], described: Mapping[str, ColumnDisplay]) -> list["ViewColumn"]:
+    """The columns, with what the header's `columns` says about them."""
+    names = [c.name for c in columns]
+    if unknown := sorted(set(described) - set(names)):
+        raise ViewError(f"columns: {', '.join(unknown)} isn't one of the view's columns ({', '.join(names)})")
+    result = []
+    for column in columns:
+        display = described.get(column.name)
+        if display is None:
+            result.append(column)
+            continue
+        said = display.model_dump(exclude_unset=True)
+        if column.type != "number" and said.keys() & {"format", "unit", "better"}:
+            raise ViewError(f"columns: {column.name} holds {column.type} values; format, unit and better are for numbers")
+        result.append(column.model_copy(update=said))
+    return result
 
 
 def _validation_message(error: ValidationError) -> str:

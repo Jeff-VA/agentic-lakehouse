@@ -645,7 +645,8 @@ views in views/<name>.sql, pages in dashboards/<name>.html. Work in small steps:
      WHERE event_ts >= now() - INTERVAL :hours HOUR
    FROM a model, select its metrics and dimensions by name (never re-derive a metric), group by
    time with date_trunc, and bound the time dimension with >= and <: it runs live across both
-   tiers. FROM a table (namespace.table, e.g. a gold rollup), write any Trino SELECT.
+   tiers. FROM a table (namespace.table, e.g. a gold rollup), write any Trino SELECT; label a
+   column it computes in the header: columns: {{share: {{label: Share, format: percent}}}}.
    query_view runs a view so you can see its rows.
 3. Write the page in plain HTML with the chart tags below. Names are enough: labels and number
    formats come from the ontology. Keep the page small and readable.

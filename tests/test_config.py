@@ -32,6 +32,15 @@ def test_sample_config_loads():
         platform.table_for("telemetry", "duckdb")
 
 
+def test_a_file_that_isnt_yaml_is_named_with_the_line(config_dir):
+    path = config_dir / "storage.yaml"
+    path.write_text(path.read_text().replace("description:", "description: Hourly: per ISP.", 1))
+    with pytest.raises(ConfigError) as raised:
+        load_platform(config_dir)
+    assert str(raised.value).startswith("storage.yaml isn't valid YAML: mapping values are not allowed here (line ")
+    assert "put text containing ': ' in quotes" in str(raised.value)
+
+
 def test_model_reading_a_column_its_dataset_lacks_is_rejected(config_dir):
     edit(config_dir / "ingestion.yaml", lambda d: d["datasets"][0]["columns"].pop())  # bitrate_kbps
     with pytest.raises(ConfigError, match="dataset 'telemetry' doesn't have: bitrate_kbps"):

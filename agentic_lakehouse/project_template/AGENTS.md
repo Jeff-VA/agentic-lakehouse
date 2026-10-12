@@ -34,7 +34,8 @@ registers for Claude Code; each has a command-line twin.
      name; never re-derive a metric in SQL (add it to `ontology.yaml`). Group
      by time with `date_trunc('hour', event_ts)` and bound the time dimension
      with `>=` and `<`. These views are live to the second.
-   - Reading tables (`FROM gold.hourly_activity`), write any Trino SELECT.
+   - Reading tables (`FROM gold.hourly_activity`), write any Trino SELECT. Say how
+     to read computed columns in the header: `columns: {share: {format: percent}}`.
    - Give it a `description` a stranger could act on, and parameters
      (`:hours`) instead of hard-coded windows. `query_view` runs it.
 3. **Write the page** in plain HTML with the chart tags listed at the top of

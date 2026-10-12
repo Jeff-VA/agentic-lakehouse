@@ -44,7 +44,8 @@ def standin_gateway(platform: Platform, *, hours: int = 6, rate: float = 6, seed
         con.execute(f'CREATE TABLE "{dataset.name}" AS SELECT * FROM _events')
         con.unregister("_events")
         raw = platform.iceberg_table(dataset.name).table  # e.g. raw.events, which views over tables read
-        con.execute(f'CREATE SCHEMA IF NOT EXISTS {raw.split(".")[0]}; CREATE VIEW {raw} AS SELECT * FROM "{dataset.name}"')
+        # main.: inside a view, a bare name means the view's own schema, so raw.events would read itself
+        con.execute(f'CREATE SCHEMA IF NOT EXISTS {raw.split(".")[0]}; CREATE VIEW {raw} AS SELECT * FROM main."{dataset.name}"')
         placements[dataset.name] = Placement(
             realtime=Tier(engine, f'"{dataset.name}"'),
             historical=Tier(engine, f'"{dataset.name}"'),

@@ -25,7 +25,7 @@ import yaml
 from pydantic import Field, model_validator
 
 from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
-from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
+from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name
 from agentic_lakehouse.hooks import SPEC
 from agentic_lakehouse.quality import QualityConfig, TableName
 from agentic_lakehouse.views import View, ViewError, describe_query, load_views, tables_in
@@ -339,8 +339,16 @@ class Platform:
 
 
 def _load_yaml(path: Path) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f) or {}
+    """A config file's YAML. Raises ConfigError saying where, if it isn't valid YAML."""
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" (line {mark.line + 1}, column {mark.column + 1})" if mark else ""
+        problem = getattr(e, "problem", None) or str(e)
+        hint = "; put text containing ': ' in quotes, or use > for a long description" if "mapping values" in problem else ""
+        raise ConfigError(f"{path.name} isn't valid YAML: {problem}{where}{hint}") from None
 
 
 def _step_columns(step: Step, schemas: dict[str, dict[str, str]]) -> dict[str, str]:
@@ -358,12 +366,12 @@ def load_platform(config_dir: str | Path) -> Platform:
     """Load and cross-check the ontology, ingestion, storage, quality and deployment YAML in
     `config_dir`, and the views in its views/ folder.
 
-    Raises pydantic.ValidationError for a malformed file, ConfigError when files disagree or a
-    view is invalid.
+    Raises pydantic.ValidationError for a malformed file, ConfigError for a file that isn't YAML,
+    files that disagree or an invalid view.
     """
     config_dir = Path(config_dir)
     platform = Platform(
-        ontology=load_ontology(config_dir / "ontology.yaml"),
+        ontology=Ontology.model_validate(_load_yaml(config_dir / "ontology.yaml")),
         ingestion=IngestionConfig.model_validate(_load_yaml(config_dir / "ingestion.yaml")),
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
         quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),

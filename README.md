@@ -126,7 +126,7 @@ writes a proposal that the dashboard lists. Apply it with
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.1"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.2"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
@@ -678,6 +678,16 @@ What it reads decides how it runs:
 - **From Iceberg tables** (`gold.hourly_isp_quality`, `raw.telemetry`), it is
   any SELECT, run on Trino as written. Its data ends at each table's last flush
   or rollup run, which the response reports as `data_through`.
+
+Labels and number formats come from the ontology: a column holding a metric
+or dimension reads like it everywhere. For a column the ontology doesn't
+describe, such as one a view over tables computes, the header says how to
+read it:
+
+```yaml
+columns:
+  training_accuracy: {label: Training accuracy, format: percent}
+```
 
 Parameters are typed, checked (`min`, `max`, `values`) and bound as SQL
 literals, never pasted in as text. A parameter with `default: null` is

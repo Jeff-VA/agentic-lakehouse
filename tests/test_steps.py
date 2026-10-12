@@ -87,9 +87,11 @@ def test_steps_run_in_the_order_their_reads_require(project):
 
 def test_the_stand_in_runs_the_steps_so_views_over_them_work(project):
     calls.clear()
+    (project / "views" / "raw_events.sql").write_text("/*\ndescription: Every event so far.\n*/\nSELECT count(*) AS events FROM raw.events")
     gateway = standin_gateway(load_platform(project))
     rows = gateway.view("versus_baseline").rows
     assert rows and all(row["mean_events"] > 0 for row in rows)
+    assert gateway.view("raw_events").rows[0]["events"] > 0  # the raw table named like its dataset
     [context] = calls
     assert context.step.name == "category_baselines" and context.last_published is None
 

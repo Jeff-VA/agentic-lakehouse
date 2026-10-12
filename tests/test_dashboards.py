@@ -275,3 +275,32 @@ def test_bars_grow_both_ways_from_zero_and_links_read_as_their_page(tmp_path):
     assert shot.problems == []
     assert shot.value["fills"] == ["var(--series-1)", "var(--series-2)"]  # positive, negative
     assert shot.value["links"][0] == ["James Ball (economist)", "https://en.wikipedia.org/wiki/James_Ball_(economist)"]
+
+
+@needs_chrome
+def test_tables_line_text_up_left_and_an_empty_option_means_all(tmp_path):
+    create_project(tmp_path / "kinds")
+    config = tmp_path / "kinds" / "config"
+    (config / "views" / "kinds.sql").write_text(
+        "/*\ndescription: Events per category.\nparams:\n  category: {type: string, default: null}\n*/\n"
+        "SELECT category, count(*) AS events, min(event_ts) AS first_seen FROM raw.events "
+        "WHERE (:category IS NULL OR category = :category) GROUP BY category ORDER BY category"
+    )
+    (config / "dashboards" / "kinds.html").write_text(
+        '<!doctype html><title>Kinds</title><script type="module" src="/al.js"></script>'
+        '<al-param name="category" options="=All,category_1=One"></al-param><al-table view="kinds"></al-table>'
+    )
+    facts = """(() => ({
+      pressed: [...document.querySelectorAll('al-param button')].map(b => [b.textContent, b.getAttribute('aria-pressed')]),
+      rows: document.querySelectorAll('al-table tbody tr').length,
+      cells: [...document.querySelectorAll('al-table tbody tr:first-child td')].map(td => [getComputedStyle(td).textAlign, getComputedStyle(td).whiteSpace]),
+      heads: [...document.querySelectorAll('al-table th')].map(th => getComputedStyle(th).textAlign),
+    }))()"""
+    gateway = standin_gateway(load_platform(config))
+    with serving(create_app(gateway, dashboards_dir=config / "dashboards")) as url:
+        shot = capture(f"{url}/d/kinds", script=facts, timeout=30)
+    assert shot.problems == []
+    assert shot.value["pressed"] == [["All", "true"], ["One", "false"]]  # "=All" is the default: no filter
+    assert shot.value["rows"] == 5
+    assert shot.value["cells"] == [["left", "normal"], ["right", "normal"], ["left", "nowrap"]]  # a time stays on one line
+    assert shot.value["heads"] == ["left", "right", "left"]  # text and times on the left, numbers on the right

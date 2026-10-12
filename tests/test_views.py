@@ -366,3 +366,21 @@ def test_columns_say_how_to_read_them():
     ]
     computed = view("SELECT isp, sum(plays) AS total FROM gold.hourly GROUP BY isp")
     assert [(c.label, c.format) for c in computed.columns] == [("Isp", None), ("Total", None)]
+
+
+def test_the_header_says_how_to_read_columns_the_ontology_doesnt_describe():
+    header = """/*
+description: Each ISP's share of slow plays.
+columns:
+  slow_share: {label: Slow plays, format: percent, better: lower}
+  plays: {label: Plays this week}
+*/
+"""
+    sql = "SELECT isp, sum(plays) AS plays, avg(slow_rate) AS slow_share FROM gold.hourly GROUP BY isp"
+    columns = {c.name: c for c in parse_view("test", header + sql, ONTOLOGY, TABLES).columns}
+    assert (columns["slow_share"].label, columns["slow_share"].format, columns["slow_share"].better) == ("Slow plays", "percent", "lower")
+    assert (columns["plays"].label, columns["plays"].format) == ("Plays this week", None)
+    with pytest.raises(ViewError, match=r"columns: nope isn't one of the view's columns \(isp, plays, slow_share\)"):
+        parse_view("test", header.replace("plays: {", "nope: {") + sql, ONTOLOGY, TABLES)
+    with pytest.raises(ViewError, match="columns: isp holds string values; format, unit and better are for numbers"):
+        parse_view("test", header.replace("plays: {label: Plays this week}", "isp: {format: integer}") + sql, ONTOLOGY, TABLES)

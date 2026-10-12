@@ -131,7 +131,9 @@ al-lines .al-legend button[aria-pressed="false"] .al-key { opacity: 0.3; }
 .al-table-wrap th, .al-table-wrap td, al-table th, al-table td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
 .al-table-wrap th:first-child, .al-table-wrap td:first-child, al-table th:first-child, al-table td:first-child { text-align: left; }
 .al-table-wrap th, al-table th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
-.al-table-wrap td.al-wrap, al-table td.al-wrap { text-align: left; white-space: normal; min-width: 240px; color: var(--text-secondary); }
+.al-table-wrap .al-left, al-table .al-left { text-align: left; }
+.al-table-wrap td.al-nowrap, al-table td.al-nowrap { white-space: nowrap; }
+.al-table-wrap td.al-wrap, al-table td.al-wrap { white-space: normal; min-width: 240px; color: var(--text-secondary); }
 al-table .al-table-wrap { max-height: 420px; margin-top: 0; }
 .al-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .al-icon { width: 16px; height: 16px; flex: none; }
@@ -572,15 +574,18 @@ class ViewTag extends HTMLElement {
 
 function table(columns, rows) {
   const formats = columns.map(formatter);
+  const align = column => (column.type === "number" ? null : "al-left");  // numbers line up on the right, text on the left
   const cell = (column, i, value) => {
     if (typeof value === "string" && /^https?:\/\//.test(value)) {  // a link reads as the page it opens
       const page = decodeURIComponent(value.split(/[?#]/)[0].split("/").filter(Boolean).pop() ?? value).replaceAll("_", " ");
-      return el("td", {}, el("a", { href: value, target: "_blank", rel: "noopener", text: page }));
+      return el("td", { class: "al-left" }, el("a", { href: value, target: "_blank", rel: "noopener", text: page }));
     }
-    return el("td", { text: formats[i](value), class: column.type === "string" && String(value ?? "").length > 40 ? "al-wrap" : null });
+    const long = column.type === "string" && String(value ?? "").length > 40;
+    const classes = [align(column), long ? "al-wrap" : null, column.type === "timestamp" ? "al-nowrap" : null].filter(Boolean);
+    return el("td", { text: formats[i](value), class: classes.join(" ") || null });
   };
   return el("div", { class: "al-table-wrap" }, el("table", {},
-    el("thead", {}, el("tr", {}, ...columns.map(c => el("th", { scope: "col", text: c.label })))),
+    el("thead", {}, el("tr", {}, ...columns.map(c => el("th", { scope: "col", text: c.label, class: align(c) })))),
     el("tbody", {}, ...rows.map(row => el("tr", {}, ...columns.map((c, i) => cell(c, i, row[c.name]))))),
   ));
 }
@@ -1081,7 +1086,8 @@ class DriftTag extends StatusTag {
 document.head.prepend(el("style", { id: "al-style", text: STYLE }));
 // Before any tag draws: the page's parameter defaults, and the color order tags ask for.
 for (const param of document.querySelectorAll("al-param[name]")) {
-  const options = (param.getAttribute("options") ?? "").split(",").map(s => s.split("=")[0].trim()).filter(Boolean);
+  // An option may have an empty value ("=All"): it unsets the parameter, so an optional one means "all".
+  const options = (param.getAttribute("options") ?? "").split(",").map(s => s.trim()).filter(Boolean).map(s => s.split("=")[0].trim());
   page.defaults.set(param.getAttribute("name"), param.getAttribute("value") ?? options[0] ?? "");
 }
 for (const tag of document.querySelectorAll("[colors]")) registerColors(tag.getAttribute("colors").split(",").map(s => s.trim()));
