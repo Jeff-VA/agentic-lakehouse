@@ -115,7 +115,8 @@ async def _capture(url: str, *, width: int, height: int, theme: str | None, time
     chrome = find_chrome()
     if chrome is None:
         raise BrowserError("Chrome isn't installed; install it or set CHROME to its path")
-    with tempfile.TemporaryDirectory(prefix="agentic-lakehouse-chrome-") as profile:
+    # Chrome's helper processes can still be writing to the profile as it exits; leftovers are harmless.
+    with tempfile.TemporaryDirectory(prefix="agentic-lakehouse-chrome-", ignore_cleanup_errors=True) as profile:
         # Chrome refuses to sandbox as root, and CI runners often can't give it the namespaces it needs.
         root = hasattr(os, "geteuid") and os.geteuid() == 0
         sandbox = ["--no-sandbox"] if root or os.environ.get("CI") else []
@@ -147,8 +148,12 @@ async def _capture(url: str, *, width: int, height: int, theme: str | None, time
         except (OSError, TimeoutError, StopIteration, websockets.WebSocketException) as e:
             raise BrowserError(f"headless Chrome failed: {e!r}") from e
         finally:
-            process.kill()
-            process.wait()
+            process.terminate()  # lets Chrome stop its helper processes
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 def _devtools_port(process: subprocess.Popen) -> int:
