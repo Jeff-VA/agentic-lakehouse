@@ -126,6 +126,17 @@ def test_nothing_is_done_before_the_first_flush(source, catalog):
     assert run.skipped == "nothing has been flushed to the historical tier yet"
 
 
+def test_a_first_run_before_a_complete_hour_of_data_waits(catalog):
+    """Data from a live feed that began at 08:10: by 08:30 no hour of it is complete."""
+    engine = DuckDBEngine()
+    events = generate_events(DATASET, T0 + timedelta(hours=8, minutes=10), FLUSHED, seed=3)
+    engine.con.register("telemetry", pa.Table.from_pylist(events, schema=arrow_schema(DATASET)))
+    run = refresh(engine, catalog)
+    assert run.skipped == "no complete hour of data yet; the first run with one creates the table"
+    assert not catalog.table_exists("gold.hourly_isp_quality")
+    assert refresh(engine, catalog, watermark=T0 + timedelta(hours=9)).rows > 0  # 08:00 is complete now
+
+
 def test_a_rollup_can_gain_a_metric(source, catalog):
     refresh(source, catalog)
     query = HOURLY.query.model_copy(update={"metrics": [*HOURLY.query.metrics, "rebuffer_event_count"]})

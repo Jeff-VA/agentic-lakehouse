@@ -3,7 +3,8 @@
 One run of one rollup:
 1. Picks a window. It ends at the last complete time bucket before the source's
    flush watermark, so a published bucket never lacks events that merely hadn't
-   reached Iceberg yet. It starts where the previous run stopped, or
+   reached Iceberg yet. A first run that finds no rows (data that began
+   mid-bucket) waits for the next run instead of creating an empty table. It starts where the previous run stopped, or
    `lookback_hours` before the end if that's earlier (recounting late events),
    but never more than `backfill_days` back (what a first run covers).
 2. Computes the rows: the rollup's semantic query, compiled for the engine
@@ -99,6 +100,9 @@ def materialize(
     sql = SqlCompiler(platform.ontology).compile(rollup.with_window(*span), engine=engine.name, table=source_table)
     rows = engine.execute(sql)
     run.rows = rows.num_rows
+    if gold is None and not run.rows:  # a live feed that started mid-bucket: wait for a complete one
+        run.skipped = f"no complete {rollup.query.grain} of data yet; the first run with one creates the table"
+        return run
     run.checks = run_checks(
         rows, platform.quality.checks_for(rollup.table), time_column=model.time_dimension, window_end=run.end
     )
