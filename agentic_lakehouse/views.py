@@ -27,7 +27,7 @@ What the SELECT reads decides how it runs:
   data ends where each table's last flush or rollup run did.
 
 The header can also set `refresh_seconds`: how often a live view rechecks its
-data (core/live.py). Parameters are written :name and declared in the header
+data (agentic_lakehouse/live.py). Parameters are written :name and declared in the header
 with a type and an optional default. Values are bound as SQL literals, never pasted in as text. A
 parameter declared with `default: null` is optional: in a view over a model, a
 dimension condition comparing with it is dropped while it has no value, which
@@ -55,8 +55,8 @@ from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 
-from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler, bucket_start
-from core.ontology import (
+from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler, bucket_start
+from agentic_lakehouse.ontology import (
     AggregateMetric,
     Better,
     Dimension,
@@ -173,7 +173,7 @@ class ViewParam(StrictModel):
 class ViewHeader(StrictModel):
     description: str = Field(min_length=1)  # agents and people pick views by reading this
     params: dict[Identifier, ViewParam] = {}
-    refresh_seconds: float | None = Field(default=None, ge=1)  # how often a live view rechecks (core/live.py)
+    refresh_seconds: float | None = Field(default=None, ge=1)  # how often a live view rechecks (agentic_lakehouse/live.py)
 
 
 class ViewColumn(BaseModel):
@@ -220,7 +220,7 @@ class Condition:
     """`dimension <op> value` from the WHERE clause; values are literals or :parameters."""
 
     dimension: str
-    op: str  # as in core.compiler.Filter
+    op: str  # as in agentic_lakehouse.compiler.Filter
     value: exp.Expression | tuple[exp.Expression, ...]
 
 

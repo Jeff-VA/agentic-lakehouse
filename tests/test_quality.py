@@ -4,7 +4,7 @@ import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
-from core.quality import QualityConfig, TableRules, blocking, run_checks
+from agentic_lakehouse.quality import QualityConfig, TableRules, blocking, run_checks
 
 # Three hourly rows of a rollup: one ISP missing, one rate out of range.
 ROWS = pa.table(

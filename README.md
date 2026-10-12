@@ -1,4 +1,4 @@
-# Modular Agentic Lakehouse Engine
+# Agentic Lakehouse
 
 A config-driven semantic lakehouse. You define metrics once, in YAML. The
 engine answers them from **Apache Pinot** (real-time) and **Apache Iceberg via
@@ -36,7 +36,7 @@ ontology changes as a reviewable patch.
   and is routed across both tiers, so it is live to the second; a view over
   Iceberg tables is ordinary Trino SQL. Every view is checked against the
   config when it loads, so renaming a metric fails a test, not a dashboard.
-- **Dashboards are HTML with live chart tags.** `<male-lines view="isp_hourly"
+- **Dashboards are HTML with live chart tags.** `<al-lines view="isp_hourly"
   x="hour" y="p99_ttfb" series="isp_provider">` draws a view and keeps it
   current: the server pushes a new result when the data changes, and everyone
   watching the same view shares one query. Labels and number formats come from
@@ -94,7 +94,7 @@ hours, and can I trust the data right now?"* The agent can list the metrics
 
 **Build dashboards with Claude Code.** Open the repository in Claude Code:
 [`.mcp.json`](.mcp.json) registers the platform's MCP server on your machine
-(`python run.py mcp`), and [`AGENTS.md`](AGENTS.md) gives it the workflow.
+(`agentic-lakehouse mcp`), and [`AGENTS.md`](AGENTS.md) gives it the workflow.
 Ask for a dashboard. The agent writes views and a page, checks them
 (`check_dashboards`), and looks at the result (`screenshot_dashboard`: headless
 Chrome, live data). Any page you have open reloads each time it saves a file.
@@ -110,13 +110,13 @@ docker compose -f docker/docker-compose.yml run --rm stream stream --add-field c
 ```
 
 Within one flush the fields become Iceberg columns. The next drift check, or
-`docker compose -f docker/docker-compose.yml exec drift python run.py drift`,
+`docker compose -f docker/docker-compose.yml exec drift agentic-lakehouse drift`,
 writes a proposal that the dashboard lists. Apply it with
-`git apply proposals/<file> && python run.py setup`.
+`git apply proposals/<file> && agentic-lakehouse setup`.
 
 ## Start your own project
 
-The engine in `core/` knows nothing about playback data. Everything specific
+The engine in `agentic_lakehouse/` knows nothing about playback data. Everything specific
 to the example lives in [`examples/playback/`](examples/playback/): its config,
 its simulator and its dashboard. `config/` starts as a copy of that example,
 and it is yours to change:
@@ -141,7 +141,7 @@ The tests always run against `examples/playback/config`, so your changes to
 ## Endpoints
 
 With the stack up, the gateway answers on `http://127.0.0.1:8000` (and so
-does `python run.py serve`). It has no authentication yet, so keep it on a
+does `agentic-lakehouse serve`). It has no authentication yet, so keep it on a
 trusted network (see [Limitations](#limitations)). Times are UTC, in ISO 8601.
 `/docs` is an interactive reference, and `/openapi.json` its OpenAPI schema.
 The examples use the example project's metrics and views.
@@ -158,7 +158,7 @@ The examples use the example project's metrics and views.
 | `GET /status` | see how fresh the data is, the quality gates, and schema drift |
 | `GET /rollups/{table}` | read a gold table's recent rows |
 | `GET /d/{name}`, `GET /` | open a dashboard |
-| `GET /male.js` | draw views in your own pages |
+| `GET /al.js` | draw views in your own pages |
 | `/mcp` | connect an AI agent (Model Context Protocol) |
 | Kafka, `127.0.0.1:9092` | send your events |
 
@@ -366,7 +366,7 @@ source.addEventListener("result", event => {
 source.addEventListener("reload", () => location.reload());
 ```
 
-`/male.js` does all of this for dashboards.
+`/al.js` does all of this for dashboards.
 
 ### GET /status
 
@@ -419,7 +419,7 @@ Dashboards: `config/dashboards/playback.html` is served at `/d/playback`. `/`
 opens the only dashboard, or lists them all when there are several. Open pages
 reload on their own when a view or dashboard file changes.
 
-### GET /male.js
+### GET /al.js
 
 The chart tags dashboards are written in (see [Dashboards](#dashboards)).
 Other pages the gateway serves can use them too. The gateway sends no CORS
@@ -427,7 +427,7 @@ headers, so a page from another origin needs a proxy in front of the gateway.
 
 ```html
 <script type="module">
-  import { subscribe } from "/male.js";
+  import { subscribe } from "/al.js";
   const stop = subscribe("isp_now", { minutes: 30 }, (result, error) => {
     // called now and on every change, like the tags
   });
@@ -442,7 +442,7 @@ The Model Context Protocol over Streamable HTTP, for AI agents:
 claude mcp add --transport http lakehouse http://127.0.0.1:8000/mcp
 ```
 
-The same server runs over stdio on your machine with `python run.py mcp`,
+The same server runs over stdio on your machine with `agentic-lakehouse mcp`,
 which is what [`.mcp.json`](.mcp.json) sets up for Claude Code. Its tools:
 
 | Tool | Arguments | Returns |
@@ -525,7 +525,7 @@ A metric is declared once:
 ```
 
 and compiled for each engine. Each engine's dialect lives in one Jinja macro
-file ([`core/templates/macros/`](core/templates/macros/)) that overrides only
+file ([`agentic_lakehouse/templates/macros/`](agentic_lakehouse/templates/macros/)) that overrides only
 what differs from standard SQL:
 
 ```sql
@@ -561,7 +561,7 @@ so neither a person nor an agent mistakes a partial answer for a complete one.
 
 ### Ingestion: exactly once, schema-tolerant
 
-[`core/flush.py`](core/flush.py) reads every message published before it
+[`agentic_lakehouse/flush.py`](agentic_lakehouse/flush.py) reads every message published before it
 started and appends the events to Iceberg. The same Iceberg commit records the
 Kafka offsets it read up to and the new watermark, so a crash can neither load
 a batch twice nor skip one. A new field becomes an optional column with an
@@ -616,7 +616,7 @@ Each view is checked when the platform loads: one SELECT, known models,
 tables and columns. Its result columns are known up front.
 
 **Live views.** `GET /views/<name>/live?<params>` is a Server-Sent Events
-stream ([`core/live.py`](core/live.py)): the view's result now, then again each
+stream ([`agentic_lakehouse/live.py`](agentic_lakehouse/live.py)): the view's result now, then again each
 time it changes, and an `error` event if a refresh fails (the last result
 still stands). Everyone watching a view with the same parameters shares one
 feed, which runs only while someone watches. A view over a model reruns every
@@ -630,34 +630,34 @@ only about six open connections to a server.
 ### Dashboards
 
 A dashboard is an HTML file in [`config/dashboards/`](config/dashboards/),
-served at `/d/<name>`. It loads [`/male.js`](core/static/male.js) and draws
+served at `/d/<name>`. It loads [`/al.js`](agentic_lakehouse/static/al.js) and draws
 views with tags:
 
 ```html
-<script type="module" src="/male.js"></script>
+<script type="module" src="/al.js"></script>
 
-<male-kpi view="quality_overall" value="p99_ttfb" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></male-kpi>
-<male-bars view="isp_now" category="isp_provider" value="rebuffer_incidence_rate" highlight="first"></male-bars>
-<male-param name="hours" options="24=24 h,48=48 h,168=7 days" value="48"></male-param>
-<male-lines view="isp_hourly" x="hour" y="p99_ttfb" series="isp_provider"></male-lines>
+<al-kpi view="quality_overall" value="p99_ttfb" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+<al-bars view="isp_now" category="isp_provider" value="rebuffer_incidence_rate" highlight="first"></al-bars>
+<al-param name="hours" options="24=24 h,48=48 h,168=7 days" value="48"></al-param>
+<al-lines view="isp_hourly" x="hour" y="p99_ttfb" series="isp_provider"></al-lines>
 ```
 
 Every tag is live: the page keeps one connection to `/live` and redraws a
 chart when its view's result changes. Labels, number formats and which way is
 better (for coloring a change) come from the ontology, so a tag rarely needs
-more than names. A `<male-param>` sets a page parameter that fills every view
+more than names. A `<al-param>` sets a page parameter that fills every view
 parameter of the same name, and the URL keeps it, so a link reopens the same
 state. Charts use one validated palette, keep an entity's color on every chart
 of the page, and come with a table view, a keyboard crosshair, and light and
-dark themes. `<male-freshness>`, `<male-gates>` and `<male-drift>` show the
+dark themes. `<al-freshness>`, `<al-gates>` and `<al-drift>` show the
 platform's own status. Custom code reads the same live data with
-`import { subscribe } from "/male.js"`. The full list of tags is at the top of
-[`male.js`](core/static/male.js), and the example's
+`import { subscribe } from "/al.js"`. The full list of tags is at the top of
+[`al.js`](agentic_lakehouse/static/al.js), and the example's
 [dashboard](examples/playback/config/dashboards/playback.html) uses most of them.
 
 ### The drift agent
 
-[`core/agent_sync.py`](core/agent_sync.py) compares the live Iceberg schema
+[`agentic_lakehouse/agent_sync.py`](agentic_lakehouse/agent_sync.py) compares the live Iceberg schema
 with `ingestion.yaml` and profiles any new columns from sampled rows. It adds
 the columns to `ingestion.yaml` itself, then asks Claude (Opus 5.5, structured
 output) which columns deserve dimensions or metrics. The patched config must
@@ -691,10 +691,10 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -m integration     # against the running stack
 ```
 
-`run.py` drives each component directly against the same stack: `setup`,
+The `agentic-lakehouse` command drives each component directly against the same stack: `setup`,
 `seed`, `stream`, `flush`, `rollups`, `drift`, `serve`, `mcp` (stdio, for
-Claude Code or Claude Desktop) and `reset --yes`. `run.py check` checks the
-config, views and dashboards (CI runs it), and `run.py screenshot <name>`
+Claude Code or Claude Desktop) and `reset --yes`. `agentic-lakehouse check` checks the
+config, views and dashboards (CI runs it), and `agentic-lakehouse screenshot <name>`
 renders a dashboard in headless Chrome and lists the problems it shows. The tests use the example project in
 `examples/playback/config`; the integration tests expect the stack to be
 running it, as `config/` does by default. Stop the matching container first if you
@@ -702,15 +702,16 @@ run one on the host, for example `docker compose -f docker/docker-compose.yml
 stop stream`.
 
 ```
-config/            your project: YAML config, views/ and dashboards/ (starts as a copy of the example)
-docs/              architecture.md and its diagrams
-core/              the engine: compiler, router, engines, flush, rollups, quality,
-                   drift agent, gateway, synthetic events (simulate.py)
-  templates/       the query skeleton and one macro file per engine
-examples/playback/ the reference project: config/ (with views and a dashboard), simulator.py
-pipelines/         Prefect flows: flush, rollups, drift check
-docker/            docker-compose.yml, Trino catalog, container deployment config
-tests/             unit tests; tests/integration/ runs against the stack
+agentic_lakehouse/  the engine: compiler, router, engines, flush, rollups, quality,
+                    drift agent, gateway, synthetic events (simulate.py)
+  pipelines/        Prefect flows: flush, rollups, drift check
+  static/al.js      the chart tags dashboards are written in
+  templates/        the query skeleton and one macro file per engine
+config/             your project: YAML config, views/ and dashboards/ (starts as a copy of the example)
+docs/               architecture.md and its diagrams
+examples/playback/  the reference project: config/ (with views and a dashboard), simulator.py
+docker/             docker-compose.yml, Trino catalog, container deployment config
+tests/              unit tests; tests/integration/ runs against the stack
 ```
 
 ## How it's tested
@@ -740,3 +741,9 @@ tests/             unit tests; tests/integration/ runs against the stack
 - A query reads one model at a time; there are no joins across models.
 - The stack is set up for local use: the credentials are placeholders, and the
   API has no authentication.
+
+## License
+
+Copyright (c) 2026 Jeff-VA. All rights reserved. The code is public to read,
+but no license is granted to use, copy, modify or distribute it without
+permission. See [LICENSE](LICENSE).

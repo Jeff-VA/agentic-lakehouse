@@ -1,6 +1,6 @@
 # What arrives on the event streams: each dataset's Kafka topic and raw event
 # schema, and the Pinot real-time table that consumes it. Ontology models name
-# a dataset as their `source`. Schema and validation rules: core/config.py
+# a dataset as their `source`. Schema and validation rules: agentic_lakehouse/config.py
 version: "1.0.0"
 
 datasets:

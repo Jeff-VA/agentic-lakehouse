@@ -7,13 +7,13 @@ import pyarrow as pa
 import pytest
 from pyiceberg.catalog.sql import SqlCatalog
 
-from core.compiler import SqlCompiler
-from core.config import load_platform
-from core.engines import DuckDBEngine
-from core.simulate import generate_events
-from core.quality import QualityConfig
-from core.rollups import LAST_AUDIT, ROLLUP_THROUGH, QualityGateError, RollupStore, materialize, window
-from core.schema_compiler import arrow_schema
+from agentic_lakehouse.compiler import SqlCompiler
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.simulate import generate_events
+from agentic_lakehouse.quality import QualityConfig
+from agentic_lakehouse.rollups import LAST_AUDIT, ROLLUP_THROUGH, QualityGateError, RollupStore, materialize, window
+from agentic_lakehouse.schema_compiler import arrow_schema
 
 PLATFORM = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
 DATASET = PLATFORM.dataset("telemetry")

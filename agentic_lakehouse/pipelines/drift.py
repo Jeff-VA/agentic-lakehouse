@@ -1,13 +1,13 @@
-"""Prefect flow that runs the drift agent (core/agent_sync.py) over every dataset.
+"""Prefect flow that runs the drift agent (agentic_lakehouse/agent_sync.py) over every dataset.
 
-`python run.py drift` runs it once; `python run.py drift --serve` hourly. Claude
+`agentic-lakehouse drift` runs it once; `agentic-lakehouse drift --serve` hourly. Claude
 is only called for drift that has no pending proposal in proposals/.
 """
 
 from prefect import flow, get_run_logger
 
-from core.agent_sync import check_drift
-from core.config import load_platform
+from agentic_lakehouse.agent_sync import check_drift
+from agentic_lakehouse.config import load_platform
 
 
 @flow(name="drift-check")

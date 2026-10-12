@@ -1,6 +1,6 @@
 """The drift agent: keeps the config in step with what producers actually send.
 
-When producers start sending a new event field, the flush (core/flush.py) adds
+When producers start sending a new event field, the flush (agentic_lakehouse/flush.py) adds
 it to the Iceberg table as a column. This agent then:
 
 1. Detects drift: Iceberg columns that ingestion.yaml doesn't list, plus type
@@ -44,10 +44,10 @@ from pyiceberg.types import BooleanType, DoubleType, FloatType, IntegerType, Lon
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from core.compiler import MetricQuery, QueryError, SqlCompiler
-from core.config import ColumnType, ConfigError, Dataset, Platform, load_platform
-from core.engines import DuckDBEngine, EngineError
-from core.orchestrator import iceberg_catalog
+from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler
+from agentic_lakehouse.config import ColumnType, ConfigError, Dataset, Platform, load_platform
+from agentic_lakehouse.engines import DuckDBEngine, EngineError
+from agentic_lakehouse.orchestrator import iceberg_catalog
 
 MODEL = "claude-opus-5-5"
 
@@ -409,7 +409,7 @@ def render_patch(result: DriftProposal, config_dir: str | Path) -> str:
     if result.proposal and result.proposal.not_modeled:
         lines.append("#\n# Not modeled:\n")
         lines += [f"#   {n.column}: {n.reason}\n" for n in result.proposal.not_modeled]
-    lines.append("#\n# Review, then from the repository root: git apply <this file> && python run.py setup\n\n")
+    lines.append("#\n# Review, then from the repository root: git apply <this file> && agentic-lakehouse setup\n\n")
     for name, text in result.patched.items():
         original = (config_dir / name).read_text()
         lines += difflib.unified_diff(

@@ -18,8 +18,8 @@ import pyarrow as pa
 from pydantic import Field, model_validator
 from sqlglot import exp
 
-from core.compiler import Scalar
-from core.ontology import Identifier, SqlExpression, StrictModel, parse_fragment
+from agentic_lakehouse.compiler import Scalar
+from agentic_lakehouse.ontology import Identifier, SqlExpression, StrictModel, parse_fragment
 
 Severity = Literal["error", "warn"]
 TableName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")]  # <namespace>.<table>

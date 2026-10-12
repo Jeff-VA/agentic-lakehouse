@@ -1,23 +1,25 @@
-"""Command-line entry point for the Modular Agentic Lakehouse Engine.
+"""The agentic-lakehouse command. Run it from your project's directory: it reads
+config/ there (or --config), and imports project code, such as a dataset's
+simulator, from there too.
 
-    python run.py setup [--seed-hours 24]  create topics and tables from config/ (and, on a first
-                                        start, publish that much synthetic history)
-    python run.py seed --hours 24       publish synthetic events to Kafka (Pinot ingests them)
-    python run.py stream                publish live synthetic events until stopped (Ctrl-C);
-                                        --add-field name=type simulates an upstream release
-    python run.py flush [--serve]       move new events from Kafka into Iceberg (once, or on schedule)
-    python run.py rollups [--serve]     refresh the gold rollup tables, behind their quality gates
-    python run.py drift [--serve]       find new event fields; Claude proposes config patches (proposals/)
-    python run.py reset --yes           delete all topics, tables and data, then run setup
-    python run.py serve                 REST API, dashboards and MCP (HTTP) on http://127.0.0.1:8000;
-                                        open pages reload when a view or dashboard file changes
-    python run.py mcp                   MCP over stdio, for Claude Code or Claude Desktop
-    python run.py check                 check the config, views and dashboards (exit 1 on problems)
-    python run.py screenshot NAME       render dashboard NAME in headless Chrome, with live data:
-                                        writes NAME.png and lists the problems the page shows
+    setup [--seed-hours 24]  create topics and tables from the config (and, on a first
+                             start, publish that much synthetic history)
+    seed --hours 24          publish synthetic events to Kafka (Pinot ingests them)
+    stream                   publish live synthetic events until stopped (Ctrl-C);
+                             --add-field name=type simulates an upstream release
+    flush [--serve]          move new events from Kafka into Iceberg (once, or on schedule)
+    rollups [--serve]        refresh the gold rollup tables, behind their quality gates
+    drift [--serve]          find new event fields; Claude proposes config patches (proposals/)
+    reset --yes              delete all topics, tables and data, then run setup
+    serve                    REST API, dashboards and MCP (HTTP) on http://127.0.0.1:8000;
+                             open pages reload when a view or dashboard file changes
+    mcp                      MCP over stdio, for Claude Code or Claude Desktop
+    check                    check the config, views and dashboards (exit 1 on problems)
+    screenshot NAME          render dashboard NAME in headless Chrome, with live data:
+                             writes NAME.png and lists the problems the page shows
 
 `docker compose -f docker/docker-compose.yml up -d --build` runs all of this in
-containers; these commands are for development against the same stack.
+containers; the command is for development against the same stack.
 """
 
 import argparse
@@ -31,11 +33,11 @@ from typing import get_args
 
 from dotenv import load_dotenv
 
-from core.api_gateway import Gateway, Project, create_app, create_mcp_server
-from core.browser import BrowserError
-from core.config import ColumnType, Dataset, Platform, load_platform
-from core.simulate import LiveSource, add_fields, generate_events
-from core.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
+from agentic_lakehouse.api_gateway import Gateway, Project, create_app, create_mcp_server
+from agentic_lakehouse.browser import BrowserError
+from agentic_lakehouse.config import ColumnType, Dataset, Platform, load_platform
+from agentic_lakehouse.simulate import LiveSource, add_fields, generate_events
+from agentic_lakehouse.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
 
 
 def utc_now() -> datetime:
@@ -78,7 +80,8 @@ def run_then_serve(flow, name: str, interval: timedelta, config_dir: str) -> Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sys.path.insert(0, str(Path.cwd()))  # the project's own code, e.g. a simulator: module:function
+    parser = argparse.ArgumentParser(prog="agentic-lakehouse", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config", help="config directory (default: ./config)")
     commands = parser.add_subparsers(dest="command", required=True)
     setup_command = commands.add_parser("setup", help="create Kafka topics, Pinot tables and Iceberg tables")
@@ -162,7 +165,7 @@ def main() -> None:
             print(f"stopped after {published} events")
     elif args.command == "flush":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
-        from pipelines.flush import flush_all  # after PREFECT_API_URL is set
+        from agentic_lakehouse.pipelines.flush import flush_all  # after PREFECT_API_URL is set
 
         if args.serve:
             every = min(t.flush_every_minutes for t in platform.storage.tables)
@@ -171,7 +174,7 @@ def main() -> None:
             flush_all(config_dir=args.config)
     elif args.command == "rollups":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
-        from pipelines.rollups import refresh_rollups  # after PREFECT_API_URL is set
+        from agentic_lakehouse.pipelines.rollups import refresh_rollups  # after PREFECT_API_URL is set
 
         if args.serve:
             every = min(r.every_minutes for r in platform.storage.rollups)
@@ -180,7 +183,7 @@ def main() -> None:
             refresh_rollups(config_dir=args.config)
     elif args.command == "drift":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
-        from pipelines.drift import drift_check  # after PREFECT_API_URL is set
+        from agentic_lakehouse.pipelines.drift import drift_check  # after PREFECT_API_URL is set
 
         if args.serve:
             run_then_serve(drift_check, "drift", timedelta(hours=1), args.config)

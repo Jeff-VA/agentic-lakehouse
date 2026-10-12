@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from core.orchestrator import sync_pinot_schema
+from agentic_lakehouse.orchestrator import sync_pinot_schema
 
 pytestmark = pytest.mark.integration
 

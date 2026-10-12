@@ -13,8 +13,8 @@ from datetime import UTC, timedelta
 import pytest
 from compare import assert_same_result
 
-from core.compiler import MetricQuery
-from core.router import Router
+from agentic_lakehouse.compiler import MetricQuery
+from agentic_lakehouse.router import Router
 
 pytestmark = pytest.mark.integration
 

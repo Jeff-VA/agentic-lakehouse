@@ -22,7 +22,7 @@ from pydantic import Field, field_validator, model_validator
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
 
-from core.ontology import (
+from agentic_lakehouse.ontology import (
     AggregateMetric,
     Dimension,
     Identifier,

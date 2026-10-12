@@ -5,9 +5,9 @@ from datetime import UTC, timedelta
 
 import pytest
 
-from core.compiler import Filter, MetricQuery, SqlCompiler
-from core.engines import DuckDBEngine
-from core.ontology import AggregateMetric, Ontology, SemanticModel
+from agentic_lakehouse.compiler import Filter, MetricQuery, SqlCompiler
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.ontology import AggregateMetric, Ontology, SemanticModel
 
 # Approximate percentiles (Trino's approx_percentile, Pinot's t-digest) promise
 # accuracy in rank, not in value: the answer lands within about 1% of the

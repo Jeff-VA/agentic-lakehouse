@@ -1,5 +1,5 @@
 # Where the platform's services are reachable from this machine. The defaults
-# match docker/docker-compose.yml. Schema and validation rules: core/config.py
+# match docker/docker-compose.yml. Schema and validation rules: agentic_lakehouse/config.py
 version: "1.0.0"
 
 kafka:
@@ -13,7 +13,7 @@ pinot:
 trino:
   host: localhost
   port: 8080
-  user: male
+  user: lakehouse
   catalog: iceberg  # docker/trino/catalog/iceberg.properties
 
 iceberg:
@@ -22,8 +22,8 @@ iceberg:
 s3:
   endpoint: http://localhost:9100
   region: us-east-1
-  access_key: male
-  secret_key: male-local-secret  # local stack only
+  access_key: lakehouse
+  secret_key: lakehouse-local-secret  # local stack only
 
 prefect:
   api_url: http://127.0.0.1:4200/api

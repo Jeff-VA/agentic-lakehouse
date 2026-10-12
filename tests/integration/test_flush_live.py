@@ -6,11 +6,11 @@ from uuid import uuid4
 import pytest
 from confluent_kafka.admin import AdminClient, NewTopic
 
-from core.engines import TrinoEngine
-from core.simulate import generate_events
-from core.flush import flush, kafka_consumer
-from core.orchestrator import iceberg_catalog, publish_events
-from core.schema_compiler import iceberg_schema
+from agentic_lakehouse.engines import TrinoEngine
+from agentic_lakehouse.simulate import generate_events
+from agentic_lakehouse.flush import flush, kafka_consumer
+from agentic_lakehouse.orchestrator import iceberg_catalog, publish_events
+from agentic_lakehouse.schema_compiler import iceberg_schema
 
 pytestmark = pytest.mark.integration
 

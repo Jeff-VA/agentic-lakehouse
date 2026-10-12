@@ -20,7 +20,7 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from core.config import Dataset, IcebergTable
+from agentic_lakehouse.config import Dataset, IcebergTable
 
 # Timestamps are UTC by convention and stored without a zone everywhere, so
 # every engine compares them to the same plain UTC literals.

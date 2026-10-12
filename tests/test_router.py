@@ -5,9 +5,9 @@ import pytest
 
 import pyarrow as pa
 
-from core.compiler import MetricQuery, QueryError, SqlCompiler
-from core.engines import DuckDBEngine
-from core.router import Placement, Router, Tier
+from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.router import Placement, Router, Tier
 from test_compiler import ONTOLOGY
 
 # Six hours of playback events, every 5 minutes. DuckDB stands in for both

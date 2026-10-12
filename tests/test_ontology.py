@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from core.ontology import AggregateMetric, Ontology, RatioMetric, load_ontology
+from agentic_lakehouse.ontology import AggregateMetric, Ontology, RatioMetric, load_ontology
 
 SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config" / "ontology.yaml"
 

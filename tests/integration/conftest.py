@@ -2,7 +2,7 @@
 set up and seeded:
 
     docker compose -f docker/docker-compose.yml up -d
-    python run.py setup && python run.py seed && python run.py flush
+    agentic-lakehouse setup && agentic-lakehouse seed && agentic-lakehouse flush
 
 Test modules here set `pytestmark = pytest.mark.integration`; run them with
 `pytest -m integration`.
@@ -15,10 +15,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from core.config import load_platform
-from core.engines import DuckDBEngine, PinotEngine, TrinoEngine
-from core.compiler import bucket_start
-from core.orchestrator import flushed_through, iceberg_catalog
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.engines import DuckDBEngine, PinotEngine, TrinoEngine
+from agentic_lakehouse.compiler import bucket_start
+from agentic_lakehouse.orchestrator import flushed_through, iceberg_catalog
 
 ROOT = Path(__file__).parents[2]
 
@@ -55,13 +55,13 @@ def window(platform, engines):
     once Pinot has ingested the same events."""
     flushed = flushed_through(platform, "telemetry")
     if flushed is None:
-        pytest.skip("nothing flushed yet; run: python run.py seed && python run.py flush")
+        pytest.skip("nothing flushed yet; run: agentic-lakehouse seed && agentic-lakehouse flush")
     end = bucket_start(flushed, "hour")
     trino_table = platform.table_for("telemetry", "trino")
     [first] = engines["trino"].execute(f"SELECT min(event_ts) AS t FROM {trino_table}").to_pylist()
     start = bucket_start(first["t"], "hour")
     if start >= end:
-        pytest.skip("less than an hour of flushed events; run: python run.py seed && python run.py flush")
+        pytest.skip("less than an hour of flushed events; run: agentic-lakehouse seed && agentic-lakehouse flush")
 
     def count(engine: str, table: str, low: str, high: str) -> int:
         sql = f"SELECT COUNT(*) AS n FROM {table} WHERE event_ts >= {low} AND event_ts < {high}"
@@ -74,7 +74,7 @@ def window(platform, engines):
         if time.monotonic() > deadline:
             pytest.fail(
                 f"between {start} and {end} Pinot holds {pinot_rows} events but Iceberg holds {iceberg_rows}; "
-                "reload both: python run.py reset --yes && python run.py seed && python run.py flush"
+                "reload both: agentic-lakehouse reset --yes && agentic-lakehouse seed && agentic-lakehouse flush"
             )
         time.sleep(1)
     return {"start": start, "end": end}

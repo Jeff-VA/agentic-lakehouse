@@ -7,11 +7,11 @@ from pathlib import Path
 import pyarrow as pa
 import yaml
 
-from core.compiler import MetricQuery, SqlCompiler
-from core.config import load_platform
-from core.engines import DuckDBEngine
-from core.schema_compiler import arrow_schema, pinot_schema
-from core.simulate import generate_events
+from agentic_lakehouse.compiler import MetricQuery, SqlCompiler
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.schema_compiler import arrow_schema, pinot_schema
+from agentic_lakehouse.simulate import generate_events
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "playback" / "config"
 

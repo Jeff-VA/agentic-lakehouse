@@ -46,12 +46,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi.sse import ServerSentEvent
 
-from core.compiler import QueryError
-from core.engines import EngineError
-from core.views import ModelSource, View, ViewError
+from agentic_lakehouse.compiler import QueryError
+from agentic_lakehouse.engines import EngineError
+from agentic_lakehouse.views import ModelSource, View, ViewError
 
 if TYPE_CHECKING:
-    from core.api_gateway import Gateway
+    from agentic_lakehouse.api_gateway import Gateway
 
 log = logging.getLogger(__name__)
 

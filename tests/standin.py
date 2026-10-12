@@ -10,13 +10,13 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pyarrow as pa
 
-from core.api_gateway import Gateway, TableState, Warehouse
-from core.compiler import SqlCompiler, bucket_start
-from core.config import Platform
-from core.engines import DuckDBEngine
-from core.router import Placement, Router, Tier
-from core.schema_compiler import arrow_schema
-from core.simulate import generate_events
+from agentic_lakehouse.api_gateway import Gateway, TableState, Warehouse
+from agentic_lakehouse.compiler import SqlCompiler, bucket_start
+from agentic_lakehouse.config import Platform
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.router import Placement, Router, Tier
+from agentic_lakehouse.schema_compiler import arrow_schema
+from agentic_lakehouse.simulate import generate_events
 
 
 def standin_gateway(platform: Platform, *, hours: int = 6) -> Gateway:

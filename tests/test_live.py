@@ -1,4 +1,4 @@
-"""Live views (core/live.py): one shared feed per view and parameters, pushing only changes."""
+"""Live views (agentic_lakehouse/live.py): one shared feed per view and parameters, pushing only changes."""
 
 import asyncio
 import json
@@ -13,9 +13,9 @@ import pytest
 import uvicorn
 from test_view_api import gateway, warehouse
 
-from core.api_gateway import TableState, create_app
-from core.engines import EngineError
-from core.live import LiveViews
+from agentic_lakehouse.api_gateway import TableState, create_app
+from agentic_lakehouse.engines import EngineError
+from agentic_lakehouse.live import LiveViews
 
 REFRESH = 0.05  # seconds; the default is 10
 

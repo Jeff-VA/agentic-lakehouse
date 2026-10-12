@@ -3,7 +3,7 @@
 How the platform works, end to end: how events come in, how a question is
 answered, how a SQL view becomes a live dashboard, and which storage tier
 answers which time range. Every part is driven by the files in `config/`; the
-engine in `core/` knows nothing about any one project.
+engine in `agentic_lakehouse/` knows nothing about any one project.
 
 ## End to end
 
@@ -28,17 +28,17 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 
 - **Kafka** gets one JSON message per event, on a topic per dataset
   (`ingestion.yaml`). Pinot consumes the topic directly.
-- **The flush** ([`core/flush.py`](../core/flush.py), a Prefect flow) reads
+- **The flush** ([`agentic_lakehouse/flush.py`](../agentic_lakehouse/flush.py), a Prefect flow) reads
   every message published before it started and appends the events to the
   dataset's Iceberg table. The same Iceberg commit records the Kafka offsets it
   read up to and the new **watermark**: the time before which Iceberg holds
   every event. A crash can't load a batch twice or skip one. A field the config
   doesn't know becomes a new optional column.
-- **Rollups** ([`core/rollups.py`](../core/rollups.py)) recompute a window of
+- **Rollups** ([`agentic_lakehouse/rollups.py`](../agentic_lakehouse/rollups.py)) recompute a window of
   a semantic query, run the checks in `quality_rules.yaml` on the new rows, and
   publish them as a gold table only if no `error` check failed
   (write-audit-publish).
-- **The drift agent** ([`core/agent_sync.py`](../core/agent_sync.py)) compares
+- **The drift agent** ([`agentic_lakehouse/agent_sync.py`](../agentic_lakehouse/agent_sync.py)) compares
   the Iceberg schema with the config, profiles new columns, and asks Claude
   which deserve dimensions or metrics. The proposal must pass the platform's
   validation and run on sampled rows before it's written to `proposals/` as a
@@ -48,11 +48,11 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 
 ![A question from a dashboard, an agent or the API goes through the gateway to the compiler, which turns metric names from ontology.yaml into SQL. The router sends recent ranges to Pinot and older ones to Trino; DuckDB merges a split. The rows return with the time range they cover and notes.](images/architecture/question.svg)
 
-- **The compiler** ([`core/compiler.py`](../core/compiler.py)) turns a
+- **The compiler** ([`agentic_lakehouse/compiler.py`](../agentic_lakehouse/compiler.py)) turns a
   question in metric names into SQL for one engine. Metrics are defined once in
   `ontology.yaml`; each engine's dialect lives in a Jinja macro file under
-  [`core/templates/macros/`](../core/templates/macros/).
-- **The router** ([`core/router.py`](../core/router.py)) picks the tier, or
+  [`agentic_lakehouse/templates/macros/`](../agentic_lakehouse/templates/macros/).
+- **The router** ([`agentic_lakehouse/router.py`](../agentic_lakehouse/router.py)) picks the tier, or
   splits the range across both, using Pinot's retention and Iceberg's
   watermark.
 - **DuckDB** merges a split: buckets from each tier, or partial aggregates (an
@@ -77,23 +77,23 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 
 ![Pinot and Trino answer a feed that the gateway keeps for each view and set of parameters. The feed pushes new results to every dashboard page watching it over Server-Sent Events. You or an agent edit the view and dashboard files, which define the feeds; a check and a screenshot report problems back to the agent.](images/architecture/live-page.svg)
 
-- **A view** ([`core/views.py`](../core/views.py)) is one SELECT in
+- **A view** ([`agentic_lakehouse/views.py`](../agentic_lakehouse/views.py)) is one SELECT in
   `config/views/<name>.sql`. Over an ontology model it names metrics and
   dimensions, becomes a semantic query, and is routed across both tiers, so it
   includes events from seconds ago. Over Iceberg tables (a gold rollup, say)
   it's plain Trino SQL. Views are checked against the config when it loads.
-- **A feed** ([`core/live.py`](../core/live.py)) keeps one view with one set
+- **A feed** ([`agentic_lakehouse/live.py`](../agentic_lakehouse/live.py)) keeps one view with one set
   of parameters fresh while anyone watches, and pushes a new result only when
   it changed. A view over a model reruns every 10 seconds; a view over tables
   reruns when one of its tables gets a new Iceberg snapshot. A hundred open
   pages cost one query per change.
 - **A dashboard** is an HTML file in `config/dashboards/` written with the
-  chart tags in [`core/static/male.js`](../core/static/male.js). The page
+  chart tags in [`agentic_lakehouse/static/al.js`](../agentic_lakehouse/static/al.js). The page
   watches all its views over one Server-Sent Events connection, and labels and
   number formats come from the ontology.
 - **The authoring loop**: you or an agent edit the files;
-  [`core/dashboards.py`](../core/dashboards.py) checks every tag against the
-  views it names, and [`core/browser.py`](../core/browser.py) renders the
+  [`agentic_lakehouse/dashboards.py`](../agentic_lakehouse/dashboards.py) checks every tag against the
+  views it names, and [`agentic_lakehouse/browser.py`](../agentic_lakehouse/browser.py) renders the
   page in headless Chrome with live data. Open pages reload when a file is
   saved; an edit that breaks a view keeps the last good version and says what
   broke.
@@ -110,7 +110,7 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 | `dashboards/*.html` | pages of live chart tags, at `/d/<name>` |
 | `deployment.yaml` | where each engine runs |
 
-| The engine: `core/` | Where |
+| The engine: `agentic_lakehouse/` | Where |
 |---|---|
 | Compiler | `compiler.py`, `templates/` |
 | Router | `router.py` |
@@ -120,7 +120,7 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 | Gateway: REST, MCP, dashboards | `api_gateway.py` |
 | Views | `views.py` |
 | Live push | `live.py` |
-| Chart tags | `static/male.js` |
+| Chart tags | `static/al.js` |
 | Dashboard checks and screenshots | `dashboards.py`, `browser.py` |
 | Setup and Kafka publishing | `orchestrator.py` |
 

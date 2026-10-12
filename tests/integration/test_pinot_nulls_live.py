@@ -8,10 +8,10 @@ import httpx
 import pytest
 from confluent_kafka.admin import AdminClient, NewTopic
 
-from core.engines import PinotEngine
-from core.simulate import generate_events
-from core.orchestrator import publish_events, sync_pinot_schema
-from core.schema_compiler import pinot_table_config
+from agentic_lakehouse.engines import PinotEngine
+from agentic_lakehouse.simulate import generate_events
+from agentic_lakehouse.orchestrator import publish_events, sync_pinot_schema
+from agentic_lakehouse.schema_compiler import pinot_table_config
 
 pytestmark = pytest.mark.integration
 

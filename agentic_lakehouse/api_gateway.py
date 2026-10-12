@@ -5,7 +5,7 @@ The same operations are served over REST and over the Model Context Protocol
 
 - catalog: the metrics and dimensions you can ask for, and what they mean
 - query: a MetricQuery, answered by the tier router
-- views: the project's named queries (views/*.sql, see core/views.py), which
+- views: the project's named queries (views/*.sql, see agentic_lakehouse/views.py), which
   dashboards read by name with parameters
 - status: how fresh each tier is, each rollup's last quality gate, and drift
   proposals waiting for review: whether the data can be trusted right now
@@ -14,10 +14,10 @@ REST:  GET /catalog, POST /query, GET /views, GET /views/{name}?<params>,
        GET /status, GET /rollups/{table} (interactive docs at /docs)
 Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
        view's result each time it changes, and GET /live?view=<name>&view=...
-       for several views over one connection (core/live.py)
+       for several views over one connection (agentic_lakehouse/live.py)
 Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one);
-       they draw views with the chart tags in /male.js (core/static/male.js)
-MCP:   Streamable HTTP at /mcp, or stdio via `python run.py mcp`. Given the project
+       they draw views with the chart tags in /al.js (agentic_lakehouse/static/al.js)
+MCP:   Streamable HTTP at /mcp, or stdio via `agentic-lakehouse mcp`. Given the project
        (Project), it also checks and screenshots dashboards for the agent
        building them, and open pages reload when a view or dashboard file changes.
 """
@@ -47,21 +47,21 @@ from mcp_types import TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 from pyiceberg.exceptions import NoSuchTableError
 
-from core.agent_sync import pending_proposals, unmodeled_columns
-from core.browser import BrowserError, Capture, capture, serving
-from core.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
-from core.config import ConfigError, Platform, load_platform
-from core.dashboards import check_dashboards, dashboard_files, describe_dashboard
-from core.engines import EngineError, QueryEngine, TrinoEngine
-from core.live import LiveViews
-from core.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
-from core.orchestrator import FLUSHED_THROUGH, iceberg_catalog
-from core.rollups import ROLLUP_THROUGH, RollupStore
-from core.router import QueryResult, Router
-from core.views import ModelSource, View, ViewColumn, ViewError
+from agentic_lakehouse.agent_sync import pending_proposals, unmodeled_columns
+from agentic_lakehouse.browser import BrowserError, Capture, capture, serving
+from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
+from agentic_lakehouse.config import ConfigError, Platform, load_platform
+from agentic_lakehouse.dashboards import check_dashboards, dashboard_files, describe_dashboard
+from agentic_lakehouse.engines import EngineError, QueryEngine, TrinoEngine
+from agentic_lakehouse.live import LiveViews
+from agentic_lakehouse.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
+from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
+from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
+from agentic_lakehouse.router import QueryResult, Router
+from agentic_lakehouse.views import ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
-STATIC = Path(__file__).parent / "static"  # male.js, the chart tags dashboards use
+STATIC = Path(__file__).parent / "static"  # al.js, the chart tags dashboards use
 BOOT = uuid.uuid4().hex  # this server process: a page that sees another one reloads
 
 log = logging.getLogger(__name__)
@@ -578,9 +578,9 @@ def _calculation(metric: Metric, model: SemanticModel) -> str:
     return text
 
 
-def _male_reference() -> str:
-    """The tag reference at the top of male.js, for agents writing dashboards."""
-    text = (STATIC / "male.js").read_text()
+def _tag_reference() -> str:
+    """The tag reference at the top of al.js, for agents writing dashboards."""
+    text = (STATIC / "al.js").read_text()
     comment = text[text.index("/*") + 2 : text.index("*/")]
     return "\n".join(line.removeprefix(" *").removeprefix(" ") for line in comment.splitlines()).strip()
 
@@ -611,7 +611,7 @@ views in views/<name>.sql, pages in dashboards/<name>.html. Work in small steps:
 5. screenshot_dashboard to see the page as people will, with the problems it shows. Look at it
    critically: titles, empty charts, crowded labels. Iterate until it reads well.
 
-Chart tags (male.js):
+Chart tags (al.js):
 
 {reference}
 """
@@ -739,7 +739,7 @@ def _add_project_tools(mcp: MCPServer, project: Project, read_only: ToolAnnotati
     def build_dashboard(goal: str) -> str:
         """Build or change a dashboard: views in SQL, a page in HTML with live chart tags, checked and
         looked at until it reads well."""
-        return DASHBOARD_GUIDE.format(goal=goal, config_dir=project.config_dir, reference=_male_reference())
+        return DASHBOARD_GUIDE.format(goal=goal, config_dir=project.config_dir, reference=_tag_reference())
 
 
 async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, interval: float = 1.0) -> None:
@@ -800,7 +800,7 @@ def create_app(
                 live.close()
 
     app = FastAPI(
-        title="Modular Agentic Lakehouse Engine",
+        title="Agentic Lakehouse",
         description="Governed metrics from one ontology, answered by DuckDB, Trino or Pinot.",
         lifespan=lifespan,
     )
@@ -905,9 +905,9 @@ def create_app(
             f'<h1 style="font-size: 20px">Dashboards</h1>{body}<p><a href="/docs">API docs</a></p></body>'
         )
 
-    @app.get("/male.js", include_in_schema=False)
-    def male_js() -> FileResponse:
-        return FileResponse(STATIC / "male.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+    @app.get("/al.js", include_in_schema=False)
+    def tag_js() -> FileResponse:
+        return FileResponse(STATIC / "al.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/d/{name}", include_in_schema=False)
     def dashboard(name: str) -> FileResponse:

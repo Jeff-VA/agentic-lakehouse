@@ -5,8 +5,8 @@ import httpx
 import pyarrow as pa
 import pytest
 
-from core.config import TrinoEndpoint
-from core.engines import DuckDBEngine, EngineError, PinotEngine, TrinoEngine
+from agentic_lakehouse.config import TrinoEndpoint
+from agentic_lakehouse.engines import DuckDBEngine, EngineError, PinotEngine, TrinoEngine
 
 
 def test_duckdb_returns_arrow():

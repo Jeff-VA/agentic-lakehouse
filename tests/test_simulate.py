@@ -5,9 +5,9 @@ from statistics import mean
 
 import pyarrow as pa
 
-from core.config import load_platform
-from core.schema_compiler import arrow_schema
-from core.simulate import LiveSource, add_fields, episode_for, generate_events
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.schema_compiler import arrow_schema
+from agentic_lakehouse.simulate import LiveSource, add_fields, episode_for, generate_events
 from examples.playback.simulator import session
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "playback" / "config"

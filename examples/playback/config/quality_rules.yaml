@@ -2,7 +2,7 @@
 # they're published (write-audit-publish): if an `error` check fails, the gold
 # table keeps its last good contents and the run fails, visible in the Prefect
 # UI. `warn` checks are reported but don't block.
-# Schema and check types: core/quality.py
+# Schema and check types: agentic_lakehouse/quality.py
 version: "1.0.0"
 
 rules:

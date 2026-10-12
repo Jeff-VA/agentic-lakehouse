@@ -8,7 +8,7 @@ One run of one rollup:
    but never more than `backfill_days` back (what a first run covers).
 2. Computes the rows: the rollup's semantic query, compiled for the engine
    that reads the historical tier.
-3. Audits them against the table's quality rules (core/quality.py).
+3. Audits them against the table's quality rules (agentic_lakehouse/quality.py).
 4. Publishes: replaces exactly that window in the gold table, in one Iceberg
    commit that also records how far the table is complete and the audit
    results. Re-running is idempotent; a failed audit publishes nothing.
@@ -26,13 +26,13 @@ from pyiceberg.expressions import GreaterThanOrEqual
 from pyiceberg.table import Table
 from pyiceberg.transforms import DayTransform, MonthTransform
 
-from core.compiler import SqlCompiler, bucket_start
-from core.config import Platform, Rollup
-from core.engines import QueryEngine
-from core.quality import CheckResult, blocking, run_checks
+from agentic_lakehouse.compiler import SqlCompiler, bucket_start
+from agentic_lakehouse.config import Platform, Rollup
+from agentic_lakehouse.engines import QueryEngine
+from agentic_lakehouse.quality import CheckResult, blocking, run_checks
 
-ROLLUP_THROUGH = "male.rollup-through"  # the gold table is complete before this time (ISO, UTC)
-LAST_AUDIT = "male.last-audit"  # JSON: when the last run audited its rows, whether it published, the check results
+ROLLUP_THROUGH = "agentic-lakehouse.rollup-through"  # the gold table is complete before this time (ISO, UTC)
+LAST_AUDIT = "agentic-lakehouse.last-audit"  # JSON: when the last run audited its rows, whether it published, the check results
 
 Log = Callable[[str], None]
 

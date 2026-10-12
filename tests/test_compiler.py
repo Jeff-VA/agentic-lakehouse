@@ -5,8 +5,8 @@ import duckdb
 import pytest
 from pydantic import ValidationError
 
-from core.compiler import MetricQuery, QueryError, SqlCompiler
-from core.ontology import Ontology, load_ontology
+from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler
+from agentic_lakehouse.ontology import Ontology, load_ontology
 
 ROOT = Path(__file__).parents[1]
 GOLDEN = Path(__file__).parent / "golden"

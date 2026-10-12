@@ -9,9 +9,9 @@ from test_api_gateway import END, START, call_mcp, post_query
 from test_router import router
 from test_views import TABLES
 
-from core.api_gateway import Gateway, TableState, Warehouse, create_app, create_mcp_server
-from core.engines import DuckDBEngine
-from core.views import load_views
+from agentic_lakehouse.api_gateway import Gateway, TableState, Warehouse, create_app, create_mcp_server
+from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.views import load_views
 from test_compiler import ONTOLOGY
 
 VIEWS = {

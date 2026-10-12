@@ -27,10 +27,10 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pyarrow as pa
 
-from core.compiler import MetricQuery, QueryError, SqlCompiler, bucket_start
-from core.config import Platform
-from core.engines import PinotEngine, QueryEngine, TrinoEngine, plain_types
-from core.orchestrator import flushed_through
+from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler, bucket_start
+from agentic_lakehouse.config import Platform
+from agentic_lakehouse.engines import PinotEngine, QueryEngine, TrinoEngine, plain_types
+from agentic_lakehouse.orchestrator import flushed_through
 
 
 @dataclass(frozen=True)

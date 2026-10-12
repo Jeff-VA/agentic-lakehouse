@@ -3,11 +3,11 @@
 Each flush reads every message published before it started, appends the
 events to Iceberg and, in the same Iceberg commit, records:
 
-- the Kafka offsets read up to (table property male.kafka-offsets). The next
+- the Kafka offsets read up to (table property agentic-lakehouse.kafka-offsets). The next
   flush resumes exactly there. Keeping offsets in Iceberg rather than in a
   Kafka consumer group means a crash between writing rows and saving offsets
   can't load a batch twice: both happen in one commit, or neither does.
-- the flush watermark (male.flushed-through): Iceberg now holds every event
+- the flush watermark (agentic-lakehouse.flushed-through): Iceberg now holds every event
   older than the flush's start minus the allowed lateness. The router relies
   on it to decide what the historical tier can answer.
 
@@ -27,10 +27,10 @@ from confluent_kafka import Consumer, KafkaException, TopicPartition
 from pyiceberg.table import Table
 from pyiceberg.types import BooleanType, DoubleType, IcebergType, StringType
 
-from core.config import Dataset
-from core.orchestrator import FLUSHED_THROUGH
+from agentic_lakehouse.config import Dataset
+from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
 
-OFFSETS = "male.kafka-offsets"  # JSON {partition: next offset to read}
+OFFSETS = "agentic-lakehouse.kafka-offsets"  # JSON {partition: next offset to read}
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -192,4 +192,4 @@ def _to_arrow(events: list[dict], schema: pa.Schema) -> pa.Table:
 
 def kafka_consumer(bootstrap_servers: str) -> Consumer:
     """A consumer for flush(): offsets come from Iceberg, so the group never commits any."""
-    return Consumer({"bootstrap.servers": bootstrap_servers, "group.id": "male-flush", "enable.auto.commit": False})
+    return Consumer({"bootstrap.servers": bootstrap_servers, "group.id": "agentic-lakehouse-flush", "enable.auto.commit": False})

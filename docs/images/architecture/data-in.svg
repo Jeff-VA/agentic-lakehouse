@@ -58,7 +58,7 @@
           <!-- boxes -->
           <rect class="box" x="20" y="144" width="160" height="64" rx="8"/>
           <text class="title" x="100" y="171" text-anchor="middle">Your producers</text>
-          <text class="sub" x="100" y="191" text-anchor="middle">or run.py stream</text>
+          <text class="sub" x="100" y="191" text-anchor="middle">or the demo stream</text>
           <rect class="box" x="250" y="144" width="160" height="64" rx="8"/>
           <text class="title" x="330" y="171" text-anchor="middle">Kafka</text>
           <text class="sub" x="330" y="191" text-anchor="middle">a topic per dataset</text>

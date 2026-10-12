@@ -2,7 +2,7 @@
 
 A dashboard's live connection never goes idle, so Chrome's own --screenshot
 can't tell when the page is ready. This drives Chrome over the DevTools
-protocol instead: load the page, wait until male.js says every tag has drawn
+protocol instead: load the page, wait until al.js says every tag has drawn
 its data or an error, then capture the page and the errors it shows. Tests
 use it, and so does the MCP tool that lets an agent look at what it built.
 """
@@ -36,18 +36,18 @@ CANDIDATES = [
     "chrome",
 ]
 
-# True once every tag on the page has drawn data or an error (see settled() in male.js);
-# pages without male.js are ready when they've loaded.
-READY = "document.readyState === 'complete' && (!window.male || window.male.settled())"
+# True once every tag on the page has drawn data or an error (see settled() in al.js);
+# pages without al.js are ready when they've loaded.
+READY = "document.readyState === 'complete' && (!window.al || window.al.settled())"
 # What the page shows, by tag: errors (a missing view or column, a failed refresh), and notes
 # about the data (a result that covers less than asked).
 _REPORT = """[...document.querySelectorAll('{selector}')].map(e => {{
-  const host = e.closest('male-kpi, male-bars, male-lines, male-table, male-text, male-freshness, male-gates, male-drift');
+  const host = e.closest('al-kpi, al-bars, al-lines, al-table, al-text, al-freshness, al-gates, al-drift');
   const view = host?.getAttribute('view');
   return `${{host ? host.tagName.toLowerCase() + (view ? ` view=${{view}}` : '') : 'page'}}: ${{e.textContent.trim()}}`;
 }})"""
-PROBLEMS = _REPORT.format(selector=".male-error")
-NOTES = _REPORT.format(selector=".male-notes:not(.male-error)")
+PROBLEMS = _REPORT.format(selector=".al-error")
+NOTES = _REPORT.format(selector=".al-notes:not(.al-error)")
 
 
 class BrowserError(RuntimeError):
@@ -115,7 +115,7 @@ async def _capture(url: str, *, width: int, height: int, theme: str | None, time
     chrome = find_chrome()
     if chrome is None:
         raise BrowserError("Chrome isn't installed; install it or set CHROME to its path")
-    with tempfile.TemporaryDirectory(prefix="male-chrome-") as profile:
+    with tempfile.TemporaryDirectory(prefix="agentic-lakehouse-chrome-") as profile:
         # Chrome refuses to sandbox as root, and CI runners often can't give it the namespaces it needs.
         root = hasattr(os, "geteuid") and os.geteuid() == 0
         sandbox = ["--no-sandbox"] if root or os.environ.get("CI") else []

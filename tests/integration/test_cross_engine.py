@@ -1,16 +1,16 @@
 """Same semantic query, same answer, on every engine.
 
 Each query runs on DuckDB, Trino and Pinot over the telemetry that
-`python run.py seed` published (Pinot ingests it from Kafka) and
-`python run.py flush` moved into Iceberg; the results must match. DuckDB reads
+`agentic-lakehouse seed` published (Pinot ingests it from Kafka) and
+`agentic-lakehouse flush` moved into Iceberg; the results must match. DuckDB reads
 the Iceberg table's files directly, so all three see the same events.
 """
 
 import pytest
 from compare import assert_same_result
 
-from core.compiler import MetricQuery, SqlCompiler
-from core.ontology import Ontology
+from agentic_lakehouse.compiler import MetricQuery, SqlCompiler
+from agentic_lakehouse.ontology import Ontology
 
 pytestmark = pytest.mark.integration
 

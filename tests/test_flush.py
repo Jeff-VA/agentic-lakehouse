@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import pytest
 from pyiceberg.catalog.sql import SqlCatalog
 
-from core.config import load_platform
-from core.flush import OFFSETS, FlushError, flush
-from core.orchestrator import FLUSHED_THROUGH
-from core.schema_compiler import iceberg_partition_spec, iceberg_schema
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.flush import OFFSETS, FlushError, flush
+from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
+from agentic_lakehouse.schema_compiler import iceberg_partition_spec, iceberg_schema
 
 PLATFORM = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
 DATASET = PLATFORM.dataset("telemetry")

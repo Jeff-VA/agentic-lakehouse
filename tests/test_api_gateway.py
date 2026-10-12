@@ -14,11 +14,11 @@ from fastapi.testclient import TestClient
 from mcp import Client, StdioServerParameters
 from test_router import FLUSHED, router
 
-from core.api_gateway import Gateway, create_app, create_mcp_server
-from core.config import load_platform
-from core.engines import EngineError
-from core.rollups import RollupStatus
-from core.router import Tier
+from agentic_lakehouse.api_gateway import Gateway, create_app, create_mcp_server
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.engines import EngineError
+from agentic_lakehouse.rollups import RollupStatus
+from agentic_lakehouse.router import Tier
 
 # The DuckDB stand-in tiers from test_router: six hours of events, the historical
 # tier flushed through 04:00, the real-time tier holding 02:00 onwards.
@@ -168,10 +168,10 @@ def test_mcp_over_http_is_mounted_in_the_app():
 
 
 def test_run_py_serves_mcp_over_stdio():
-    """`python run.py mcp` is what Claude Code or Claude Desktop launch. Listing
+    """`agentic-lakehouse mcp` is what Claude Code or Claude Desktop launch. Listing
     tools needs only the config, not the running stack."""
     root = Path(__file__).parents[1]
-    params = StdioServerParameters(command=sys.executable, args=[str(root / "run.py"), "mcp"], cwd=str(root))
+    params = StdioServerParameters(command=sys.executable, args=["-m", "agentic_lakehouse", "mcp"], cwd=str(root))
     tools = call_mcp(params, "list_tools").tools
     assert {t.name for t in tools} == {
         "list_metrics", "query_metrics", "data_status", "list_views", "query_view", "check_dashboards", "screenshot_dashboard"
@@ -179,7 +179,7 @@ def test_run_py_serves_mcp_over_stdio():
 
 
 class FakeRollups:
-    """Stands in for core.rollups.RollupStore (tested in test_rollups.py): one rollup whose last gate blocked."""
+    """Stands in for agentic_lakehouse.rollups.RollupStore (tested in test_rollups.py): one rollup whose last gate blocked."""
 
     def statuses(self):
         audit = {
@@ -265,7 +265,7 @@ def test_mcp_data_status_tool(tmp_path):
 
 
 def test_the_gateway_starts_while_the_stack_is_unreachable():
-    """Nothing connects until a request needs it: run.py serve and run.py mcp start even when
+    """Nothing connects until a request needs it: `agentic-lakehouse serve` and `mcp` start even when
     the engines or the Iceberg catalog are down (as in CI, where none of them run)."""
     platform = load_platform(Path(__file__).parents[1] / "examples" / "playback" / "config")
     unreachable = platform.deployment.model_copy(

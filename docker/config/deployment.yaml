@@ -1,6 +1,6 @@
 # Service endpoints as seen from inside the compose network. The app
 # containers mount this over config/deployment.yaml (which has the addresses
-# for running run.py on this machine). Schema: core/config.py
+# for running agentic-lakehouse on this machine). Schema: agentic_lakehouse/config.py
 version: "1.0.0"
 
 kafka:
@@ -14,7 +14,7 @@ pinot:
 trino:
   host: trino
   port: 8080
-  user: male
+  user: lakehouse
   catalog: iceberg
 
 iceberg:
@@ -23,8 +23,8 @@ iceberg:
 s3:
   endpoint: http://minio:9000
   region: us-east-1
-  access_key: male
-  secret_key: male-local-secret  # local stack only
+  access_key: lakehouse
+  secret_key: lakehouse-local-secret  # local stack only
 
 prefect:
   api_url: http://prefect:4200/api

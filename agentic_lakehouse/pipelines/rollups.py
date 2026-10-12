@@ -1,4 +1,4 @@
-"""Prefect flow that refreshes every rollup in storage.yaml (core/rollups.py).
+"""Prefect flow that refreshes every rollup in storage.yaml (agentic_lakehouse/rollups.py).
 
 Each rollup is its own task, so one failed quality gate doesn't hold up the
 others; the flow fails if any rollup did. Each task attaches its check results
@@ -10,11 +10,11 @@ from dataclasses import asdict
 from prefect import flow, get_run_logger, task
 from prefect.artifacts import create_table_artifact
 
-from core.config import load_platform
-from core.engines import TrinoEngine
-from core.orchestrator import flushed_through, iceberg_catalog
-from core.quality import CheckResult
-from core.rollups import QualityGateError, materialize
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.engines import TrinoEngine
+from agentic_lakehouse.orchestrator import flushed_through, iceberg_catalog
+from agentic_lakehouse.quality import CheckResult
+from agentic_lakehouse.rollups import QualityGateError, materialize
 
 
 @task

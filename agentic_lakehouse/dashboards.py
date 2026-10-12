@@ -1,14 +1,14 @@
-"""Dashboards: the project's HTML pages in dashboards/, drawn with male.js tags.
+"""Dashboards: the project's HTML pages in dashboards/, drawn with al.js tags.
 
-check_dashboards() reads every page and checks each male-* tag against the
+check_dashboards() reads every page and checks each al-* tag against the
 views it draws, without a browser: the tag exists, its view exists, the
 columns it draws are in that view and of a type it can draw, and the
-parameters it sets, or that a <male-param> sets for the whole page, are ones
+parameters it sets, or that a <al-param> sets for the whole page, are ones
 the view takes, with values it accepts. A $name in an attribute is checked
 for every value the page parameter `name` can take.
 
 What only a browser can tell (a query that fails, a view with no rows yet) is
-what core/browser.py reports when it renders a page.
+what agentic_lakehouse/browser.py reports when it renders a page.
 """
 
 import difflib
@@ -20,17 +20,17 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl
 
-from core.views import View, ViewError
+from agentic_lakehouse.views import View, ViewError
 
 DASHBOARD_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-VIEW_TAGS = {"male-kpi", "male-bars", "male-lines", "male-table", "male-text"}
-TAGS = VIEW_TAGS | {"male-param", "male-freshness", "male-gates", "male-drift", "male-live", "male-theme"}
+VIEW_TAGS = {"al-kpi", "al-bars", "al-lines", "al-table", "al-text"}
+TAGS = VIEW_TAGS | {"al-param", "al-freshness", "al-gates", "al-drift", "al-live", "al-theme"}
 # The attributes each tag needs, and those that name columns of its view.
-REQUIRED = {"male-kpi": ["view", "value"], "male-bars": ["view", "category", "value"], "male-lines": ["view", "x", "y"],
-            "male-table": ["view"], "male-text": ["view"], "male-param": ["name", "options"]}
-COLUMNS = {"male-kpi": ["value"], "male-bars": ["category", "value"], "male-lines": ["x", "y", "series"]}
-NUMERIC = {("male-kpi", "value"), ("male-bars", "value"), ("male-lines", "y")}
-CHOICES = {("male-bars", "sort"): {"view", "asc", "desc"}, ("male-param", "kind"): {"buttons", "select"}}
+REQUIRED = {"al-kpi": ["view", "value"], "al-bars": ["view", "category", "value"], "al-lines": ["view", "x", "y"],
+            "al-table": ["view"], "al-text": ["view"], "al-param": ["name", "options"]}
+COLUMNS = {"al-kpi": ["value"], "al-bars": ["category", "value"], "al-lines": ["x", "y", "series"]}
+NUMERIC = {("al-kpi", "value"), ("al-bars", "value"), ("al-lines", "y")}
+CHOICES = {("al-bars", "sort"): {"view", "asc", "desc"}, ("al-param", "kind"): {"buttons", "select"}}
 PARAM = re.compile(r"\$([a-z][a-z0-9_]*)")
 
 
@@ -38,7 +38,7 @@ PARAM = re.compile(r"\$([a-z][a-z0-9_]*)")
 class Problem:
     file: str  # e.g. "dashboards/playback.html"
     line: int
-    tag: str  # the tag, e.g. 'male-lines view="isp_hourly"'
+    tag: str  # the tag, e.g. 'al-lines view="isp_hourly"'
     message: str
 
     def __str__(self) -> str:
@@ -63,7 +63,7 @@ class _Tag:
     name: str
     attrs: dict[str, str]
     line: int
-    text: str = ""  # male-text: the template inside it
+    text: str = ""  # al-text: the template inside it
 
     def __str__(self) -> str:
         key = next((k for k in ("view", "name", "dataset") if k in self.attrs), None)
@@ -83,14 +83,14 @@ class _Reader(HTMLParser):
         self._in_title = tag == "title"
         if tag == "script":
             self.scripts.append(dict(attrs).get("src") or "")
-        if tag.startswith("male-"):
+        if tag.startswith("al-"):
             found = _Tag(tag, {k: v or "" for k, v in attrs}, self.getpos()[0])
             self.tags.append(found)
-            if tag == "male-text":
+            if tag == "al-text":
                 self._text = found
 
     def handle_endtag(self, tag):
-        if tag == "male-text":
+        if tag == "al-text":
             self._text = None
         self._in_title = False
 
@@ -118,13 +118,13 @@ def check_dashboard(path: Path, views: Mapping[str, View], datasets: list[str] |
     def problem(tag: _Tag, message: str) -> None:
         problems.append(Problem(file, tag.line, str(tag), message))
 
-    if reader.tags and not any(src.rstrip("/").endswith("male.js") for src in reader.scripts):
-        problems.append(Problem(file, 1, "script", 'the page uses male-* tags but never loads them: add <script type="module" src="/male.js"></script>'))
+    if reader.tags and not any(src.rstrip("/").endswith("al.js") for src in reader.scripts):
+        problems.append(Problem(file, 1, "script", 'the page uses al-* tags but never loads them: add <script type="module" src="/al.js"></script>'))
 
     # Page parameters: every value each one can take.
     page: dict[str, list[str]] = {}
     for tag in reader.tags:
-        if tag.name == "male-param" and tag.attrs.get("name"):
+        if tag.name == "al-param" and tag.attrs.get("name"):
             options = [o.split("=")[0].strip() for o in tag.attrs.get("options", "").split(",") if o.strip()]
             page[tag.attrs["name"]] = options
             default = tag.attrs.get("value")
@@ -144,10 +144,10 @@ def check_dashboard(path: Path, views: Mapping[str, View], datasets: list[str] |
                 problem(tag, f'{attribute}="{tag.attrs[attribute]}" must be one of {", ".join(sorted(allowed))}')
         unknown_params = sorted({p for value in tag.attrs.values() for p in PARAM.findall(value)} - page.keys())
         for name in unknown_params:
-            problem(tag, f"${name} names no page parameter: add <male-param name=\"{name}\" ...> or the value itself")
-        if tag.name == "male-freshness" and datasets is not None and tag.attrs.get("dataset") not in (None, *datasets):
+            problem(tag, f"${name} names no page parameter: add <al-param name=\"{name}\" ...> or the value itself")
+        if tag.name == "al-freshness" and datasets is not None and tag.attrs.get("dataset") not in (None, *datasets):
             problem(tag, f'no dataset named "{tag.attrs["dataset"]}"; datasets: {", ".join(datasets)}')
-        if tag.name == "male-param" and tag.attrs.get("view"):
+        if tag.name == "al-param" and tag.attrs.get("view"):
             _check_view_name(tag, tag.attrs["view"], views, problem)
         if tag.name in VIEW_TAGS and tag.attrs.get("view"):
             for view_name in _expand(tag.attrs["view"], page):
@@ -158,7 +158,7 @@ def check_dashboard(path: Path, views: Mapping[str, View], datasets: list[str] |
     drawn = {view_name for tag in reader.tags if tag.name in VIEW_TAGS for view_name in _expand(tag.attrs.get("view", ""), page)}
     for tag in reader.tags:
         name = tag.attrs.get("name")
-        if tag.name != "male-param" or not name:
+        if tag.name != "al-param" or not name:
             continue
         for view_name in sorted(drawn & views.keys()):
             param = views[view_name].params.get(name)
@@ -204,17 +204,17 @@ def _check_view_tag(tag: _Tag, view: View, page: Mapping[str, list[str]], proble
             problem(tag, f'{attribute}: view {view.name} has no column "{name}"; {hint}columns: {", ".join(columns)}')
         elif (tag.name, attribute) in NUMERIC and column.type != "number":
             problem(tag, f'{attribute}: column "{name}" holds {column.type} values; it needs numbers')
-        elif tag.name == "male-lines" and attribute == "x" and column.type not in ("timestamp", "date"):
+        elif tag.name == "al-lines" and attribute == "x" and column.type not in ("timestamp", "date"):
             problem(tag, f'x: column "{name}" holds {column.type} values; lines run over a time column')
 
     for attribute in COLUMNS.get(tag.name, []):
         for value in _expand(tag.attrs.get(attribute, ""), page) if tag.attrs.get(attribute) else []:
             check_column(attribute, value)
-    if tag.name == "male-table":
+    if tag.name == "al-table":
         for value in _expand(tag.attrs.get("columns", ""), page):
             for name in filter(None, (s.strip() for s in value.split(","))):
                 check_column("columns", name)
-    if tag.name == "male-text":
+    if tag.name == "al-text":
         for name in dict.fromkeys(re.findall(r"\{([a-z][a-z0-9_]*)\}", tag.text)):
             check_column("text", name)
 
@@ -229,4 +229,4 @@ def _check_view_tag(tag: _Tag, view: View, page: Mapping[str, list[str]], proble
     own = {k for value in (tag.attrs.get("params"), tag.attrs.get("compare")) if value for k, _ in parse_qsl(value)}
     for name, param in view.params.items():
         if param.required and name not in own and name not in page:
-            problem(tag, f"view {view.name} needs parameter {name}: set it in params=\"{name}=...\" or with a <male-param name=\"{name}\">")
+            problem(tag, f"view {view.name} needs parameter {name}: set it in params=\"{name}=...\" or with a <al-param name=\"{name}\">")

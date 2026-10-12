@@ -2,8 +2,8 @@
 
 One task per dataset, retried on failure; runs, logs and failures show in the
 Prefect UI (http://127.0.0.1:4200 with the Docker stack). The work itself is
-core/flush.py. Run it with `python run.py flush` (once) or
-`python run.py flush --serve` (on each table's flush_every_minutes schedule).
+agentic_lakehouse/flush.py. Run it with `agentic-lakehouse flush` (once) or
+`agentic-lakehouse flush --serve` (on each table's flush_every_minutes schedule).
 """
 
 from dataclasses import asdict
@@ -11,9 +11,9 @@ from datetime import UTC, datetime, timedelta
 
 from prefect import flow, get_run_logger, task
 
-from core.config import load_platform
-from core.flush import flush, kafka_consumer
-from core.orchestrator import iceberg_catalog
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.flush import flush, kafka_consumer
+from agentic_lakehouse.orchestrator import iceberg_catalog
 
 
 @task(retries=2, retry_delay_seconds=10)

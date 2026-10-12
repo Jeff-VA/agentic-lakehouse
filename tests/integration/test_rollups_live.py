@@ -6,10 +6,10 @@ from uuid import uuid4
 import pytest
 from compare import assert_same_result
 
-from core.compiler import SqlCompiler
-from core.orchestrator import flushed_through, iceberg_catalog
-from core.quality import QualityConfig
-from core.rollups import materialize
+from agentic_lakehouse.compiler import SqlCompiler
+from agentic_lakehouse.orchestrator import flushed_through, iceberg_catalog
+from agentic_lakehouse.quality import QualityConfig
+from agentic_lakehouse.rollups import materialize
 
 pytestmark = pytest.mark.integration
 

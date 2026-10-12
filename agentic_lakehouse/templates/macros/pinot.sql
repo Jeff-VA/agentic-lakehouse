@@ -1,7 +1,7 @@
 {#-
   Apache Pinot: the real-time tier. Overrides of macros/default.sql.
 
-  Written for Pinot's multi-stage query engine, which core/engines.py always
+  Written for Pinot's multi-stage query engine, which agentic_lakehouse/engines.py always
   enables. The single-stage engine rejects an output alias that matches a
   column name, and every time-bucketed query has one ("event_ts").
 -#}

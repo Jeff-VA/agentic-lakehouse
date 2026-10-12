@@ -1,7 +1,7 @@
 /*
- * male.js: live charts for dashboards over the platform's views. One file, no build step.
+ * al.js: live charts for dashboards over the platform's views. One file, no build step.
  *
- *   <script type="module" src="/male.js"></script>
+ *   <script type="module" src="/al.js"></script>
  *
  * Each chart tag names a view (config/views/<name>.sql, listed at /views) and the columns
  * to draw. Tags stay live: the page keeps one Server-Sent Events connection to /live, and a
@@ -9,28 +9,28 @@
  * ontology through the view's columns, so tags rarely need more than names.
  *
  * Tags (attributes in [brackets] are optional)
- *   <male-kpi view value [compare] [compare-label] [label]>
+ *   <al-kpi view value [compare] [compare-label] [label]>
  *       One number from the first row, and its change against the same view with the
  *       `compare` parameters ("from_minutes_ago=120&to_minutes_ago=60").
- *   <male-bars view category value [highlight] [sort] [label]>
+ *   <al-bars view category value [highlight] [sort] [label]>
  *       A horizontal bar per row, in the view's order (sort="desc" or "asc" to reorder).
  *       highlight="first" | "max" | "min" | <a category> draws that bar in color, the rest gray.
- *   <male-lines view x y [series] [colors] [label] [height]>
+ *   <al-lines view x y [series] [colors] [label] [height]>
  *       A line per `series` value over the time column `x`, with a crosshair, legend and table.
- *   <male-table view [columns] [label]>     The rows as a table; `columns` is a comma list.
- *   <male-text view>Worst: {isp_provider}</male-text>
+ *   <al-table view [columns] [label]>     The rows as a table; `columns` is a comma list.
+ *   <al-text view>Worst: {isp_provider}</al-text>
  *       Text with values from the view's first row, formatted like the charts.
- *   <male-param name options [value] [kind] [label] [view]>
+ *   <al-param name options [value] [kind] [label] [view]>
  *       Buttons (or kind="select") that set a page parameter. options="24=24 h,48=48 h" or
  *       "a,b,c"; with `view`, plain options that name its columns show their labels.
- *   <male-freshness [dataset]>  <male-gates>  <male-drift>
+ *   <al-freshness [dataset]>  <al-gates>  <al-drift>
  *       The platform's status (from /status): how complete the historical tier is, the
  *       rollups' quality gates, and schema drift waiting for review.
- *   <male-live>      Whether the page is connected, and when data last arrived.
- *   <male-theme>     A light/dark toggle (also ?theme=dark in the URL).
+ *   <al-live>      Whether the page is connected, and when data last arrived.
+ *   <al-theme>     A light/dark toggle (also ?theme=dark in the URL).
  *
  * Parameters
- *   A page parameter, from the URL's query string or a <male-param>, fills every view
+ *   A page parameter, from the URL's query string or a <al-param>, fills every view
  *   parameter of the same name. A tag's `params` attribute ("hours=24&isp=cox") sets
  *   parameters for that tag alone. In any attribute, $name stands for the page parameter's
  *   value, e.g. y="$metric". Changing a parameter updates the URL, so a link reopens the
@@ -40,10 +40,10 @@
  * the page. Set the order with colors="comcast,verizon,..." on any tag; otherwise values
  * take the six slots in alphabetical order and further ones share a gray.
  *
- * Layout classes: male-grid (responsive columns), male-card, male-section, male-head.
+ * Layout classes: al-grid (responsive columns), al-card, al-section, al-head.
  *
  * Custom code gets the same live data:
- *   import { subscribe } from "/male.js";
+ *   import { subscribe } from "/al.js";
  *   subscribe("isp_now", { minutes: 30 }, (result, error) => { ... });  // returns an unsubscribe function
  */
 
@@ -80,83 +80,83 @@ const STYLE = `
 :where(h2) { font-size: 15px; font-weight: 600; margin: 0; }
 :where(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 :where(a) { color: var(--text-secondary); }
-.male-section { margin-top: 28px; }
-.male-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.male-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.male-card, male-kpi, male-bars, male-lines, male-table, male-freshness {
+.al-section { margin-top: 28px; }
+.al-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.al-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.al-card, al-kpi, al-bars, al-lines, al-table, al-freshness {
   display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0;
 }
-male-gates, male-drift, male-text, male-live, male-param, male-theme { display: block; }
-male-text, male-live, male-theme { display: inline; }
-.male-caption, .male-foot { color: var(--text-secondary); font-size: 13px; }
-.male-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
-.male-foot .male-notes { flex-basis: 100%; }
-.male-foot .male-spacer { flex: 1; }
-.male-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px; display: block; }
-.male-muted { color: var(--muted); }
-.male-empty { color: var(--text-secondary); font-size: 13px; padding: 8px 0; }
-.male-error { color: var(--bad-text); font-size: 13px; padding: 4px 0; display: flex; gap: 8px; align-items: flex-start; }
-male-kpi .male-value { font-size: 28px; font-weight: 600; margin-top: 2px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-male-kpi .male-label, male-freshness .male-label { color: var(--text-secondary); font-size: 13px; }
-male-freshness .male-value { font-size: 22px; font-weight: 600; margin-top: 4px; }
-.male-delta { font-size: 13px; font-weight: 600; margin-top: 2px; }
-.male-delta.bad { color: var(--bad-text); } .male-delta.good { color: var(--good-text); } .male-delta.flat { color: var(--text-secondary); }
-.male-delta .male-muted { font-weight: 400; }
-male-param { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-male-param .male-label { color: var(--muted); font-size: 13px; }
-.male-buttons { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-male-param button, male-theme button, .male-foot button, male-lines .male-legend button {
+al-gates, al-drift, al-text, al-live, al-param, al-theme { display: block; }
+al-text, al-live, al-theme { display: inline; }
+.al-caption, .al-foot { color: var(--text-secondary); font-size: 13px; }
+.al-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.al-foot .al-notes { flex-basis: 100%; }
+.al-foot .al-spacer { flex: 1; }
+.al-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin: 0 0 8px; display: block; }
+.al-muted { color: var(--muted); }
+.al-empty { color: var(--text-secondary); font-size: 13px; padding: 8px 0; }
+.al-error { color: var(--bad-text); font-size: 13px; padding: 4px 0; display: flex; gap: 8px; align-items: flex-start; }
+al-kpi .al-value { font-size: 28px; font-weight: 600; margin-top: 2px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+al-kpi .al-label, al-freshness .al-label { color: var(--text-secondary); font-size: 13px; }
+al-freshness .al-value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+.al-delta { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.al-delta.bad { color: var(--bad-text); } .al-delta.good { color: var(--good-text); } .al-delta.flat { color: var(--text-secondary); }
+.al-delta .al-muted { font-weight: 400; }
+al-param { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+al-param .al-label { color: var(--muted); font-size: 13px; }
+.al-buttons { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+al-param button, al-theme button, .al-foot button, al-lines .al-legend button {
   font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface);
   border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer;
 }
-.male-foot button { font-size: 12px; padding: 2px 8px; }
-male-param button:hover, male-theme button:hover, .male-foot button:hover { background: var(--hover); }
-male-param button[aria-pressed="true"], .male-foot button[aria-pressed="true"] { border-color: var(--text-secondary); font-weight: 600; }
-male-param select { font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
-:where([class^="male"], male-param, male-lines, male-bars, male-theme) :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
-.male-plot svg { display: block; overflow: visible; }
-.male-plot svg text { fill: var(--text-secondary); font-size: 12px; }
-.male-plot svg .axis { fill: var(--muted); font-variant-numeric: tabular-nums; }
-.male-plot svg .name { fill: var(--text-primary); }
-.male-plot svg .strong { fill: var(--text-primary); font-weight: 600; }
-.male-plot .bar-row:focus { outline: none; }
-.male-plot .bar-row:focus-visible rect.hit { stroke: var(--series-1); stroke-width: 2; }
-male-lines .male-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; padding: 0; list-style: none; }
-male-lines .male-legend button { border: none; background: none; padding: 2px 0; display: flex; align-items: center; gap: 6px; }
-male-lines .male-legend button[aria-pressed="false"] { color: var(--muted); }
-male-lines .male-legend button[aria-pressed="false"] .male-key { opacity: 0.3; }
-.male-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
-.male-table-wrap { max-height: 320px; overflow: auto; margin-top: 8px; }
-.male-table-wrap table, male-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.male-table-wrap th, .male-table-wrap td, male-table th, male-table td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
-.male-table-wrap th:first-child, .male-table-wrap td:first-child, male-table th:first-child, male-table td:first-child { text-align: left; }
-.male-table-wrap th, male-table th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
-male-table .male-table-wrap { max-height: 420px; margin-top: 0; }
-.male-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
-.male-icon { width: 16px; height: 16px; flex: none; }
-.male-checks { list-style: none; padding: 0; margin: 8px 0 0; }
-.male-checks li { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; font-size: 13px; }
-.male-checks .what { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.male-item { padding: 12px 0; border-top: 1px solid var(--grid); }
-.male-item:first-child { border-top: none; padding-top: 4px; }
-.male-item-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.male-item-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-.male-item p { margin: 4px 0 0; }
-male-live { color: var(--muted); font-size: 13px; }
-male-live .male-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--muted); }
-male-live[data-state="live"] .male-dot { background: var(--good); }
-male-live[data-state="reconnecting"] .male-dot { background: var(--warning); }
-.male-stale { opacity: 0.55; transition: opacity 120ms; }
-.male-tooltip {
+.al-foot button { font-size: 12px; padding: 2px 8px; }
+al-param button:hover, al-theme button:hover, .al-foot button:hover { background: var(--hover); }
+al-param button[aria-pressed="true"], .al-foot button[aria-pressed="true"] { border-color: var(--text-secondary); font-weight: 600; }
+al-param select { font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+:where([class^="al-"], al-param, al-lines, al-bars, al-theme) :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.al-plot svg { display: block; overflow: visible; }
+.al-plot svg text { fill: var(--text-secondary); font-size: 12px; }
+.al-plot svg .axis { fill: var(--muted); font-variant-numeric: tabular-nums; }
+.al-plot svg .name { fill: var(--text-primary); }
+.al-plot svg .strong { fill: var(--text-primary); font-weight: 600; }
+.al-plot .bar-row:focus { outline: none; }
+.al-plot .bar-row:focus-visible rect.hit { stroke: var(--series-1); stroke-width: 2; }
+al-lines .al-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; padding: 0; list-style: none; }
+al-lines .al-legend button { border: none; background: none; padding: 2px 0; display: flex; align-items: center; gap: 6px; }
+al-lines .al-legend button[aria-pressed="false"] { color: var(--muted); }
+al-lines .al-legend button[aria-pressed="false"] .al-key { opacity: 0.3; }
+.al-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.al-table-wrap { max-height: 320px; overflow: auto; margin-top: 8px; }
+.al-table-wrap table, al-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.al-table-wrap th, .al-table-wrap td, al-table th, al-table td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+.al-table-wrap th:first-child, .al-table-wrap td:first-child, al-table th:first-child, al-table td:first-child { text-align: left; }
+.al-table-wrap th, al-table th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+al-table .al-table-wrap { max-height: 420px; margin-top: 0; }
+.al-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.al-icon { width: 16px; height: 16px; flex: none; }
+.al-checks { list-style: none; padding: 0; margin: 8px 0 0; }
+.al-checks li { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; font-size: 13px; }
+.al-checks .what { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.al-item { padding: 12px 0; border-top: 1px solid var(--grid); }
+.al-item:first-child { border-top: none; padding-top: 4px; }
+.al-item-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.al-item-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.al-item p { margin: 4px 0 0; }
+al-live { color: var(--muted); font-size: 13px; }
+al-live .al-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--muted); }
+al-live[data-state="live"] .al-dot { background: var(--good); }
+al-live[data-state="reconnecting"] .al-dot { background: var(--warning); }
+.al-stale { opacity: 0.55; transition: opacity 120ms; }
+.al-tooltip {
   position: fixed; pointer-events: none; z-index: 10; min-width: 140px; max-width: 280px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); padding: 8px 10px; font-size: 12px; display: none; color: var(--text-primary);
 }
-.male-tooltip .title { color: var(--text-secondary); margin-bottom: 4px; }
-.male-tooltip .row { display: flex; align-items: center; gap: 8px; }
-.male-tooltip .row .v { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 56px; }
-.male-tooltip .row .n { color: var(--text-secondary); }
-@media (prefers-reduced-motion: reduce) { .male-stale { transition: none; } }
+.al-tooltip .title { color: var(--text-secondary); margin-bottom: 4px; }
+.al-tooltip .row { display: flex; align-items: center; gap: 8px; }
+.al-tooltip .row .v { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 56px; }
+.al-tooltip .row .n { color: var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) { .al-stale { transition: none; } }
 `;
 
 // ---------------------------------------------------------------- small helpers
@@ -183,7 +183,7 @@ function svgEl(tag, attrs = {}, text) {
 
 function icon(kind) {
   // Status colors always come with an icon and a label, never alone.
-  const svg = svgEl("svg", { class: "male-icon", viewBox: "0 0 16 16", "aria-hidden": "true" });
+  const svg = svgEl("svg", { class: "al-icon", viewBox: "0 0 16 16", "aria-hidden": "true" });
   const fills = { good: "var(--good)", warn: "var(--warning)", bad: "var(--critical)", none: "var(--muted)" };
   svg.append(svgEl("circle", { cx: 8, cy: 8, r: 7, fill: fills[kind] }));
   const paths = { good: "M4.5 8.2l2.2 2.2 4.8-4.8", bad: "M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6", warn: "M8 4.2v4.6M8 11.2v.6", none: "M5 8h6" };
@@ -263,10 +263,10 @@ function colorOf(value) {
 
 let tooltip;
 function showTip(x, y, title, rows) {
-  tooltip ??= document.body.appendChild(el("div", { class: "male-tooltip", role: "tooltip" }));
+  tooltip ??= document.body.appendChild(el("div", { class: "al-tooltip", role: "tooltip" }));
   tooltip.replaceChildren(el("div", { class: "title", text: title }));
   for (const row of rows) {
-    const key = el("span", { class: "male-key" });
+    const key = el("span", { class: "al-key" });
     key.style.background = row.color ?? "transparent";
     tooltip.append(el("div", { class: "row" }, key, el("span", { class: "v", text: row.value }), el("span", { class: "n", text: row.name })));
   }
@@ -417,9 +417,9 @@ const live = new Live();
 
 function banner(detail) {
   // An edit broke a view: the page keeps the last good version and says what to fix.
-  let box = document.getElementById("male-banner");
+  let box = document.getElementById("al-banner");
   if (!box) {
-    box = el("div", { id: "male-banner", class: "male-error", role: "alert" });
+    box = el("div", { id: "al-banner", class: "al-error", role: "alert" });
     Object.assign(box.style, { position: "sticky", top: "0", zIndex: "20", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px", padding: "10px 12px", margin: "8px", whiteSpace: "pre-wrap" });
     document.body.prepend(box);
   }
@@ -521,7 +521,7 @@ class ViewTag extends HTMLElement {
 
   draw() {
     const stale = !this.states?.[0] && this.previous?.[0];
-    this.classList.toggle("male-stale", !!stale);
+    this.classList.toggle("al-stale", !!stale);
     const state = this.states?.[0] ?? (stale ? this.previous[0] : null);
     if (!state) return this.paint(null, null);
     if (stale) {
@@ -537,30 +537,30 @@ class ViewTag extends HTMLElement {
   paint(result, error) {
     hideTip();
     if (result || error) this.painted = true;
-    const body = el("div", { class: "male-body" });
+    const body = el("div", { class: "al-body" });
     if (!result) {
-      body.append(error ? el("div", { class: "male-error", role: "alert" }, icon("bad"), el("span", { text: error })) : el("div", { class: "male-empty", text: "Loading…" }));
+      body.append(error ? el("div", { class: "al-error", role: "alert" }, icon("bad"), el("span", { text: error })) : el("div", { class: "al-empty", text: "Loading…" }));
       this.replaceChildren(body);
       return;
     }
-    if (!result.rows.length) body.append(el("div", { class: "male-empty", text: this.attr("empty", "No rows yet.") }));
+    if (!result.rows.length) body.append(el("div", { class: "al-empty", text: this.attr("empty", "No rows yet.") }));
     else this.render(body, result);
     const foot = this.foot(result, error);
     this.replaceChildren(...[this.head?.(result), body, foot].filter(Boolean));
   }
 
   foot(result, error) {
-    const foot = el("div", { class: "male-foot" });
+    const foot = el("div", { class: "al-foot" });
     if (result.coverage) foot.append(el("span", { text: `Live · as of ${utcTime(result.computed_at, true)} UTC` }));
     else if (result.data_through) foot.append(el("span", { text: `Complete through ${utcDay(result.data_through)} ${utcTime(result.data_through)} UTC` }));
-    foot.append(el("span", { class: "male-spacer" }));
+    foot.append(el("span", { class: "al-spacer" }));
     if (this.tableToggle && result.rows.length) {
       const button = el("button", { type: "button", "aria-pressed": String(!!this.showTable), text: "Table" });
       button.addEventListener("click", () => { this.showTable = !this.showTable; this.draw(); });
       foot.append(button);
     }
-    if (result.notes.length) foot.append(el("div", { class: "male-notes", text: result.notes.join(" ") }));
-    if (error) foot.append(el("div", { class: "male-notes male-error", role: "alert" }, icon("warn"), el("span", { text: `Couldn't refresh: ${error}` })));
+    if (result.notes.length) foot.append(el("div", { class: "al-notes", text: result.notes.join(" ") }));
+    if (error) foot.append(el("div", { class: "al-notes al-error", role: "alert" }, icon("warn"), el("span", { text: `Couldn't refresh: ${error}` })));
     return foot;
   }
 
@@ -571,13 +571,13 @@ class ViewTag extends HTMLElement {
 
 function table(columns, rows) {
   const formats = columns.map(formatter);
-  return el("div", { class: "male-table-wrap" }, el("table", {},
+  return el("div", { class: "al-table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {}, ...columns.map(c => el("th", { scope: "col", text: c.label })))),
     el("tbody", {}, ...rows.map(row => el("tr", {}, ...columns.map((c, i) => el("td", { text: formats[i](row[c.name]) }))))),
   ));
 }
 
-// <male-kpi view value [compare] [compare-label] [label]>
+// <al-kpi view value [compare] [compare-label] [label]>
 class KpiTag extends ViewTag {
   static observedAttributes = ["view", "value", "compare", "compare-label", "label", "params"];
 
@@ -595,17 +595,17 @@ class KpiTag extends ViewTag {
   paint(result, error) {
     if (result || error) this.painted = true;
     const column = this.column(this.attr("value"));
-    const label = el("div", { class: "male-label", text: this.attr("label") ?? column?.label ?? this.attr("value") ?? "" });
+    const label = el("div", { class: "al-label", text: this.attr("label") ?? column?.label ?? this.attr("value") ?? "" });
     if (!result) {
-      const body = error ? el("div", { class: "male-error", role: "alert" }, icon("bad"), el("span", { text: error })) : el("div", { class: "male-value male-muted", text: "…" });
+      const body = error ? el("div", { class: "al-error", role: "alert" }, icon("bad"), el("span", { text: error })) : el("div", { class: "al-value al-muted", text: "…" });
       return this.replaceChildren(label, body);
     }
-    if (!column) return this.replaceChildren(label, el("div", { class: "male-error", text: `View "${this.view.name}" has no column "${this.attr("value")}".` }));
+    if (!column) return this.replaceChildren(label, el("div", { class: "al-error", text: `View "${this.view.name}" has no column "${this.attr("value")}".` }));
     const value = result.rows[0]?.[column.name];
     const before = (this.states[1] ?? this.previous?.[1])?.result?.rows?.[0]?.[column.name];
-    const parts = [label, el("div", { class: "male-value", text: formatter(column)(value) })];
+    const parts = [label, el("div", { class: "al-value", text: formatter(column)(value) })];
     if (value != null && before != null) parts.push(this.delta(column, value, before));
-    if (error) parts.push(el("div", { class: "male-foot male-error", role: "alert", text: `Couldn't refresh: ${error}` }));
+    if (error) parts.push(el("div", { class: "al-foot al-error", role: "alert", text: `Couldn't refresh: ${error}` }));
     this.replaceChildren(...parts);
   }
 
@@ -616,26 +616,26 @@ class KpiTag extends ViewTag {
     else text = before ? `${signed(((value - before) / Math.abs(before)) * 100, 0)}%` : "new";
     const kind = value === before || !column.better ? "flat" : (value > before) === (column.better === "higher") ? "good" : "bad";
     const words = { good: "better", bad: "worse", flat: "" }[kind];
-    const delta = el("div", { class: `male-delta ${kind}`, text });
+    const delta = el("div", { class: `al-delta ${kind}`, text });
     const tail = [words && `(${words})`, this.attr("compare-label")].filter(Boolean).join(" ");
-    if (tail) delta.append(el("span", { class: "male-muted", text: ` ${tail}` }));
+    if (tail) delta.append(el("span", { class: "al-muted", text: ` ${tail}` }));
     return delta;
   }
 }
 
-// <male-bars view category value [highlight] [sort] [label]>
+// <al-bars view category value [highlight] [sort] [label]>
 class BarsTag extends ViewTag {
   static observedAttributes = ["view", "category", "value", "highlight", "sort", "label", "params"];
   tableToggle = true;
 
   head() {
-    return el("span", { class: "male-title", text: this.attr("label") ?? titleOf(this.column(this.attr("value"))) });
+    return el("span", { class: "al-title", text: this.attr("label") ?? titleOf(this.column(this.attr("value"))) });
   }
 
   render(body, result) {
     const category = this.column(this.attr("category"));
     const measure = this.column(this.attr("value"));
-    if (!category || !measure) return body.append(el("div", { class: "male-error", text: `View "${this.view.name}" has no column "${!category ? this.attr("category") : this.attr("value")}".` }));
+    if (!category || !measure) return body.append(el("div", { class: "al-error", text: `View "${this.view.name}" has no column "${!category ? this.attr("category") : this.attr("value")}".` }));
     let rows = [...result.rows];
     const sort = this.attr("sort");
     if (sort === "desc" || sort === "asc") rows.sort((a, b) => ((a[measure.name] ?? -Infinity) - (b[measure.name] ?? -Infinity)) * (sort === "asc" ? 1 : -1));
@@ -670,7 +670,7 @@ class BarsTag extends ViewTag {
       g.addEventListener("blur", hideTip);
       svg.append(g);
     });
-    body.append(el("div", { class: "male-plot" }, svg));
+    body.append(el("div", { class: "al-plot" }, svg));
   }
 
   highlighted(rows, category, measure) {
@@ -693,7 +693,7 @@ function roundedBar(x0, y, x1, h, r) {
   return `M${x0},${y} H${x1 - r} Q${x1},${y} ${x1},${y + r} V${y + h - r} Q${x1},${y + h} ${x1 - r},${y + h} H${x0} Z`;
 }
 
-// <male-lines view x y [series] [colors] [label] [height]>
+// <al-lines view x y [series] [colors] [label] [height]>
 const GRAIN_MS = { minute: 60e3, hour: 3600e3, day: 86400e3, week: 7 * 86400e3 };
 
 class LinesTag extends ViewTag {
@@ -702,13 +702,13 @@ class LinesTag extends ViewTag {
   hidden = new Set();
 
   head(result) {
-    const title = el("span", { class: "male-title", text: this.attr("label") ?? titleOf(this.column(this.attr("y"))) });
+    const title = el("span", { class: "al-title", text: this.attr("label") ?? titleOf(this.column(this.attr("y"))) });
     const series = this.column(this.attr("series"));
     if (!series || !result.rows.length) return title;
     const values = this.seriesValues(result.rows, series);
-    const legend = el("ul", { class: "male-legend", "aria-label": series.label });
+    const legend = el("ul", { class: "al-legend", "aria-label": series.label });
     for (const value of values) {
-      const key = el("span", { class: "male-key" });
+      const key = el("span", { class: "al-key" });
       key.style.background = colorOf(value);
       const button = el("button", { type: "button", "aria-pressed": String(!this.hidden.has(value)), title: `Show or hide ${value}` }, key, el("span", { text: value }));
       button.addEventListener("click", () => { this.hidden.has(value) ? this.hidden.delete(value) : this.hidden.add(value); this.draw(); });
@@ -727,7 +727,7 @@ class LinesTag extends ViewTag {
     const x = this.column(this.attr("x")), y = this.column(this.attr("y")), series = this.column(this.attr("series"));
     const missing = [["x", x], ["y", y]].filter(([, c]) => !c).map(([a]) => this.attr(a));
     if (this.attr("series") && !series) missing.push(this.attr("series"));
-    if (missing.length) return body.append(el("div", { class: "male-error", text: `View "${this.view.name}" has no column "${missing[0]}".` }));
+    if (missing.length) return body.append(el("div", { class: "al-error", text: `View "${this.view.name}" has no column "${missing[0]}".` }));
     const rows = result.rows.filter(r => r[x.name] != null);
     const groups = series ? this.seriesValues(rows, series) : [""];
     const times = [...new Set(rows.map(r => Date.parse(r[x.name])))].sort((a, b) => a - b);
@@ -809,7 +809,7 @@ class LinesTag extends ViewTag {
       const next = Math.max(0, Math.min(buckets.length - 1, index + (e.key === "ArrowRight" ? 1 : -1)));
       point(next, b.left + px(next), b.top + m.top);
     });
-    body.append(el("div", { class: "male-plot" }, svg));
+    body.append(el("div", { class: "al-plot" }, svg));
   }
 
   pivot(rows, x, y, series, groups, times) {
@@ -817,17 +817,17 @@ class LinesTag extends ViewTag {
     const format = formatter(y), when = formatter(x);
     const head = el("tr", {}, el("th", { scope: "col", text: `${x.label} (UTC)` }), ...groups.map(g => el("th", { scope: "col", text: g || y.label })));
     const body = [...times].reverse().map(t => el("tr", {}, el("td", { text: when(t) }), ...groups.map(g => el("td", { text: format(value.get(`${t}|${g}`)) }))));
-    return el("div", { class: "male-table-wrap" }, el("table", {}, el("caption", { class: "male-muted", text: titleOf(y) }), el("thead", {}, head), el("tbody", {}, ...body)));
+    return el("div", { class: "al-table-wrap" }, el("table", {}, el("caption", { class: "al-muted", text: titleOf(y) }), el("thead", {}, head), el("tbody", {}, ...body)));
   }
 }
 
-// <male-table view [columns] [label]>
+// <al-table view [columns] [label]>
 class TableTag extends ViewTag {
   static observedAttributes = ["view", "columns", "label", "params"];
 
   head() {
     const label = this.attr("label");
-    return label ? el("span", { class: "male-title", text: label }) : null;
+    return label ? el("span", { class: "al-title", text: label }) : null;
   }
 
   render(body, result) {
@@ -837,7 +837,7 @@ class TableTag extends ViewTag {
   }
 }
 
-// <male-text view>Worst right now: {isp_provider}</male-text>
+// <al-text view>Worst right now: {isp_provider}</al-text>
 class TextTag extends ViewTag {
   static observedAttributes = ["view", "params"];
 
@@ -849,7 +849,7 @@ class TextTag extends ViewTag {
   paint(result, error) {
     if (result || error) this.painted = true;
     if (!result) {
-      if (error) this.replaceChildren(el("span", { class: "male-error", text: `(${error})` }));
+      if (error) this.replaceChildren(el("span", { class: "al-error", text: `(${error})` }));
       else this.textContent = "";
       return;
     }
@@ -865,7 +865,7 @@ class TextTag extends ViewTag {
 
 // ---------------------------------------------------------------- controls
 
-// <male-param name options [value] [kind] [label] [view]>
+// <al-param name options [value] [kind] [label] [view]>
 class ParamTag extends HTMLElement {
   connectedCallback() {
     tags.add(this);
@@ -891,7 +891,7 @@ class ParamTag extends HTMLElement {
     }
     const label = o => o.label ?? columns.get(o.value)?.label ?? o.value;
     const parts = [];
-    if (this.getAttribute("label")) parts.push(el("span", { class: "male-label", id: `${name}-label`, text: this.getAttribute("label") }));
+    if (this.getAttribute("label")) parts.push(el("span", { class: "al-label", id: `${name}-label`, text: this.getAttribute("label") }));
     if (this.getAttribute("kind") === "select") {
       const select = el("select", { "aria-labelledby": this.getAttribute("label") ? `${name}-label` : null, "aria-label": this.getAttribute("label") ? null : name });
       for (const o of options) select.append(el("option", { value: o.value, text: label(o) }));
@@ -899,7 +899,7 @@ class ParamTag extends HTMLElement {
       select.addEventListener("change", () => page.set(name, select.value));
       parts.push(select);
     } else {
-      const group = el("span", { class: "male-buttons", role: "group", "aria-label": this.getAttribute("label") ?? name });
+      const group = el("span", { class: "al-buttons", role: "group", "aria-label": this.getAttribute("label") ?? name });
       for (const o of options) {
         const button = el("button", { type: "button", "aria-pressed": String(o.value === current), text: label(o) });
         button.addEventListener("click", () => page.set(name, o.value));
@@ -911,10 +911,10 @@ class ParamTag extends HTMLElement {
   }
 }
 
-// <male-theme>: light or dark, remembered; ?theme=dark|light in the URL wins.
+// <al-theme>: light or dark, remembered; ?theme=dark|light in the URL wins.
 function applyTheme(theme) { if (theme === "dark" || theme === "light") document.documentElement.setAttribute("data-theme", theme); }
 let savedTheme = null;
-try { savedTheme = localStorage.getItem("male-theme"); } catch { /* storage unavailable */ }
+try { savedTheme = localStorage.getItem("al-theme"); } catch { /* storage unavailable */ }
 applyTheme(new URLSearchParams(location.search).get("theme") || savedTheme);
 
 class ThemeTag extends HTMLElement {
@@ -925,20 +925,20 @@ class ThemeTag extends HTMLElement {
       const dark = root.getAttribute("data-theme") === "dark" || (!root.hasAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
       const next = dark ? "light" : "dark";
       applyTheme(next);
-      try { localStorage.setItem("male-theme", next); } catch { /* storage unavailable */ }
+      try { localStorage.setItem("al-theme", next); } catch { /* storage unavailable */ }
     });
     this.replaceChildren(button);
   }
 }
 
-// <male-live>: connected or not, and when data last arrived.
+// <al-live>: connected or not, and when data last arrived.
 class LiveTag extends HTMLElement {
   connectedCallback() {
     this.update = () => {
       const words = { live: "Live", connecting: "Connecting…", reconnecting: "Reconnecting…", offline: "Offline", idle: "Idle" }[live.state];
       this.dataset.state = live.state;
       const when = live.lastEvent ? ` · updated ${utcTime(live.lastEvent, true)} UTC` : "";
-      this.replaceChildren(el("span", { class: "male-dot", "aria-hidden": "true" }), document.createTextNode(`${words}${when}`));
+      this.replaceChildren(el("span", { class: "al-dot", "aria-hidden": "true" }), document.createTextNode(`${words}${when}`));
     };
     this.setAttribute("role", "status");
     live.watchers.add(this.update);
@@ -955,33 +955,33 @@ class StatusTag extends HTMLElement {
   disconnectedCallback() { this.off?.(); }
   paint({ status: body, error }) {
     this.painted = true;
-    if (!body) return this.replaceChildren(el("div", { class: "male-error", role: "alert" }, icon("bad"), el("span", { text: error })));
+    if (!body) return this.replaceChildren(el("div", { class: "al-error", role: "alert" }, icon("bad"), el("span", { text: error })));
     this.render(body);
   }
 }
 
-// <male-freshness [dataset]>: how far the historical tier is complete.
+// <al-freshness [dataset]>: how far the historical tier is complete.
 class FreshnessTag extends StatusTag {
   render(body) {
     const name = this.getAttribute("dataset");
     const dataset = name ? body.datasets.find(d => d.name === name) : body.datasets[0];
-    if (!dataset) return this.replaceChildren(el("div", { class: "male-empty", text: name ? `No dataset named "${name}".` : "No datasets." }));
+    if (!dataset) return this.replaceChildren(el("div", { class: "al-empty", text: name ? `No dataset named "${name}".` : "No datasets." }));
     const through = dataset.historical_through;
     const lag = through ? (Date.now() - new Date(through)) / 60000 : Infinity;
     const kind = lag < 20 ? "good" : lag < 120 ? "warn" : "bad";
     const words = { good: "Historical tier is current", warn: "Flush is falling behind", bad: "Flush has stalled" }[kind];
     this.replaceChildren(
-      el("div", { class: "male-label", text: this.getAttribute("label") ?? "Historical tier complete through" }),
-      el("div", { class: "male-value", text: through ? `${utcTime(through)} UTC` : "—" }),
-      el("div", { class: "male-status" }, icon(kind), el("span", { class: "male-muted", text: through ? `${words} · flushed ${ago(through)}` : "Nothing flushed yet" })),
+      el("div", { class: "al-label", text: this.getAttribute("label") ?? "Historical tier complete through" }),
+      el("div", { class: "al-value", text: through ? `${utcTime(through)} UTC` : "—" }),
+      el("div", { class: "al-status" }, icon(kind), el("span", { class: "al-muted", text: through ? `${words} · flushed ${ago(through)}` : "Nothing flushed yet" })),
     );
   }
 }
 
-// <male-gates>: each rollup's last quality gate.
+// <al-gates>: each rollup's last quality gate.
 class GatesTag extends StatusTag {
   render(body) {
-    if (!body.rollups.length) return this.replaceChildren(el("div", { class: "male-empty", text: "No rollups are configured." }));
+    if (!body.rollups.length) return this.replaceChildren(el("div", { class: "al-empty", text: "No rollups are configured." }));
     this.replaceChildren(...body.rollups.map(rollup => {
       const audit = rollup.last_audit;
       const failed = audit ? audit.checks.filter(c => !c.passed) : [];
@@ -992,64 +992,64 @@ class GatesTag extends StatusTag {
         audit ? `last checked ${ago(audit.at)}` : null,
         audit && !audit.published ? "the table keeps its last good contents" : null,
       ].filter(Boolean).join(" · ");
-      const list = el("ul", { class: "male-checks" });
+      const list = el("ul", { class: "al-checks" });
       for (const check of failed) {
         list.append(el("li", {}, icon(check.severity === "error" ? "bad" : "warn"), el("span", {}, el("span", { class: "what", text: check.check }), document.createTextNode(` — ${check.detail}`))));
       }
       const passed = audit ? audit.checks.length - failed.length : 0;
-      if (passed) list.append(el("li", { class: "male-muted" }, icon("good"), el("span", { text: failed.length ? `${passed} other check${passed > 1 ? "s" : ""} passed` : `All ${passed} check${passed > 1 ? "s" : ""} passed` })));
-      return el("div", { class: "male-item" },
-        el("div", { class: "male-item-head" }, el("span", { class: "male-item-name", text: rollup.table }), el("span", { class: "male-status" }, icon(kind), el("span", { text: words }))),
-        el("div", { class: "male-caption", text: facts }),
+      if (passed) list.append(el("li", { class: "al-muted" }, icon("good"), el("span", { text: failed.length ? `${passed} other check${passed > 1 ? "s" : ""} passed` : `All ${passed} check${passed > 1 ? "s" : ""} passed` })));
+      return el("div", { class: "al-item" },
+        el("div", { class: "al-item-head" }, el("span", { class: "al-item-name", text: rollup.table }), el("span", { class: "al-status" }, icon(kind), el("span", { text: words }))),
+        el("div", { class: "al-caption", text: facts }),
         list,
       );
     }));
   }
 }
 
-// <male-drift>: event fields the config doesn't describe, and the agent's proposals.
+// <al-drift>: event fields the config doesn't describe, and the agent's proposals.
 class DriftTag extends StatusTag {
   render(body) {
     const unmodeled = body.datasets.filter(d => d.unmodeled_columns.length);
     const proposals = body.drift_proposals;
     if (!unmodeled.length && !proposals.length) {
-      return this.replaceChildren(el("div", { class: "male-empty", text: "The config describes every field in the data. When producers add event fields, the drift agent proposes config changes here." }));
+      return this.replaceChildren(el("div", { class: "al-empty", text: "The config describes every field in the data. When producers add event fields, the drift agent proposes config changes here." }));
     }
-    const fields = unmodeled.map(d => el("div", { class: "male-item" },
-      el("div", { class: "male-status" }, icon("warn"), el("span", { text: `${d.name}: ${d.unmodeled_columns.length} field${d.unmodeled_columns.length > 1 ? "s" : ""} in the data that the config doesn't describe` })),
-      el("p", { class: "male-caption" }, el("code", { text: d.unmodeled_columns.join(", ") })),
-      proposals.length ? null : el("p", { class: "male-caption", text: "The drift agent's hourly check proposes config changes for them (it needs ANTHROPIC_API_KEY in .env)." }),
+    const fields = unmodeled.map(d => el("div", { class: "al-item" },
+      el("div", { class: "al-status" }, icon("warn"), el("span", { text: `${d.name}: ${d.unmodeled_columns.length} field${d.unmodeled_columns.length > 1 ? "s" : ""} in the data that the config doesn't describe` })),
+      el("p", { class: "al-caption" }, el("code", { text: d.unmodeled_columns.join(", ") })),
+      proposals.length ? null : el("p", { class: "al-caption", text: "The drift agent's hourly check proposes config changes for them (it needs ANTHROPIC_API_KEY in .env)." }),
     ));
-    this.replaceChildren(...fields, ...proposals.map(p => el("div", { class: "male-item" },
-      el("div", { class: "male-status" }, icon("warn"), el("span", { text: `${p.dataset}: proposed ${ago(p.created)}` })),
-      el("p", { class: "male-caption", text: p.summary || "(no summary)" }),
-      el("p", { class: "male-caption" }, document.createTextNode("Review, then: "), el("code", { text: `git apply proposals/${p.file} && python run.py setup` })),
+    this.replaceChildren(...fields, ...proposals.map(p => el("div", { class: "al-item" },
+      el("div", { class: "al-status" }, icon("warn"), el("span", { text: `${p.dataset}: proposed ${ago(p.created)}` })),
+      el("p", { class: "al-caption", text: p.summary || "(no summary)" }),
+      el("p", { class: "al-caption" }, document.createTextNode("Review, then: "), el("code", { text: `git apply proposals/${p.file} && agentic-lakehouse setup` })),
     )));
   }
 }
 
 // ---------------------------------------------------------------- start
 
-document.head.prepend(el("style", { id: "male-style", text: STYLE }));
+document.head.prepend(el("style", { id: "al-style", text: STYLE }));
 // Before any tag draws: the page's parameter defaults, and the color order tags ask for.
-for (const param of document.querySelectorAll("male-param[name]")) {
+for (const param of document.querySelectorAll("al-param[name]")) {
   const options = (param.getAttribute("options") ?? "").split(",").map(s => s.split("=")[0].trim()).filter(Boolean);
   page.defaults.set(param.getAttribute("name"), param.getAttribute("value") ?? options[0] ?? "");
 }
 for (const tag of document.querySelectorAll("[colors]")) registerColors(tag.getAttribute("colors").split(",").map(s => s.trim()));
 
-if (document.querySelector("[class^='male'], male-param, male-live, male-theme, male-freshness, male-gates, male-drift")) live.reconnectSoon();
-customElements.define("male-kpi", KpiTag);
-customElements.define("male-bars", BarsTag);
-customElements.define("male-lines", LinesTag);
-customElements.define("male-table", TableTag);
-customElements.define("male-text", TextTag);
-customElements.define("male-param", ParamTag);
-customElements.define("male-theme", ThemeTag);
-customElements.define("male-live", LiveTag);
-customElements.define("male-freshness", FreshnessTag);
-customElements.define("male-gates", GatesTag);
-customElements.define("male-drift", DriftTag);
+if (document.querySelector("[class^='al-'], al-param, al-live, al-theme, al-freshness, al-gates, al-drift")) live.reconnectSoon();
+customElements.define("al-kpi", KpiTag);
+customElements.define("al-bars", BarsTag);
+customElements.define("al-lines", LinesTag);
+customElements.define("al-table", TableTag);
+customElements.define("al-text", TextTag);
+customElements.define("al-param", ParamTag);
+customElements.define("al-theme", ThemeTag);
+customElements.define("al-live", LiveTag);
+customElements.define("al-freshness", FreshnessTag);
+customElements.define("al-gates", GatesTag);
+customElements.define("al-drift", DriftTag);
 
 let resizeTimer;
 window.addEventListener("resize", () => {
@@ -1067,9 +1067,9 @@ export function subscribe(view, params, callback) {
 /** True once every tag has drawn its data or an error: headless browsers wait for it. */
 function settled() {
   for (const tag of tags) if (tag instanceof ViewTag && !tag.painted) return false;
-  for (const tag of document.querySelectorAll("male-freshness, male-gates, male-drift")) if (!tag.painted) return false;
+  for (const tag of document.querySelectorAll("al-freshness, al-gates, al-drift")) if (!tag.painted) return false;
   return true;
 }
-globalThis.male = { page, live, settled, subscribe };
+globalThis.al = { page, live, settled, subscribe };
 
 export { page };

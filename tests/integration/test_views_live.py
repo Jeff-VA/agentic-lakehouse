@@ -1,4 +1,4 @@
-"""The example project's views on the real stack, served as `python run.py serve` serves them."""
+"""The example project's views on the real stack, served as `agentic-lakehouse serve` serves them."""
 
 import json
 import socket
@@ -13,8 +13,8 @@ import uvicorn
 from fastapi.testclient import TestClient
 from mcp import Client
 
-from core.api_gateway import Gateway, create_app, create_mcp_server
-from core.live import LiveViews
+from agentic_lakehouse.api_gateway import Gateway, create_app, create_mcp_server
+from agentic_lakehouse.live import LiveViews
 
 pytestmark = pytest.mark.integration
 
@@ -38,7 +38,7 @@ def test_every_example_view_runs(client):
 def test_isp_now_reads_the_real_time_tier(client):
     body = client.get("/views/isp_now", params={"minutes": 240, "include_sql": True}).json()
     if not body["rows"]:
-        pytest.skip("no events in the last 4 hours; start the stream: python run.py stream")
+        pytest.skip("no events in the last 4 hours; start the stream: agentic-lakehouse stream")
     assert {row["isp_provider"] for row in body["rows"]} <= ISPS
     rates = [row["rebuffer_incidence_rate"] for row in body["rows"]]
     assert rates == sorted(rates, reverse=True)  # the view's ORDER BY
@@ -59,7 +59,7 @@ def test_isp_hourly_matches_the_gold_table(client):
     """The view runs on Trino; /rollups reads the same Iceberg table through PyIceberg."""
     body = client.get("/views/isp_hourly", params={"hours": 12}).json()
     if body["data_through"] is None:
-        pytest.skip("the hourly rollup hasn't published yet; run: python run.py rollups")
+        pytest.skip("the hourly rollup hasn't published yet; run: agentic-lakehouse rollups")
     through = datetime.fromisoformat(body["data_through"])
     assert body["rows"], "the rollup has published, so the last 12 hours should have rows"
     now = datetime.now(UTC)
@@ -121,6 +121,6 @@ def test_new_events_reach_a_live_view(server):
                     if len(results) == 2:
                         break
     if not results[0]["rows"]:
-        pytest.skip("no events in the last 5 minutes; start the stream: python run.py stream")
+        pytest.skip("no events in the last 5 minutes; start the stream: agentic-lakehouse stream")
     sessions = [sum(row["unique_sessions"] for row in result["rows"]) for result in results]
     assert results[0]["rows"] != results[1]["rows"], sessions  # pushed because the numbers moved

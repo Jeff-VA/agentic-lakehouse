@@ -15,7 +15,7 @@ import random
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from core.config import ColumnType, Dataset
+from agentic_lakehouse.config import ColumnType, Dataset
 
 Episode = Callable[[random.Random, datetime], list[dict]]
 
@@ -82,7 +82,7 @@ def add_fields(events: list[dict], fields: dict[str, ColumnType], rng: random.Ra
 
 
 class LiveSource:
-    """A dataset's events in real time, for `run.py stream`.
+    """A dataset's events in real time, for `agentic-lakehouse stream`.
 
     poll(now) returns the events that happened since the previous poll. New
     episodes start at `rate` a minute on average, and each one keeps sending

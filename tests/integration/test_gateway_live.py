@@ -1,14 +1,14 @@
-"""The gateway wired to the real stack, exactly as `python run.py serve` builds it."""
+"""The gateway wired to the real stack, exactly as `agentic-lakehouse serve` builds it."""
 
 import anyio
 import pytest
 from fastapi.testclient import TestClient
 from mcp import Client
 
-from core.api_gateway import Gateway, create_app, create_mcp_server
-from core.compiler import MetricQuery, SqlCompiler
-from core.orchestrator import flushed_through
-from core.router import Router
+from agentic_lakehouse.api_gateway import Gateway, create_app, create_mcp_server
+from agentic_lakehouse.compiler import MetricQuery, SqlCompiler
+from agentic_lakehouse.orchestrator import flushed_through
+from agentic_lakehouse.router import Router
 
 pytestmark = pytest.mark.integration
 

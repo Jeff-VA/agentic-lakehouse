@@ -9,7 +9,7 @@ import pytest
 from pyiceberg.catalog.sql import SqlCatalog
 from test_flush import NOW, FakeConsumer, event
 
-from core.agent_sync import (
+from agentic_lakehouse.agent_sync import (
     MODEL,
     DriftAgentError,
     NotModeled,
@@ -22,10 +22,10 @@ from core.agent_sync import (
     render_patch,
     unmodeled_columns,
 )
-from core.config import load_platform
-from core.flush import flush
-from core.orchestrator import sync_iceberg_columns
-from core.schema_compiler import iceberg_partition_spec, iceberg_schema
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.flush import flush
+from agentic_lakehouse.orchestrator import sync_iceberg_columns
+from agentic_lakehouse.schema_compiler import iceberg_partition_spec, iceberg_schema
 
 SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config"
 PLATFORM = load_platform(SAMPLE_CONFIG)

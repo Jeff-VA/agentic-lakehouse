@@ -62,7 +62,7 @@
           <text class="sub" x="420" y="83" text-anchor="middle">shared · reruns on change</text>
           <rect class="box" x="920" y="40" width="180" height="56" rx="8"/>
           <text class="title" x="1010" y="64" text-anchor="middle">Dashboard page</text>
-          <text class="sub" x="1010" y="83" text-anchor="middle">male.js chart tags</text>
+          <text class="sub" x="1010" y="83" text-anchor="middle">al.js chart tags</text>
           <rect class="box ai" x="20" y="200" width="180" height="56" rx="8"/>
           <text class="title" x="110" y="224" text-anchor="middle">You or an agent</text>
           <text class="sub" x="110" y="243" text-anchor="middle">e.g. Claude Code</text>
@@ -71,6 +71,6 @@
           <text class="sub" x="420" y="243" text-anchor="middle">dashboards/*.html</text>
           <rect class="box" x="625" y="200" width="180" height="56" rx="8"/>
           <text class="title" x="715" y="224" text-anchor="middle">Check · screenshot</text>
-          <text class="sub" x="715" y="243" text-anchor="middle">run.py or MCP tools</text>
+          <text class="sub" x="715" y="243" text-anchor="middle">the CLI or MCP tools</text>
   </g>
 </svg>

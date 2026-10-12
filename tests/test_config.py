@@ -5,7 +5,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from core.config import ConfigError, load_platform
+from agentic_lakehouse.config import ConfigError, load_platform
 
 SAMPLE_CONFIG = Path(__file__).parents[1] / "examples" / "playback" / "config"
 

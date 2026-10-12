@@ -7,9 +7,9 @@ import pytest
 import sqlglot
 import yaml
 
-from core.compiler import Filter, MetricQuery, OrderBy
-from core.config import load_platform
-from core.views import View, ViewError, load_views, parse_view
+from agentic_lakehouse.compiler import Filter, MetricQuery, OrderBy
+from agentic_lakehouse.config import load_platform
+from agentic_lakehouse.views import View, ViewError, load_views, parse_view
 from test_compiler import ONTOLOGY
 
 NOW = datetime(2026, 1, 1, 6, 30, tzinfo=UTC)

@@ -4,9 +4,9 @@
 - storage.yaml: the Iceberg table each dataset is kept in long-term, and the
   rollups: semantic queries materialized as gold Iceberg tables
 - quality_rules.yaml: checks a rollup's rows must pass before they're published
-  (schema in core/quality.py)
+  (schema in agentic_lakehouse/quality.py)
 - deployment.yaml: where the services are reachable
-- views/*.sql: named queries for dashboards and agents (core/views.py)
+- views/*.sql: named queries for dashboards and agents (agentic_lakehouse/views.py)
 
 load_platform() loads them all and checks that they agree with each other,
 e.g. that every column an ontology model reads exists in its source dataset,
@@ -22,10 +22,10 @@ from typing import Literal, Self
 import yaml
 from pydantic import Field, model_validator
 
-from core.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
-from core.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
-from core.quality import QualityConfig, TableName
-from core.views import View, ViewError, load_views
+from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
+from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
+from agentic_lakehouse.quality import QualityConfig, TableName
+from agentic_lakehouse.views import View, ViewError, load_views
 
 ColumnType = Literal["string", "int", "long", "double", "boolean", "timestamp"]
 
@@ -49,8 +49,8 @@ class Dataset(StrictModel):
     time_column: Identifier
     columns: list[Column] = Field(min_length=1)
     realtime: RealtimeTable
-    # Synthetic events for `run.py seed` and `stream`: "package.module:function" making one
-    # episode (core/simulate.py). Without it, events get random values from the column types.
+    # Synthetic events for `agentic-lakehouse seed` and `stream`: "package.module:function" making one
+    # episode (agentic_lakehouse/simulate.py). Without it, events get random values from the column types.
     simulator: str | None = Field(default=None, pattern=r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
 
     @model_validator(mode="after")
@@ -93,7 +93,7 @@ class RollupQuery(StrictModel):
 
 
 class Rollup(StrictModel):
-    """A gold Iceberg table holding a semantic query's results (pipelines/rollups.py)."""
+    """A gold Iceberg table holding a semantic query's results (agentic_lakehouse/pipelines/rollups.py)."""
 
     table: TableName
     description: str = Field(min_length=1)

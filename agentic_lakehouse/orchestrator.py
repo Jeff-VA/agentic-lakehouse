@@ -15,13 +15,13 @@ from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 from pyiceberg.table import Table
 
-from core.config import Dataset, Platform
-from core.schema_compiler import iceberg_partition_spec, iceberg_schema, iceberg_type, pinot_schema, pinot_table_config
+from agentic_lakehouse.config import Dataset, Platform
+from agentic_lakehouse.schema_compiler import iceberg_partition_spec, iceberg_schema, iceberg_type, pinot_schema, pinot_table_config
 
 Log = Callable[[str], None]
 
 # Iceberg table property: the Iceberg table holds every event before this time (ISO, UTC).
-FLUSHED_THROUGH = "male.flushed-through"
+FLUSHED_THROUGH = "agentic-lakehouse.flushed-through"
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -149,7 +149,7 @@ def teardown(platform: Platform, log: Log = print) -> None:
 
 def topic_is_empty(platform: Platform, dataset: Dataset) -> bool:
     """Whether the dataset's topic has never held an event (its offsets all start at 0)."""
-    consumer = Consumer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "group.id": "male-setup"})
+    consumer = Consumer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "group.id": "agentic-lakehouse-setup"})
     try:
         partitions = consumer.list_topics(dataset.topic, timeout=10).topics[dataset.topic].partitions
         return all(
@@ -168,7 +168,7 @@ def flushed_through(platform: Platform, dataset: str) -> datetime | None:
 
 class EventPublisher:
     """Publishes events to a dataset's Kafka topic as JSON, timestamps in epoch
-    milliseconds. Pinot ingests them right away; the flush (core/flush.py)
+    milliseconds. Pinot ingests them right away; the flush (agentic_lakehouse/flush.py)
     moves them into Iceberg."""
 
     def __init__(self, platform: Platform, dataset: Dataset):

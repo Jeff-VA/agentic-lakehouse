@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Playback Quality</title>
-<!-- Chart tags over the project's views (config/views/*.sql); see the top of /male.js. -->
-<script type="module" src="/male.js"></script>
+<!-- Chart tags over the project's views (config/views/*.sql); see the top of /al.js. -->
+<script type="module" src="/al.js"></script>
 <style>
   header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
   .sub { color: var(--text-secondary); font-size: 13px; margin: 0; }
@@ -21,57 +21,57 @@
       <h1>Playback quality</h1>
       <p class="sub">Live numbers come from the real-time tier; trends come from the gold rollups. Times in UTC.</p>
     </div>
-    <div class="controls"><male-live></male-live><male-theme></male-theme></div>
+    <div class="controls"><al-live></al-live><al-theme></al-theme></div>
   </header>
 
   <section aria-labelledby="kpi-title">
-    <div class="male-head"><h2 id="kpi-title">Last 60 minutes, all ISPs</h2><span class="male-caption">change vs the hour before</span></div>
-    <div class="male-grid">
-      <male-kpi view="quality_overall" value="rebuffer_incidence_rate" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></male-kpi>
-      <male-kpi view="quality_overall" value="p99_ttfb" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></male-kpi>
-      <male-kpi view="quality_overall" value="unique_sessions" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></male-kpi>
-      <male-freshness dataset="telemetry"></male-freshness>
+    <div class="al-head"><h2 id="kpi-title">Last 60 minutes, all ISPs</h2><span class="al-caption">change vs the hour before</span></div>
+    <div class="al-grid">
+      <al-kpi view="quality_overall" value="rebuffer_incidence_rate" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-kpi view="quality_overall" value="p99_ttfb" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-kpi view="quality_overall" value="unique_sessions" compare="from_minutes_ago=120&amp;to_minutes_ago=60"></al-kpi>
+      <al-freshness dataset="telemetry"></al-freshness>
     </div>
   </section>
 
-  <section class="male-section" aria-labelledby="now-title">
-    <div class="male-head">
+  <section class="al-section" aria-labelledby="now-title">
+    <div class="al-head">
       <div>
         <h2 id="now-title">Right now by ISP</h2>
-        <p class="male-caption"><male-text view="isp_now">Sorted by rebuffer rate. Highlighted: <strong>{isp_provider}</strong>, the highest in the last hour.</male-text></p>
+        <p class="al-caption"><al-text view="isp_now">Sorted by rebuffer rate. Highlighted: <strong>{isp_provider}</strong>, the highest in the last hour.</al-text></p>
       </div>
     </div>
-    <div class="male-grid">
-      <male-bars view="isp_now" category="isp_provider" value="rebuffer_incidence_rate" highlight="first"></male-bars>
-      <male-bars view="isp_now" category="isp_provider" value="p99_ttfb" highlight="first"></male-bars>
-      <male-bars view="isp_now" category="isp_provider" value="unique_sessions" highlight="first"></male-bars>
+    <div class="al-grid">
+      <al-bars view="isp_now" category="isp_provider" value="rebuffer_incidence_rate" highlight="first"></al-bars>
+      <al-bars view="isp_now" category="isp_provider" value="p99_ttfb" highlight="first"></al-bars>
+      <al-bars view="isp_now" category="isp_provider" value="unique_sessions" highlight="first"></al-bars>
     </div>
   </section>
 
-  <section class="male-section" aria-labelledby="trend-title">
-    <div class="male-head">
+  <section class="al-section" aria-labelledby="trend-title">
+    <div class="al-head">
       <div>
         <h2 id="trend-title">Trend by ISP</h2>
-        <p class="male-caption">Hourly, from <code>gold.hourly_isp_quality</code>: only hours that passed their quality gate are published.</p>
+        <p class="al-caption">Hourly, from <code>gold.hourly_isp_quality</code>: only hours that passed their quality gate are published.</p>
       </div>
     </div>
     <div class="controls">
-      <male-param name="hours" options="24=24 h,48=48 h,168=7 days" value="48" label="Range"></male-param>
-      <male-param name="metric" kind="select" label="Metric" view="isp_hourly"
-                  options="rebuffer_incidence_rate,p99_ttfb,unique_sessions,avg_bitrate_kbps"></male-param>
+      <al-param name="hours" options="24=24 h,48=48 h,168=7 days" value="48" label="Range"></al-param>
+      <al-param name="metric" kind="select" label="Metric" view="isp_hourly"
+                  options="rebuffer_incidence_rate,p99_ttfb,unique_sessions,avg_bitrate_kbps"></al-param>
     </div>
-    <male-lines view="isp_hourly" x="hour" y="$metric" series="isp_provider"
-                colors="comcast,verizon,att,spectrum,cox,frontier"></male-lines>
+    <al-lines view="isp_hourly" x="hour" y="$metric" series="isp_provider"
+                colors="comcast,verizon,att,spectrum,cox,frontier"></al-lines>
   </section>
 
-  <div class="two-col male-section">
-    <section class="male-card" aria-labelledby="gates-title">
-      <div class="male-head"><h2 id="gates-title">Quality gates</h2><span class="male-caption">checked before each publish</span></div>
-      <male-gates></male-gates>
+  <div class="two-col al-section">
+    <section class="al-card" aria-labelledby="gates-title">
+      <div class="al-head"><h2 id="gates-title">Quality gates</h2><span class="al-caption">checked before each publish</span></div>
+      <al-gates></al-gates>
     </section>
-    <section class="male-card" aria-labelledby="drift-title">
-      <div class="male-head"><h2 id="drift-title">Schema drift</h2><span class="male-caption">proposals from the drift agent</span></div>
-      <male-drift></male-drift>
+    <section class="al-card" aria-labelledby="drift-title">
+      <div class="al-head"><h2 id="drift-title">Schema drift</h2><span class="al-caption">proposals from the drift agent</span></div>
+      <al-drift></al-drift>
     </section>
   </div>
 

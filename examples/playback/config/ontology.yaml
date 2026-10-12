@@ -1,6 +1,6 @@
 # Semantic contract for the engine: what the data means, independent of where
 # it lives. The SQL compiler, query router, API/MCP gateway and drift agent all
-# read this file. Schema and validation rules: core/ontology.py
+# read this file. Schema and validation rules: agentic_lakehouse/ontology.py
 version: "1.0.0"
 
 models:

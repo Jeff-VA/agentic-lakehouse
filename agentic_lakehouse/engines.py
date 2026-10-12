@@ -15,7 +15,7 @@ import httpx
 import pyarrow as pa
 import trino
 
-from core.config import TrinoEndpoint
+from agentic_lakehouse.config import TrinoEndpoint
 
 
 class EngineError(RuntimeError):
@@ -133,7 +133,7 @@ class PinotEngine:
         self.client = client or httpx.Client(timeout=30)
 
     def execute(self, sql: str) -> pa.Table:
-        # The SQL from core/templates/macros/pinot.sql needs the multi-stage engine. Without null
+        # The SQL from agentic_lakehouse/templates/macros/pinot.sql needs the multi-stage engine. Without null
         # handling, MIN and MAX over no rows return integer sentinels instead of NULL.
         request = {"sql": sql, "queryOptions": "useMultistageEngine=true;enableNullHandling=true"}
         try:
