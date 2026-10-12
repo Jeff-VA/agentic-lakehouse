@@ -39,9 +39,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  package:
+  package:  # independent of the image, so projects can install the package even if that build fails
     runs-on: ubuntu-latest
-    needs: image
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
