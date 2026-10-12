@@ -1,5 +1,7 @@
 # Agentic Lakehouse
 
+[![CI](https://github.com/Jeff-VA/agentic-lakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Jeff-VA/agentic-lakehouse/actions/workflows/ci.yml)
+
 A config-driven semantic lakehouse. You define metrics once, in YAML. The
 engine answers them from **Apache Pinot** (real-time) and **Apache Iceberg via
 Trino** (historical), splitting and merging a query across the two when it
@@ -137,6 +139,17 @@ and it is yours to change:
 
 The tests always run against `examples/playback/config`, so your changes to
 `config/` never break them.
+
+**Or install the engine as a package** (Python 3.11+) and keep your project
+in a repository of its own:
+
+```bash
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.1.0"
+agentic-lakehouse check    # run from your project: it reads ./config and imports your code from .
+```
+
+Each release also publishes the app image, `ghcr.io/jeff-va/agentic-lakehouse`,
+for a project's own Dockerfile to start `FROM`.
 
 ## Endpoints
 
@@ -744,6 +757,6 @@ tests/              unit tests; tests/integration/ runs against the stack
 
 ## License
 
-Copyright (c) 2026 Jeff-VA. All rights reserved. The code is public to read,
+Copyright (c) 2026 Jeffrey Van Anderson. All rights reserved. The code is public to read,
 but no license is granted to use, copy, modify or distribute it without
 permission. See [LICENSE](LICENSE).

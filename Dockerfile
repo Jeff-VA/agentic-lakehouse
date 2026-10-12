@@ -5,7 +5,7 @@
 # runtime, never copied in.
 #
 # A project of its own builds on the released image:
-#   FROM ghcr.io/<owner>/agentic-lakehouse:<version>
+#   FROM ghcr.io/jeff-va/agentic-lakehouse:<version>
 #   COPY . /app    # its config/ and its own code
 FROM python:3.13-slim
 
