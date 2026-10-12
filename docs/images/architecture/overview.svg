@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1262 522" width="1262" height="522" role="img" aria-label="Producers send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.">
+  <title>Producers send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.</title>
+  <style>
+  svg {
+    --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
+    --rt: #c05f10; --rt-soft: #fdf0e4; --hist: #2461a6; --hist-soft: #e7eff9;
+    --ai: #7550c0; --ai-soft: #f0ebfa; --both: #0d7a6b;
+    color: var(--fg);
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --fg: #e5eaef; --muted: #95a1ad; --line: #3a4552; --surface: #161d24;
+      --rt: #f09650; --rt-soft: #2b1f15; --hist: #6ba6ea; --hist-soft: #15212e;
+      --ai: #b195f0; --ai-soft: #221b32; --both: #4fc4b1;
+    }
+  }
+  .card { fill: var(--surface); stroke: var(--line); }
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .box.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .box.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .box.ai { fill: var(--ai-soft); stroke: var(--ai); }
+  .title { fill: var(--fg); font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .title.file { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sub, .label { fill: var(--muted); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .item, .query { fill: var(--fg); font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .divider { stroke: var(--line); stroke-width: 1; }
+  .bar.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .bar.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .bar-text { fill: var(--fg); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .tick { stroke: var(--muted); stroke-width: 1; }
+  .range { stroke-width: 2; fill: none; }
+  .range.rt { stroke: var(--rt); } .range.hist { stroke: var(--hist); } .range.both { stroke: var(--both); }
+  .dot-both { fill: var(--both); }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="1261" height="521" rx="12"/>
+  <g transform="translate(16 16)">
+          <defs>
+            <marker id="arrow-all" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <!-- edges -->
+          <line class="edge" x1="165" y1="178" x2="215" y2="178" marker-end="url(#arrow-all)"/>
+          <text class="label" x="190" y="169" text-anchor="middle">events</text>
+          <path class="edge" d="M287 150 V68 H400" marker-end="url(#arrow-all)"/>
+          <text class="label" x="343" y="59" text-anchor="middle">ingests live</text>
+          <path class="edge" d="M287 206 V288 H400" marker-end="url(#arrow-all)"/>
+          <text class="label" x="343" y="279" text-anchor="middle">every 5 min</text>
+          <line class="edge" x1="560" y1="288" x2="620" y2="288" marker-end="url(#arrow-all)"/>
+          <text class="label" x="590" y="279" text-anchor="middle">appends</text>
+          <line class="edge" x1="660" y1="316" x2="660" y2="370" marker-end="url(#arrow-all)"/>
+          <text class="label" x="652" y="360" text-anchor="end">reads</text>
+          <line class="edge" x1="740" y1="370" x2="740" y2="316" marker-end="url(#arrow-all)"/>
+          <text class="label" x="748" y="348">writes gold</text>
+          <path class="edge" d="M630 316 V340 H480 V370" marker-end="url(#arrow-all)"/>
+          <text class="label" x="555" y="333" text-anchor="middle">new columns?</text>
+          <line class="edge" x1="400" y1="398" x2="330" y2="398" marker-end="url(#arrow-all)"/>
+          <text class="label" x="365" y="389" text-anchor="middle">proposes</text>
+          <path class="edge" d="M175 426 V470 H925 V426" marker-end="url(#arrow-all)"/>
+          <text class="label" x="550" y="462" text-anchor="middle">defines the metrics, views and pages</text>
+          <line class="edge" x1="780" y1="68" x2="840" y2="68" marker-end="url(#arrow-all)"/>
+          <text class="label" x="810" y="59" text-anchor="middle">recent</text>
+          <line class="edge" x1="780" y1="288" x2="840" y2="288" marker-end="url(#arrow-all)"/>
+          <text class="label" x="810" y="279" text-anchor="middle">history</text>
+          <line class="edge" x1="1010" y1="68" x2="1070" y2="68" marker-end="url(#arrow-all)"/>
+          <text class="label" x="1040" y="59" text-anchor="middle">SSE</text>
+          <line class="edge" x1="1010" y1="178" x2="1070" y2="178" marker-end="url(#arrow-all)"/>
+          <text class="label" x="1040" y="169" text-anchor="middle">MCP</text>
+          <line class="edge" x1="1010" y1="288" x2="1070" y2="288" marker-end="url(#arrow-all)"/>
+          <text class="label" x="1040" y="279" text-anchor="middle">REST</text>
+          <!-- boxes -->
+          <rect class="box" x="20" y="150" width="145" height="56" rx="8"/>
+          <text class="title" x="92" y="174" text-anchor="middle">Your producers</text>
+          <text class="sub" x="92" y="193" text-anchor="middle">or run.py stream</text>
+          <rect class="box" x="215" y="150" width="145" height="56" rx="8"/>
+          <text class="title" x="287" y="174" text-anchor="middle">Kafka</text>
+          <text class="sub" x="287" y="193" text-anchor="middle">a topic per dataset</text>
+          <rect class="box rt" x="400" y="40" width="380" height="56" rx="8"/>
+          <text class="title" x="590" y="64" text-anchor="middle">Pinot</text>
+          <text class="sub" x="590" y="83" text-anchor="middle">real-time tier · the last 7 days</text>
+          <rect class="box hist" x="400" y="260" width="160" height="56" rx="8"/>
+          <text class="title" x="480" y="284" text-anchor="middle">Flush</text>
+          <text class="sub" x="480" y="303" text-anchor="middle">Prefect · exactly once</text>
+          <rect class="box hist" x="620" y="260" width="160" height="56" rx="8"/>
+          <text class="title" x="700" y="284" text-anchor="middle">Iceberg</text>
+          <text class="sub" x="700" y="303" text-anchor="middle">all history · via Trino</text>
+          <rect class="box ai" x="400" y="370" width="160" height="56" rx="8"/>
+          <text class="title" x="480" y="394" text-anchor="middle">Drift agent</text>
+          <text class="sub" x="480" y="413" text-anchor="middle">Claude</text>
+          <rect class="box hist" x="620" y="370" width="160" height="56" rx="8"/>
+          <text class="title" x="700" y="394" text-anchor="middle">Rollups</text>
+          <text class="sub" x="700" y="413" text-anchor="middle">behind quality gates</text>
+          <rect class="box" x="20" y="370" width="310" height="56" rx="8"/>
+          <text class="title file" x="175" y="394" text-anchor="middle">config/</text>
+          <text class="sub" x="175" y="413" text-anchor="middle">ontology · ingestion · storage · views · dashboards</text>
+          <rect class="box" x="840" y="40" width="170" height="386" rx="8"/>
+          <text class="title" x="925" y="66" text-anchor="middle">Gateway</text>
+          <text class="sub" x="925" y="85" text-anchor="middle">the one way in</text>
+          <line class="divider" x1="856" y1="102" x2="994" y2="102"/>
+          <text class="item" x="925" y="132" text-anchor="middle">compiler</text>
+          <text class="item" x="925" y="156" text-anchor="middle">tier router</text>
+          <text class="item" x="925" y="180" text-anchor="middle">views</text>
+          <text class="item" x="925" y="204" text-anchor="middle">live feeds</text>
+          <text class="item" x="925" y="228" text-anchor="middle">dashboards</text>
+          <text class="item" x="925" y="252" text-anchor="middle">status</text>
+          <line class="divider" x1="856" y1="276" x2="994" y2="276"/>
+          <text class="sub" x="925" y="304" text-anchor="middle">REST · SSE · MCP</text>
+          <text class="sub" x="925" y="323" text-anchor="middle">:8000</text>
+          <rect class="box" x="1070" y="40" width="140" height="56" rx="8"/>
+          <text class="title" x="1140" y="64" text-anchor="middle">Dashboards</text>
+          <text class="sub" x="1140" y="83" text-anchor="middle">live chart tags</text>
+          <rect class="box ai" x="1070" y="150" width="140" height="56" rx="8"/>
+          <text class="title" x="1140" y="174" text-anchor="middle">AI agents</text>
+          <text class="sub" x="1140" y="193" text-anchor="middle">e.g. Claude Code</text>
+          <rect class="box" x="1070" y="260" width="140" height="56" rx="8"/>
+          <text class="title" x="1140" y="284" text-anchor="middle">Your apps</text>
+          <text class="sub" x="1140" y="303" text-anchor="middle">REST and SSE</text>
+  </g>
+</svg>

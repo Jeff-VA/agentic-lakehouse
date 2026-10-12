@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1152 300" width="1152" height="300" role="img" aria-label="Iceberg holds everything up to the last flush; Pinot holds the last 7 days, so the two overlap. A last-hour query goes to Pinot, a query for August to Trino, and a last-30-days query is split at the last flush and merged.">
+  <title>Iceberg holds everything up to the last flush; Pinot holds the last 7 days, so the two overlap. A last-hour query goes to Pinot, a query for August to Trino, and a last-30-days query is split at the last flush and merged.</title>
+  <style>
+  svg {
+    --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
+    --rt: #c05f10; --rt-soft: #fdf0e4; --hist: #2461a6; --hist-soft: #e7eff9;
+    --ai: #7550c0; --ai-soft: #f0ebfa; --both: #0d7a6b;
+    color: var(--fg);
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --fg: #e5eaef; --muted: #95a1ad; --line: #3a4552; --surface: #161d24;
+      --rt: #f09650; --rt-soft: #2b1f15; --hist: #6ba6ea; --hist-soft: #15212e;
+      --ai: #b195f0; --ai-soft: #221b32; --both: #4fc4b1;
+    }
+  }
+  .card { fill: var(--surface); stroke: var(--line); }
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .box.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .box.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .box.ai { fill: var(--ai-soft); stroke: var(--ai); }
+  .title { fill: var(--fg); font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .title.file { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sub, .label { fill: var(--muted); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .item, .query { fill: var(--fg); font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .divider { stroke: var(--line); stroke-width: 1; }
+  .bar.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .bar.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .bar-text { fill: var(--fg); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .tick { stroke: var(--muted); stroke-width: 1; }
+  .range { stroke-width: 2; fill: none; }
+  .range.rt { stroke: var(--rt); } .range.hist { stroke: var(--hist); } .range.both { stroke: var(--both); }
+  .dot-both { fill: var(--both); }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="1151" height="299" rx="12"/>
+  <g transform="translate(16 16)">
+          <defs>
+            <marker id="arrow-time" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <line class="tick" x1="980" y1="36" x2="980" y2="248"/>
+          <line class="tick" x1="1060" y1="36" x2="1060" y2="248"/>
+          <text class="label" x="976" y="28" text-anchor="end">last flush</text>
+          <text class="label" x="1064" y="28" text-anchor="start">now</text>
+          <rect class="bar hist" x="40" y="44" width="940" height="26" rx="4"/>
+          <text class="bar-text" x="52" y="62">Iceberg, queried with Trino: everything up to the last flush</text>
+          <rect class="bar rt" x="640" y="80" width="420" height="26" rx="4"/>
+          <text class="bar-text" x="652" y="98">Pinot: the last 7 days</text>
+          <line class="edge" x1="40" y1="128" x2="1072" y2="128" marker-end="url(#arrow-time)"/>
+          <text class="label" x="40" y="148">older</text>
+          <text class="label" x="510" y="148" text-anchor="middle">time (not to scale)</text>
+          <!-- example queries -->
+          <text class="query" x="40" y="186">“Last hour” → Pinot</text>
+          <path class="range rt" d="M1004 176 V188 M1004 182 H1060 M1060 176 V188"/>
+          <text class="query" x="40" y="214">“August” → Trino</text>
+          <path class="range hist" d="M320 204 V216 M320 210 H560 M560 204 V216"/>
+          <text class="query" x="40" y="242">“Last 30 days” → both, merged</text>
+          <path class="range both" d="M380 232 V244 M380 238 H1060 M1060 232 V244"/>
+          <circle class="dot-both" cx="980" cy="238" r="4"/>
+  </g>
+</svg>

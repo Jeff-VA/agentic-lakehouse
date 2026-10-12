@@ -47,24 +47,15 @@ ontology changes as a reviewable patch.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    stream["Event stream<br/>(synthetic playback telemetry)"] --> kafka[(Kafka)]
-    kafka --> pinot[("Pinot<br/>real-time tier, 7 days")]
-    kafka --> flush["Flush (Prefect)<br/>exactly once, schema evolution"]
-    flush --> iceberg[("Iceberg on MinIO<br/>historical tier")]
-    iceberg --- trino[Trino]
-    trino --> rollups["Rollups (Prefect)<br/>behind quality gates"]
-    rollups --> gold[("Gold Iceberg tables")]
-    iceberg --> drift["Drift agent<br/>(Claude)"]
-    drift --> patch["Config patch<br/>for review"]
-    ontology[["config/*.yaml, views/*.sql<br/>ontology, ingestion, storage, quality, views"]] --> router
-    router["Compiler + tier router<br/>(Jinja, sqlglot, DuckDB merge)"] --> pinot
-    router --> trino
-    router --> gateway["Gateway<br/>REST · MCP · dashboard"]
-    gold --> gateway
-    gateway --> clients["People, dashboards,<br/>AI agents"]
-```
+![End to end: producers send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups and the drift agent work from Iceberg. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.](docs/images/architecture/overview.svg)
+
+Events land in two tiers: Pinot keeps the last 7 days, and Iceberg keeps all
+of history. Every question, from a dashboard, an app or an AI agent, goes
+through the gateway, which compiles it from the config, sends each part of the
+time range to the tier that holds it, and says what the answer covers.
+[`docs/architecture.md`](docs/architecture.md) walks through each part with a
+diagram: data in, a question answered, which tier answers, and a view becoming
+a live page.
 
 ## Quick start
 
@@ -146,6 +137,376 @@ and it is yours to change:
 
 The tests always run against `examples/playback/config`, so your changes to
 `config/` never break them.
+
+## Endpoints
+
+With the stack up, the gateway answers on `http://127.0.0.1:8000` (and so
+does `python run.py serve`). It has no authentication yet, so keep it on a
+trusted network (see [Limitations](#limitations)). Times are UTC, in ISO 8601.
+`/docs` is an interactive reference, and `/openapi.json` its OpenAPI schema.
+The examples use the example project's metrics and views.
+
+| Endpoint | Use it to |
+|---|---|
+| `GET /health` | check that the gateway is up |
+| `GET /catalog` | see the metrics and dimensions you can ask for |
+| `POST /query` | ask for metrics over a time range |
+| `GET /views` | see the project's views: parameters, columns, SQL |
+| `GET /views/{name}` | run a view |
+| `GET /views/{name}/live` | follow a view as it changes (Server-Sent Events) |
+| `GET /live` | follow several views over one connection, as dashboards do |
+| `GET /status` | see how fresh the data is, the quality gates, and schema drift |
+| `GET /rollups/{table}` | read a gold table's recent rows |
+| `GET /d/{name}`, `GET /` | open a dashboard |
+| `GET /male.js` | draw views in your own pages |
+| `/mcp` | connect an AI agent (Model Context Protocol) |
+| Kafka, `127.0.0.1:9092` | send your events |
+
+### GET /health
+
+Answers without touching the engines: for container healthchecks and load
+balancers.
+
+```bash
+curl http://127.0.0.1:8000/health    # {"status":"ok"}
+```
+
+### GET /catalog
+
+Every model's metrics and dimensions: what each means (`description`), how
+it's computed (`calculation`), how to show it (`label`, `format`, `unit`,
+`better`), and how far each tier reaches. Read it before asking for anything.
+
+```bash
+curl http://127.0.0.1:8000/catalog
+```
+
+```json
+{
+  "now": "2026-10-12T00:13:40Z",
+  "models": [{
+    "name": "playback_telemetry",
+    "time_dimension": "event_ts",
+    "grains": ["minute", "hour", "day", "week", "month"],
+    "realtime_days": 7.0,
+    "historical_through": "2026-10-12T00:12:26Z",
+    "dimensions": [{"name": "isp_provider", "type": "string", "label": "ISP", "description": ""}],
+    "metrics": [{
+      "name": "p99_ttfb",
+      "description": "99th percentile Time-to-First-Byte latency (ms), measured on stream starts.",
+      "calculation": "0.99 quantile of request_latency_ms (approximate on Trino and Pinot) where stream_start_event = true",
+      "label": "p99 time to first byte", "format": "integer", "unit": "ms", "better": "lower"
+    }]
+  }]
+}
+```
+
+### POST /query
+
+Metrics over a time range, grouped by dimensions. The gateway picks the tier,
+or both, and reports what the answer covers.
+
+| Field | |
+|---|---|
+| `metrics` | required: metric names from `/catalog`, all from one model |
+| `start`, `end` | required: the range `[start, end)` in ISO 8601; no offset means UTC |
+| `dimensions` | group by these |
+| `grain` | also group by time: `minute`, `hour`, `day`, `week` or `month` |
+| `filters` | `[{"dimension": "isp_provider", "op": "in", "value": ["cox", "att"]}]`; `op` is `=`, `!=`, `<`, `<=`, `>`, `>=`, `in` or `not_in` |
+| `order_by` | `[{"field": "unique_sessions", "descending": true}]`; the default is time, then dimensions |
+| `limit` | at most this many rows; a response never holds more than 5,000 |
+
+Add `?include_sql=true` to see the SQL each engine ran.
+
+```bash
+curl -X POST http://127.0.0.1:8000/query -H 'Content-Type: application/json' -d '{
+  "metrics": ["rebuffer_incidence_rate", "unique_sessions"],
+  "dimensions": ["isp_provider"],
+  "start": "2026-10-11T23:00:00Z",
+  "end": "2026-10-12T00:00:00Z",
+  "order_by": [{"field": "rebuffer_incidence_rate", "descending": true}],
+  "limit": 2
+}'
+```
+
+```json
+{
+  "columns": [
+    {"name": "isp_provider", "role": "dimension"},
+    {"name": "rebuffer_incidence_rate", "role": "metric"},
+    {"name": "unique_sessions", "role": "metric"}
+  ],
+  "rows": [
+    {"isp_provider": "cox", "rebuffer_incidence_rate": 0.119, "unique_sessions": 41},
+    {"isp_provider": "frontier", "rebuffer_incidence_rate": 0.064, "unique_sessions": 24}
+  ],
+  "coverage": {"start": "2026-10-11T23:00:00Z", "end": "2026-10-12T00:00:00Z"},
+  "notes": [],
+  "truncated": false,
+  "sql": null
+}
+```
+
+`coverage` can be narrower than the range you asked for, and `notes` say why:
+a percentile over both tiers, for example, stops at the last flush. A `400`
+names what doesn't exist and lists what does (`unknown metrics: p99.
+Available: ...`), a `422` is a malformed request (`start must be before end`),
+and a `502` means an engine failed.
+
+### GET /views
+
+The project's views (`config/views/*.sql`): each one's `description`, what it
+reads (`source` is `model` for a live view routed across both tiers, `tables`
+for SQL on Trino), its `params` with type, default and limits, its result
+`columns` with labels and formats, and its `sql`.
+
+```bash
+curl http://127.0.0.1:8000/views
+```
+
+### GET /views/{name}
+
+Runs a view. Its parameters go in the query string, and any you leave out take
+their defaults.
+
+```bash
+curl "http://127.0.0.1:8000/views/isp_now?minutes=30"
+```
+
+```json
+{
+  "view": "isp_now",
+  "params": {"minutes": 30},
+  "columns": [
+    {"name": "isp_provider", "type": "string", "label": "ISP", "role": "dimension", "format": null, "unit": "", "better": null, "grain": null},
+    {"name": "rebuffer_incidence_rate", "type": "number", "label": "Rebuffer rate", "role": "metric", "format": "percent", "unit": "", "better": "lower", "grain": null}
+  ],
+  "rows": [{"isp_provider": "cox", "rebuffer_incidence_rate": 0.121, "p99_ttfb": 970.0, "unique_sessions": 26}],
+  "coverage": {"start": "2026-10-11T23:44:50Z", "end": "2026-10-12T00:14:50Z"},
+  "data_through": null,
+  "notes": [],
+  "truncated": false,
+  "computed_at": "2026-10-12T00:14:50Z",
+  "sql": null
+}
+```
+
+(Columns and rows shortened.) A view over a model reports `coverage`, as
+`/query` does. A view over tables reports `data_through` instead: its tables
+hold every row before that time, which is their last flush or rollup run. Add
+`?include_sql=true` to see the SQL. A `404` means there's no such view, a `400`
+a parameter the view doesn't take or a value it doesn't accept
+(`parameter 'minutes' must be a whole number, not 'abc'`), and a `502` that an
+engine failed.
+
+### GET /views/{name}/live
+
+The same result as a Server-Sent Events stream: a `result` event now, and
+another each time the result changes. An `error` event means a refresh failed;
+the last result still stands, and the feed keeps trying. A view over a model
+reruns every 10 seconds (or every `refresh_seconds` its header sets), and a
+view over tables reruns when one of its tables changes.
+
+```bash
+curl -N "http://127.0.0.1:8000/views/isp_now/live?minutes=30"
+```
+
+```text
+event: result
+data: {"view":"isp_now","params":{"minutes":30},"columns":[...],"rows":[...],...}
+```
+
+In a browser:
+
+```js
+const source = new EventSource("/views/isp_now/live?minutes=30");
+source.addEventListener("result", event => draw(JSON.parse(event.data)));
+source.addEventListener("error", event => {
+  if (event.data) warn(JSON.parse(event.data).detail);  // without data, the connection dropped; it reconnects
+});
+```
+
+### GET /live
+
+Several views over one connection, which is what dashboards use: browsers keep
+only about six connections open to a server. Repeat `view` for each one: a
+view's name, with its parameters after a `?`, URL-encoded. Each event's
+`subscription` is the `view` value exactly as you sent it.
+
+```bash
+curl -N "http://127.0.0.1:8000/live?view=quality_overall&view=isp_hourly%3Fhours%3D24"
+```
+
+```text
+event: hello
+data: {"boot": "b3092bec5a324a42b11ec8110d1da522"}
+
+event: result
+data: {"subscription": "quality_overall", "result": {"view": "quality_overall", ...}}
+
+event: result
+data: {"subscription": "isp_hourly?hours=24", "result": {"view": "isp_hourly", ...}}
+```
+
+| Event | Data | Means |
+|---|---|---|
+| `hello` | `{"boot"}` | first on every connection; a `boot` different from last time means the server restarted, so reload |
+| `result` | `{"subscription", "result"}` | a view's new result |
+| `error` | `{"subscription", "detail"}` | a view's refresh failed; its last result stands |
+| `reload` | `{}` | a view or dashboard file changed |
+| `problem` | `{"detail"}` | an edit broke a view; the server keeps the last good version |
+
+```js
+const views = new URLSearchParams([["view", "quality_overall"], ["view", "isp_hourly?hours=24"]]);
+const source = new EventSource(`/live?${views}`);
+source.addEventListener("result", event => {
+  const { subscription, result } = JSON.parse(event.data);
+  draw(subscription, result);
+});
+source.addEventListener("reload", () => location.reload());
+```
+
+`/male.js` does all of this for dashboards.
+
+### GET /status
+
+Whether the data can be trusted right now. For each dataset:
+`historical_through` (the flush watermark) and `unmodeled_columns` (fields the
+config doesn't describe yet). For each rollup: `complete_through` and
+`last_audit` (every check, and whether the run published or was blocked).
+Then the drift proposals waiting for review.
+
+```bash
+curl http://127.0.0.1:8000/status
+```
+
+```json
+{
+  "now": "2026-10-12T00:15:05Z",
+  "datasets": [{
+    "name": "telemetry", "realtime_days": 7.0,
+    "historical_through": "2026-10-12T00:12:40Z",
+    "unmodeled_columns": ["cdn_pop", "dropped_frames"]
+  }],
+  "rollups": [{
+    "table": "gold.hourly_isp_quality", "grain": "hour",
+    "complete_through": "2026-10-12T00:00:00Z",
+    "last_audit": {
+      "at": "2026-10-12T00:14:29Z", "published": true,
+      "start": "2026-10-10T15:00:00Z", "end": "2026-10-12T00:00:00Z",
+      "checks": [{"check": "row_count(min=1, max=-)", "severity": "error", "passed": true, "detail": "198 rows"}]
+    }
+  }],
+  "drift_proposals": []
+}
+```
+
+(Shortened.)
+
+### GET /rollups/{table}
+
+A gold table's rows from the last `hours` (default 48), oldest first: a quick
+read without writing a view. A `404` means the table isn't a rollup in
+`storage.yaml`.
+
+```bash
+curl "http://127.0.0.1:8000/rollups/gold.hourly_isp_quality?hours=2"
+```
+
+### GET /d/{name} and GET /
+
+Dashboards: `config/dashboards/playback.html` is served at `/d/playback`. `/`
+opens the only dashboard, or lists them all when there are several. Open pages
+reload on their own when a view or dashboard file changes.
+
+### GET /male.js
+
+The chart tags dashboards are written in (see [Dashboards](#dashboards)).
+Other pages the gateway serves can use them too. The gateway sends no CORS
+headers, so a page from another origin needs a proxy in front of the gateway.
+
+```html
+<script type="module">
+  import { subscribe } from "/male.js";
+  const stop = subscribe("isp_now", { minutes: 30 }, (result, error) => {
+    // called now and on every change, like the tags
+  });
+</script>
+```
+
+### /mcp
+
+The Model Context Protocol over Streamable HTTP, for AI agents:
+
+```bash
+claude mcp add --transport http lakehouse http://127.0.0.1:8000/mcp
+```
+
+The same server runs over stdio on your machine with `python run.py mcp`,
+which is what [`.mcp.json`](.mcp.json) sets up for Claude Code. Its tools:
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `list_metrics` | | the catalog, as `GET /catalog` |
+| `query_metrics` | `metrics`, `start`, `end`; optional `dimensions`, `grain`, `filters`, `order_by`, `limit`, `include_sql` | as `POST /query` |
+| `data_status` | | as `GET /status` |
+| `list_views` | | as `GET /views` |
+| `query_view` | `name`; optional `params`, `include_sql` | as `GET /views/{name}` |
+| `check_dashboards` | | config errors, and each dashboard's problems by file and line |
+| `screenshot_dashboard` | `name`; optional `theme`, `width` | a PNG of the page with live data, and the problems it shows |
+
+The prompt `build_dashboard` (argument `goal`) gives an agent the
+dashboard-building workflow and the tag reference. `screenshot_dashboard`
+needs Chrome where the server runs, and the app's image has none: use the
+stdio server on your machine for it.
+
+### Sending events
+
+Producers write to Kafka: `127.0.0.1:9092` from your machine, or
+`kafka:19092` from containers on the stack's network. Each message is one
+event as a JSON object, on its dataset's `topic` from `ingestion.yaml`, with
+keys named after the dataset's columns and timestamps in epoch milliseconds
+(UTC). Pinot has the event within seconds; the flush moves it into Iceberg
+within 5 minutes.
+
+```python
+import json
+import time
+
+from confluent_kafka import Producer  # a dependency of this project
+
+producer = Producer({"bootstrap.servers": "127.0.0.1:9092"})
+event = {
+    "event_ts": int(time.time() * 1000),
+    "session_id": "4f1c0a9e2b7d3c18",
+    "client_isp": "comcast",
+    "client_device": "smart_tv",
+    "request_latency_ms": 142,
+    "stream_start_event": True,
+    "buffer_duration_ms": 0,
+    "bitrate_kbps": 11800,
+}
+producer.produce("playback-telemetry", json.dumps(event).encode())
+producer.flush()
+```
+
+A missing field is stored as null. A field the config doesn't describe is kept:
+it becomes a new Iceberg column, and the drift agent proposes how to model it.
+
+### The engines' own endpoints
+
+The stack also exposes each engine directly, for inspection and ad hoc work.
+For metrics, go through the gateway: it applies the metric definitions, routes
+across the tiers, and reports what each answer covers. The local credentials
+are in [`config/deployment.yaml`](config/deployment.yaml).
+
+| Service | Address | Use it for |
+|---|---|---|
+| Trino | `127.0.0.1:8080`, catalog `iceberg` | SQL over Iceberg, e.g. `SELECT * FROM iceberg.gold.hourly_isp_quality` |
+| Pinot | controller UI `http://127.0.0.1:9000`, broker `127.0.0.1:8099` | the real-time tables |
+| Iceberg REST catalog | `http://127.0.0.1:8181` | PyIceberg, Spark and other Iceberg clients |
+| MinIO | S3 API `http://127.0.0.1:9100`, console `http://127.0.0.1:9101` | the warehouse's files |
+| Prefect | `http://127.0.0.1:4200` | pipeline runs and their logs |
 
 ## How it works
 
@@ -342,6 +703,7 @@ stop stream`.
 
 ```
 config/            your project: YAML config, views/ and dashboards/ (starts as a copy of the example)
+docs/              architecture.md and its diagrams
 core/              the engine: compiler, router, engines, flush, rollups, quality,
                    drift agent, gateway, synthetic events (simulate.py)
   templates/       the query skeleton and one macro file per engine

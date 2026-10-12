@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1172 332" width="1172" height="332" role="img" aria-label="A question from a dashboard, an agent or the API goes through the gateway to the compiler, which turns metric names from ontology.yaml into SQL. The router sends recent ranges to Pinot and older ones to Trino; DuckDB merges a split. The rows return with the time range they cover and notes.">
+  <title>A question from a dashboard, an agent or the API goes through the gateway to the compiler, which turns metric names from ontology.yaml into SQL. The router sends recent ranges to Pinot and older ones to Trino; DuckDB merges a split. The rows return with the time range they cover and notes.</title>
+  <style>
+  svg {
+    --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
+    --rt: #c05f10; --rt-soft: #fdf0e4; --hist: #2461a6; --hist-soft: #e7eff9;
+    --ai: #7550c0; --ai-soft: #f0ebfa; --both: #0d7a6b;
+    color: var(--fg);
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --fg: #e5eaef; --muted: #95a1ad; --line: #3a4552; --surface: #161d24;
+      --rt: #f09650; --rt-soft: #2b1f15; --hist: #6ba6ea; --hist-soft: #15212e;
+      --ai: #b195f0; --ai-soft: #221b32; --both: #4fc4b1;
+    }
+  }
+  .card { fill: var(--surface); stroke: var(--line); }
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .box.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .box.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .box.ai { fill: var(--ai-soft); stroke: var(--ai); }
+  .title { fill: var(--fg); font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .title.file { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sub, .label { fill: var(--muted); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .item, .query { fill: var(--fg); font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .divider { stroke: var(--line); stroke-width: 1; }
+  .bar.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .bar.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .bar-text { fill: var(--fg); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .tick { stroke: var(--muted); stroke-width: 1; }
+  .range { stroke-width: 2; fill: none; }
+  .range.rt { stroke: var(--rt); } .range.hist { stroke: var(--hist); } .range.both { stroke: var(--both); }
+  .dot-both { fill: var(--both); }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="1171" height="331" rx="12"/>
+  <g transform="translate(16 16)">
+          <defs>
+            <marker id="arrow-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <!-- edges -->
+          <line class="edge" x1="160" y1="128" x2="212" y2="128" marker-end="url(#arrow-out)"/>
+          <line class="edge" x1="352" y1="128" x2="404" y2="128" marker-end="url(#arrow-out)"/>
+          <line class="edge" x1="474" y1="80" x2="474" y2="100" marker-end="url(#arrow-out)"/>
+          <line class="edge" x1="544" y1="128" x2="596" y2="128" marker-end="url(#arrow-out)"/>
+          <path class="edge" d="M736 128 H762 V52 H788" marker-end="url(#arrow-out)"/>
+          <path class="edge" d="M736 128 H762 V204 H788" marker-end="url(#arrow-out)"/>
+          <path class="edge" d="M928 204 H954 V128"/>
+          <path class="edge" d="M928 52 H954 V128 H980" marker-end="url(#arrow-out)"/>
+          <path class="edge" d="M1050 156 V272 H90 V156" marker-end="url(#arrow-out)"/>
+          <text class="label" x="570" y="264" text-anchor="middle">rows + the time range they cover + notes</text>
+          <!-- boxes -->
+          <rect class="box" x="20" y="100" width="140" height="56" rx="8"/>
+          <text class="title" x="90" y="124" text-anchor="middle">You or an agent</text>
+          <text class="sub" x="90" y="143" text-anchor="middle">dashboard, MCP, API</text>
+          <rect class="box" x="212" y="100" width="140" height="56" rx="8"/>
+          <text class="title" x="282" y="124" text-anchor="middle">Gateway</text>
+          <text class="sub" x="282" y="143" text-anchor="middle">REST + MCP</text>
+          <rect class="box" x="404" y="24" width="140" height="56" rx="8"/>
+          <text class="title file" x="474" y="48" text-anchor="middle">ontology.yaml</text>
+          <text class="sub" x="474" y="67" text-anchor="middle">metrics, dimensions</text>
+          <rect class="box" x="404" y="100" width="140" height="56" rx="8"/>
+          <text class="title" x="474" y="124" text-anchor="middle">Compiler</text>
+          <text class="sub" x="474" y="143" text-anchor="middle">metric → SQL</text>
+          <rect class="box" x="596" y="100" width="140" height="56" rx="8"/>
+          <text class="title" x="666" y="124" text-anchor="middle">Router</text>
+          <text class="sub" x="666" y="143" text-anchor="middle">which tier?</text>
+          <rect class="box rt" x="788" y="24" width="140" height="56" rx="8"/>
+          <text class="title" x="858" y="48" text-anchor="middle">Pinot</text>
+          <text class="sub" x="858" y="67" text-anchor="middle">recent ranges</text>
+          <rect class="box hist" x="788" y="176" width="140" height="56" rx="8"/>
+          <text class="title" x="858" y="200" text-anchor="middle">Trino</text>
+          <text class="sub" x="858" y="219" text-anchor="middle">older ranges</text>
+          <rect class="box" x="980" y="100" width="140" height="56" rx="8"/>
+          <text class="title" x="1050" y="124" text-anchor="middle">DuckDB</text>
+          <text class="sub" x="1050" y="143" text-anchor="middle">merges if split</text>
+  </g>
+</svg>

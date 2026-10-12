@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1152 352" width="1152" height="352" role="img" aria-label="Pinot and Trino answer a feed that the gateway keeps for each view and set of parameters. The feed pushes new results to every dashboard page watching it over Server-Sent Events. You or an agent edit the view and dashboard files, which define the feeds; a check and a screenshot report problems back to the agent.">
+  <title>Pinot and Trino answer a feed that the gateway keeps for each view and set of parameters. The feed pushes new results to every dashboard page watching it over Server-Sent Events. You or an agent edit the view and dashboard files, which define the feeds; a check and a screenshot report problems back to the agent.</title>
+  <style>
+  svg {
+    --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
+    --rt: #c05f10; --rt-soft: #fdf0e4; --hist: #2461a6; --hist-soft: #e7eff9;
+    --ai: #7550c0; --ai-soft: #f0ebfa; --both: #0d7a6b;
+    color: var(--fg);
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --fg: #e5eaef; --muted: #95a1ad; --line: #3a4552; --surface: #161d24;
+      --rt: #f09650; --rt-soft: #2b1f15; --hist: #6ba6ea; --hist-soft: #15212e;
+      --ai: #b195f0; --ai-soft: #221b32; --both: #4fc4b1;
+    }
+  }
+  .card { fill: var(--surface); stroke: var(--line); }
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .box.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .box.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .box.ai { fill: var(--ai-soft); stroke: var(--ai); }
+  .title { fill: var(--fg); font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .title.file { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sub, .label { fill: var(--muted); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .item, .query { fill: var(--fg); font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .divider { stroke: var(--line); stroke-width: 1; }
+  .bar.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .bar.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .bar-text { fill: var(--fg); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .tick { stroke: var(--muted); stroke-width: 1; }
+  .range { stroke-width: 2; fill: none; }
+  .range.rt { stroke: var(--rt); } .range.hist { stroke: var(--hist); } .range.both { stroke: var(--both); }
+  .dot-both { fill: var(--both); }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="1151" height="351" rx="12"/>
+  <g transform="translate(16 16)">
+          <defs>
+            <marker id="arrow-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <!-- edges -->
+          <line class="edge" x1="200" y1="68" x2="330" y2="68" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="265" y="59" text-anchor="middle">answers</text>
+          <line class="edge" x1="510" y1="68" x2="920" y2="68" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="715" y="59" text-anchor="middle">new results, and a reload on save (one SSE connection)</text>
+          <line class="edge" x1="420" y1="200" x2="420" y2="96" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="430" y="152">defines</text>
+          <line class="edge" x1="200" y1="228" x2="330" y2="228" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="265" y="219" text-anchor="middle">edits</text>
+          <line class="edge" x1="510" y1="228" x2="625" y2="228" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="567" y="219" text-anchor="middle">checked</text>
+          <path class="edge" d="M715 256 V296 H110 V256" marker-end="url(#arrow-dash)"/>
+          <text class="label" x="412" y="288" text-anchor="middle">problems, and a screenshot of the page</text>
+          <!-- boxes -->
+          <rect class="box" x="20" y="40" width="180" height="56" rx="8"/>
+          <text class="title" x="110" y="64" text-anchor="middle">Pinot · Trino</text>
+          <text class="sub" x="110" y="83" text-anchor="middle">live data and history</text>
+          <rect class="box" x="330" y="40" width="180" height="56" rx="8"/>
+          <text class="title" x="420" y="64" text-anchor="middle">A feed per view</text>
+          <text class="sub" x="420" y="83" text-anchor="middle">shared · reruns on change</text>
+          <rect class="box" x="920" y="40" width="180" height="56" rx="8"/>
+          <text class="title" x="1010" y="64" text-anchor="middle">Dashboard page</text>
+          <text class="sub" x="1010" y="83" text-anchor="middle">male.js chart tags</text>
+          <rect class="box ai" x="20" y="200" width="180" height="56" rx="8"/>
+          <text class="title" x="110" y="224" text-anchor="middle">You or an agent</text>
+          <text class="sub" x="110" y="243" text-anchor="middle">e.g. Claude Code</text>
+          <rect class="box" x="330" y="200" width="180" height="56" rx="8"/>
+          <text class="title file" x="420" y="224" text-anchor="middle">views/*.sql</text>
+          <text class="sub" x="420" y="243" text-anchor="middle">dashboards/*.html</text>
+          <rect class="box" x="625" y="200" width="180" height="56" rx="8"/>
+          <text class="title" x="715" y="224" text-anchor="middle">Check · screenshot</text>
+          <text class="sub" x="715" y="243" text-anchor="middle">run.py or MCP tools</text>
+  </g>
+</svg>
