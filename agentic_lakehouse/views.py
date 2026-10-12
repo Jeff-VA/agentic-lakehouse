@@ -745,6 +745,17 @@ def _table_source(
     return TableSource(tree, tuple(sorted(set(read)))), columns
 
 
+def qualify_tables(sql: str, catalog: str | None, dialect: str = VIEW_DIALECT) -> str:
+    """`sql` (Trino's dialect) with its <namespace>.<table> names qualified by `catalog`, printed for
+    `dialect`: how code that names lakehouse tables runs them on the warehouse engine."""
+    tree = sqlglot.parse_one(sql, read=VIEW_DIALECT)
+    if catalog:
+        for table in tree.find_all(exp.Table):
+            if table.db and not table.catalog:
+                table.set("catalog", exp.to_identifier(catalog))
+    return tree.sql(dialect=dialect)
+
+
 def _value_type(data_type: exp.DataType | None) -> ValueType:
     if data_type is None:
         return "unknown"

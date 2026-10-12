@@ -159,6 +159,27 @@ def topic_is_empty(platform: Platform, dataset: Dataset) -> bool:
         consumer.close()
 
 
+def last_header(platform: Platform, dataset: Dataset, header: str) -> str | None:
+    """`header` on the newest message in the dataset's topic, if there is one: where a feed left off."""
+    consumer = Consumer(
+        {"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "group.id": "agentic-lakehouse-ingest", "enable.auto.commit": False}
+    )
+    try:
+        newest = None
+        for partition in consumer.list_topics(dataset.topic, timeout=10).topics[dataset.topic].partitions:
+            low, high = consumer.get_watermark_offsets(TopicPartition(dataset.topic, partition), timeout=10)
+            if high <= low:
+                continue
+            consumer.assign([TopicPartition(dataset.topic, partition, high - 1)])
+            for message in consumer.consume(num_messages=1, timeout=10):
+                if not message.error() and (newest is None or message.timestamp()[1] > newest.timestamp()[1]):
+                    newest = message
+        value = dict(newest.headers() or []).get(header) if newest is not None else None
+        return value.decode() if value else None
+    finally:
+        consumer.close()
+
+
 def flushed_through(platform: Platform, dataset: str) -> datetime | None:
     """The time before which the dataset's Iceberg table holds every event, or None if nothing was loaded."""
     table = iceberg_catalog(platform).load_table(platform.iceberg_table(dataset).table)
@@ -175,7 +196,9 @@ class EventPublisher:
         self.topic = dataset.topic
         self.producer = Producer({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers, "linger.ms": 50})
 
-    def publish(self, events: list[dict]) -> None:
+    def publish(self, events: list[dict], headers: dict[str, str] | None = None) -> None:
+        """Queue `events` for delivery. `headers` go with every message (a feed's event id, say)."""
+        kafka_headers = [(key, value.encode()) for key, value in (headers or {}).items()] or None
         for event in events:
             message = {
                 key: (value - _EPOCH) // timedelta(milliseconds=1) if isinstance(value, datetime) else value
@@ -183,7 +206,7 @@ class EventPublisher:
             }
             while True:
                 try:
-                    self.producer.produce(self.topic, json.dumps(message).encode())
+                    self.producer.produce(self.topic, json.dumps(message).encode(), headers=kafka_headers)
                     break
                 except BufferError:  # local queue full: let deliveries drain, then retry
                     self.producer.poll(0.5)

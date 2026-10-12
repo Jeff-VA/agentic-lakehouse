@@ -9,6 +9,8 @@ simulator, from there too.
     seed --hours 24          publish synthetic events to Kafka (Pinot ingests them)
     stream                   publish live synthetic events until stopped (Ctrl-C);
                              --add-field name=type simulates an upstream release
+    ingest                   read a dataset's live feed (its `source`) into Kafka until stopped
+    process                  run a dataset's processor on its input stream until stopped
     flush [--serve]          move new events from Kafka into Iceberg (once, or on schedule)
     rollups [--serve]        refresh the gold rollup tables, behind their quality gates
     drift [--serve]          find new event fields; Claude proposes config patches (proposals/)
@@ -25,6 +27,7 @@ containers; the command is for development against the same stack.
 """
 
 import argparse
+from collections.abc import Callable
 import logging
 import os
 import sys
@@ -33,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import get_args
 
+from confluent_kafka import Consumer
 from dotenv import load_dotenv
 
 from agentic_lakehouse.api_gateway import Gateway, Project, create_app, create_mcp_server
@@ -40,7 +44,11 @@ from agentic_lakehouse.browser import BrowserError
 from agentic_lakehouse.scaffold import create_project, engine_version
 from agentic_lakehouse.config import ColumnType, Dataset, Platform, load_platform
 from agentic_lakehouse.simulate import LiveSource, add_fields, generate_events
-from agentic_lakehouse.orchestrator import EventPublisher, publish_events, setup, teardown, topic_is_empty
+from agentic_lakehouse.orchestrator import EventPublisher, last_header, publish_events, setup, teardown, topic_is_empty
+from agentic_lakehouse.engines import TrinoEngine
+from agentic_lakehouse.processors import ProcessorContext, consumer_group, run_processor
+from agentic_lakehouse.sources import EVENT_ID_HEADER, ingest
+from agentic_lakehouse.views import qualify_tables
 
 
 def utc_now() -> datetime:
@@ -56,9 +64,13 @@ def seed_history(platform: Platform, dataset: Dataset, *, hours: float, rate: fl
     publish_events(platform, dataset, events)
 
 
-def pick_dataset(parser: argparse.ArgumentParser, platform: Platform, name: str | None) -> Dataset:
-    """The dataset named on the command line, or the only one in ingestion.yaml."""
-    datasets = {d.name: d for d in platform.ingestion.datasets}
+def pick_dataset(
+    parser: argparse.ArgumentParser, platform: Platform, name: str | None, fits: Callable[[Dataset], bool] = lambda d: True
+) -> Dataset:
+    """The dataset named on the command line, or the only one in ingestion.yaml that `fits` the command."""
+    datasets = {d.name: d for d in platform.ingestion.datasets if fits(d)}
+    if not datasets:
+        parser.error("no dataset in ingestion.yaml fits this command")
     if name is None and len(datasets) == 1:
         return next(iter(datasets.values()))
     if name not in datasets:
@@ -109,6 +121,10 @@ def main() -> None:
         metavar="NAME=TYPE",
         help="simulate an upstream release: events also carry this field (repeatable)",
     )
+    ingest = commands.add_parser("ingest", help="read a dataset's live feed into Kafka until stopped")
+    ingest.add_argument("--dataset", help="which dataset with a source (default: the only one)")
+    process = commands.add_parser("process", help="run a dataset's processor on its input stream until stopped")
+    process.add_argument("--dataset", help="which dataset with a processor (default: the only one)")
     reset = commands.add_parser("reset", help="delete all topics, tables and data, then recreate them empty")
     reset.add_argument("--yes", action="store_true", help="confirm deleting all data")
     flush = commands.add_parser("flush", help="move new events from Kafka into Iceberg (a Prefect flow)")
@@ -144,7 +160,11 @@ def main() -> None:
     if args.command == "setup":
         setup(platform)
         for dataset in platform.ingestion.datasets:
-            if args.seed_hours and topic_is_empty(platform, dataset):
+            if not args.seed_hours:
+                continue
+            if dataset.fed_by:
+                print(f"{dataset.name}: not seeding synthetic history; its events come from {dataset.fed_by}")
+            elif topic_is_empty(platform, dataset):
                 seed_history(platform, dataset, hours=args.seed_hours)
     elif args.command == "reset":
         if not args.yes:
@@ -155,7 +175,7 @@ def main() -> None:
         dataset = pick_dataset(parser, platform, args.dataset)
         seed_history(platform, dataset, hours=args.hours, rate=args.rate, seed=args.seed)
     elif args.command == "stream":
-        dataset = pick_dataset(parser, platform, args.dataset)
+        dataset = pick_dataset(parser, platform, args.dataset, lambda d: not d.fed_by)
         source = LiveSource(dataset, utc_now(), rate=args.rate)
         publisher = EventPublisher(platform, dataset)
         extra = dict(args.add_field)
@@ -171,6 +191,35 @@ def main() -> None:
         except KeyboardInterrupt:
             publisher.flush()
             print(f"stopped after {published} events")
+    elif args.command == "ingest":
+        dataset = pick_dataset(parser, platform, args.dataset, lambda d: d.source is not None)
+        resume = last_header(platform, dataset, EVENT_ID_HEADER)
+        print(f"ingesting {dataset.source.url} into {dataset.topic}" + (f", resuming after {resume}" if resume else ""))
+        try:
+            ingest(dataset, EventPublisher(platform, dataset), resume_after=resume)
+        except KeyboardInterrupt:
+            print("stopped")
+    elif args.command == "process":
+        dataset = pick_dataset(parser, platform, args.dataset, lambda d: d.processor is not None)
+        trino = TrinoEngine(platform.deployment.trino)
+        context = ProcessorContext(
+            dataset,
+            platform.dataset(dataset.processor.input),
+            query=lambda sql: trino.execute(qualify_tables(sql, platform.deployment.trino.catalog)),
+        )
+        consumer = Consumer(
+            {
+                "bootstrap.servers": platform.deployment.kafka.bootstrap_servers,
+                "group.id": consumer_group(dataset),
+                "enable.auto.commit": False,
+            }
+        )
+        try:
+            run_processor(platform, dataset, consumer=consumer, publisher=EventPublisher(platform, dataset), context=context)
+        except KeyboardInterrupt:
+            print("stopped")
+        finally:
+            consumer.close()
     elif args.command == "flush":
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
         from agentic_lakehouse.pipelines.flush import flush_all  # after PREFECT_API_URL is set

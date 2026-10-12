@@ -24,6 +24,7 @@ from pydantic import Field, model_validator
 
 from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
 from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name, load_ontology
+from agentic_lakehouse.hooks import SPEC
 from agentic_lakehouse.quality import QualityConfig, TableName
 from agentic_lakehouse.views import View, ViewError, load_views
 
@@ -40,8 +41,29 @@ class RealtimeTable(StrictModel):
     retention_days: int = Field(gt=0)
 
 
+class Source(StrictModel):
+    """A live feed the platform reads itself, with `agentic-lakehouse ingest`, instead of
+    producers writing to the dataset's Kafka topic (agentic_lakehouse/sources.py)."""
+
+    kind: Literal["sse"]  # Server-Sent Events over HTTP, one JSON object per event
+    url: str = Field(pattern=r"^https?://")
+    # module:function: one feed event (a dict) -> this dataset's event, or None to leave it out
+    transform: str | None = Field(default=None, pattern=SPEC)
+    headers: dict[str, str] = {}  # e.g. a User-Agent, which some public feeds ask for
+
+
+class Processor(StrictModel):
+    """Makes this dataset from another as it streams, with `agentic-lakehouse process`
+    (agentic_lakehouse/processors.py)."""
+
+    input: Identifier  # the dataset it reads
+    run: str = Field(pattern=SPEC)  # module:Class, built with a ProcessorContext; process(events) -> events
+    warmup_minutes: float = Field(default=0, ge=0)  # input replayed at start, to rebuild state after a restart
+
+
 class Dataset(StrictModel):
-    """One event stream: its Kafka topic, raw schema and Pinot real-time table."""
+    """One event stream: its Kafka topic, raw schema and Pinot real-time table. Its events come
+    from producers writing to the topic, from a live `source`, or from a `processor`."""
 
     name: Identifier
     description: str = Field(min_length=1)
@@ -51,10 +73,23 @@ class Dataset(StrictModel):
     realtime: RealtimeTable
     # Synthetic events for `agentic-lakehouse seed` and `stream`: "package.module:function" making one
     # episode (agentic_lakehouse/simulate.py). Without it, events get random values from the column types.
-    simulator: str | None = Field(default=None, pattern=r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
+    simulator: str | None = Field(default=None, pattern=SPEC)
+    source: Source | None = None
+    processor: Processor | None = None
+
+    @property
+    def fed_by(self) -> str | None:
+        """What publishes this dataset's events when the platform does: a feed or a processor."""
+        if self.source:
+            return f"the feed {self.source.url}"
+        if self.processor:
+            return f"the processor {self.processor.run}"
+        return None
 
     @model_validator(mode="after")
     def _check_time_column(self) -> Self:
+        if self.source and self.processor:
+            raise ValueError(f"dataset '{self.name}': a dataset comes from a source or a processor, not both")
         columns = index_by_name(self.columns, "column", f"dataset '{self.name}'")
         if getattr(columns.get(self.time_column), "type", None) != "timestamp":
             raise ValueError(f"dataset '{self.name}': time_column '{self.time_column}' must be a timestamp column")
@@ -261,6 +296,9 @@ def load_platform(config_dir: str | Path) -> Platform:
 def _check_consistency(platform: Platform) -> None:
     datasets = {d.name: d for d in platform.ingestion.datasets}
     problems = []
+    for dataset in datasets.values():
+        if dataset.processor and dataset.processor.input not in datasets.keys() - {dataset.name}:
+            problems.append(f"dataset '{dataset.name}' is processed from unknown dataset '{dataset.processor.input}'")
     for table in platform.storage.tables:
         if table.dataset not in datasets:
             problems.append(f"storage table '{table.table}' is for unknown dataset '{table.dataset}'")

@@ -9,13 +9,13 @@ window and seed, so a batch can be regenerated exactly.
 """
 
 import heapq
-import importlib
 import itertools
 import random
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from agentic_lakehouse.config import ColumnType, Dataset
+from agentic_lakehouse.hooks import load
 
 Episode = Callable[[random.Random, datetime], list[dict]]
 
@@ -24,8 +24,7 @@ def episode_for(dataset: Dataset) -> Episode:
     """The dataset's simulator from ingestion.yaml, or random values from its column types."""
     if dataset.simulator is None:
         return random_episode(dataset)
-    module, _, name = dataset.simulator.partition(":")
-    return getattr(importlib.import_module(module), name)
+    return load(dataset.simulator)
 
 
 def random_episode(dataset: Dataset) -> Episode:
