@@ -18,6 +18,7 @@ from agentic_lakehouse.browser import capture, find_chrome, serving
 from agentic_lakehouse.config import load_platform
 from agentic_lakehouse.dashboards import check_dashboards
 from agentic_lakehouse.live import LiveViews
+from agentic_lakehouse.scaffold import create_project
 from agentic_lakehouse.views import parse_view
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "playback" / "config"
@@ -249,3 +250,28 @@ def test_open_pages_hear_about_edits(tmp_path):
             view.write_text(good.replace("unique_sessions", "unique_sessions, avg_bitrate_kbps"))
             assert next_event() == ("reload", {})
     assert "avg_bitrate_kbps" in [c.name for c in gateway.views["isp_now"].columns]
+
+
+@needs_chrome
+def test_bars_grow_both_ways_from_zero_and_links_read_as_their_page(tmp_path):
+    create_project(tmp_path / "signs")
+    config = tmp_path / "signs" / "config"
+    (config / "views" / "weights.sql").write_text(
+        "/*\ndescription: A model's weights.\n*/\nSELECT feature, weight, url FROM (VALUES "
+        "('editors', 0.9, 'https://en.wikipedia.org/wiki/James_Ball_(economist)'), ('revert_share', -1.4, 'https://example.org/a_b')) "
+        "AS t (feature, weight, url)"
+    )
+    (config / "dashboards" / "weights.html").write_text(
+        '<!doctype html><title>Weights</title><script type="module" src="/al.js"></script>'
+        '<al-bars view="weights" category="feature" value="weight"></al-bars><al-table view="weights"></al-table>'
+    )
+    facts = """(() => ({
+      fills: [...document.querySelectorAll('al-bars .bar-row path')].map(p => p.getAttribute('fill')),
+      links: [...document.querySelectorAll('al-table a')].map(a => [a.textContent, a.getAttribute('href')]),
+    }))()"""
+    gateway = standin_gateway(load_platform(config))
+    with serving(create_app(gateway, dashboards_dir=config / "dashboards")) as url:
+        shot = capture(f"{url}/d/weights", script=facts, timeout=30)
+    assert shot.problems == []
+    assert shot.value["fills"] == ["var(--series-1)", "var(--series-2)"]  # positive, negative
+    assert shot.value["links"][0] == ["James Ball (economist)", "https://en.wikipedia.org/wiki/James_Ball_(economist)"]

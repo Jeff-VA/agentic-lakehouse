@@ -131,6 +131,7 @@ al-lines .al-legend button[aria-pressed="false"] .al-key { opacity: 0.3; }
 .al-table-wrap th, .al-table-wrap td, al-table th, al-table td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
 .al-table-wrap th:first-child, .al-table-wrap td:first-child, al-table th:first-child, al-table td:first-child { text-align: left; }
 .al-table-wrap th, al-table th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+.al-table-wrap td.al-wrap, al-table td.al-wrap { text-align: left; white-space: normal; min-width: 240px; color: var(--text-secondary); }
 al-table .al-table-wrap { max-height: 420px; margin-top: 0; }
 .al-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .al-icon { width: 16px; height: 16px; flex: none; }
@@ -571,9 +572,16 @@ class ViewTag extends HTMLElement {
 
 function table(columns, rows) {
   const formats = columns.map(formatter);
+  const cell = (column, i, value) => {
+    if (typeof value === "string" && /^https?:\/\//.test(value)) {  // a link reads as the page it opens
+      const page = decodeURIComponent(value.split(/[?#]/)[0].split("/").filter(Boolean).pop() ?? value).replaceAll("_", " ");
+      return el("td", {}, el("a", { href: value, target: "_blank", rel: "noopener", text: page }));
+    }
+    return el("td", { text: formats[i](value), class: column.type === "string" && String(value ?? "").length > 40 ? "al-wrap" : null });
+  };
   return el("div", { class: "al-table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {}, ...columns.map(c => el("th", { scope: "col", text: c.label })))),
-    el("tbody", {}, ...rows.map(row => el("tr", {}, ...columns.map((c, i) => el("td", { text: formats[i](row[c.name]) }))))),
+    el("tbody", {}, ...rows.map(row => el("tr", {}, ...columns.map((c, i) => cell(c, i, row[c.name]))))),
   ));
 }
 
@@ -644,10 +652,18 @@ class BarsTag extends ViewTag {
     const format = formatter(measure);
     const width = Math.max(200, this.clientWidth - 32);
     const rowH = 28, barH = 14, labelW = Math.min(120, Math.max(60, 8 * Math.max(...rows.map(r => String(r[category.name]).length)))), valueW = 76;
-    const plotW = Math.max(40, width - labelW - valueW);
-    const max = Math.max(...rows.map(r => r[measure.name] ?? 0)) || 1;
+    // Negative values (a model's weights, say) put zero inside the plot, and bars grow both ways from it,
+    // with room on the left for their labels.
+    const values = rows.map(r => r[measure.name] ?? 0);
+    const lo = Math.min(0, ...values), hi = Math.max(0, ...values);
+    const signed = lo < 0;
+    const left0 = labelW + (signed ? 64 : 0);
+    const plotW = Math.max(40, width - left0 - valueW);
+    const span = hi - lo || 1;
+    const at = v => left0 + ((v - lo) / span) * plotW;
+    const zero = at(0);
     const svg = svgEl("svg", { width, height: rows.length * rowH + 4, role: "list", "aria-label": `${measure.label} by ${category.label}` });
-    svg.append(svgEl("line", { x1: labelW, x2: labelW, y1: 0, y2: rows.length * rowH, stroke: "var(--baseline)", "stroke-width": 1 }));
+    svg.append(svgEl("line", { x1: zero, x2: zero, y1: 0, y2: rows.length * rowH, stroke: "var(--baseline)", "stroke-width": 1 }));
     const numbers = this.view.columns.filter(c => c.type === "number");
     rows.forEach((row, i) => {
       const name = String(row[category.name]);
@@ -658,10 +674,12 @@ class BarsTag extends ViewTag {
       g.append(svgEl("rect", { class: "hit", x: 0, y: i * rowH, width, height: rowH, fill: "transparent" }));
       g.append(svgEl("text", { x: labelW - 8, y: y + barH / 2 + 4, "text-anchor": "end", class: strong ? "strong" : "name" }, name));
       if (value != null) {
-        const x1 = Math.max(labelW + (value / max) * plotW, labelW + 1);
-        const fill = highlight == null ? "var(--series-1)" : strong ? colorOf(name) : "var(--deemph)";
-        g.append(svgEl("path", { d: roundedBar(labelW, y, x1, barH, 4), fill }));
-        g.append(svgEl("text", { x: x1 + 6, y: y + barH / 2 + 4, class: strong ? "strong" : "" }, format(value)));
+        const end = at(value);
+        const left = value < 0;
+        const x1 = left ? Math.min(end, zero - 1) : Math.max(end, zero + 1);
+        const fill = highlight != null ? (strong ? colorOf(name) : "var(--deemph)") : signed && left ? "var(--series-2)" : "var(--series-1)";
+        g.append(svgEl("path", { d: left ? roundedBarLeft(x1, y, zero, barH, 4) : roundedBar(zero, y, x1, barH, 4), fill }));
+        g.append(svgEl("text", { x: left ? x1 - 6 : x1 + 6, y: y + barH / 2 + 4, "text-anchor": left ? "end" : "start", class: strong ? "strong" : "" }, format(value)));
       }
       const show = (x, yy) => showTip(x, yy, name, numbers.map(c => ({ color: colorOf(name), name: c.label, value: formatter(c)(row[c.name]) })));
       g.addEventListener("pointermove", e => show(e.clientX, e.clientY));
@@ -684,6 +702,14 @@ class BarsTag extends ViewTag {
     }
     return mode;
   }
+}
+
+function roundedBarLeft(x0, y, x1, h, r) {
+  // A bar growing left from x1 to x0, rounded at its data end (x0).
+  const w = x1 - x0;
+  if (w <= 0) return "";
+  r = Math.min(r, w, h / 2);
+  return `M${x1},${y} H${x0 + r} Q${x0},${y} ${x0},${y + r} V${y + h - r} Q${x0},${y + h} ${x0 + r},${y + h} H${x1} Z`;
 }
 
 function roundedBar(x0, y, x1, h, r) {

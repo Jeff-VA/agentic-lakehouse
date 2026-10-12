@@ -209,3 +209,13 @@ def test_a_freshness_check_needs_the_steps_time_column(project):
     (project / "quality_rules.yaml").write_text(yaml.safe_dump(quality, sort_keys=False))
     with pytest.raises(ConfigError, match="check freshness; give step 'category_baselines' a time_column"):
         load_platform(project)
+
+
+def test_a_python_step_can_publish_nothing_this_run(project, warehouse, monkeypatch):
+    platform = load_platform(project)
+    store = MemoryStore()
+    monkeypatch.setattr("test_steps.fit_baselines", lambda context: None)  # e.g. too few labels to train on
+    run = run_step(platform, platform.step("category_baselines"), query=duckdb_query(warehouse), store=store, now=NOW, log=lambda m: None)
+    assert run.skipped == "returned nothing to publish"
+    assert "gold.category_baselines" not in store.tables
+    assert store.records["gold.category_baselines"]["published"] is False

@@ -169,7 +169,7 @@ class Step(StrictModel):
     description: str = Field(min_length=1)
     output: TableName  # <namespace>.<table> it writes
     sql: str | None = None  # a Trino SELECT over <namespace>.<table> names
-    run: str | None = Field(default=None, pattern=SPEC)  # module:function(StepContext) -> pyarrow.Table
+    run: str | None = Field(default=None, pattern=SPEC)  # module:function(StepContext) -> pyarrow.Table, or None
     reads: list[TableName] = []  # what a Python step reads (a SQL step's reads come from its SQL)
     columns: dict[Identifier, ColumnType] = {}  # a Python step's output columns (a SQL step's are worked out)
     mode: Literal["replace", "append"] = "replace"  # rewrite the table each run, or add the rows a run returns

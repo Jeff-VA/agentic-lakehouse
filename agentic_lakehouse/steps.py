@@ -94,8 +94,9 @@ def run_step(
     log: Callable[[str], None] = print,
     force: bool = False,
 ) -> StepRun:
-    """Run `step` if it's due (or `force`). Raises StepError, or QualityGateError if its rows fail a
-    blocking check (nothing is published then)."""
+    """Run `step` if it's due (or `force`). A Python step may return None to publish nothing this
+    run. Raises StepError, or QualityGateError if its rows fail a blocking check (nothing is
+    published then)."""
     now = now or datetime.now(UTC).replace(tzinfo=None)
     last = store.last_run(step.output)
     if not force and not due(step, last, now):
@@ -106,6 +107,10 @@ def run_step(
         rows = query(step.sql)
     else:
         rows = load(step.run)(context)
+        if rows is None:  # nothing worth publishing yet, e.g. too little data to train on
+            store.record(step, {"at": now.isoformat(timespec="seconds"), "published": False, "rows": 0, "checks": [], "published_at": published})
+            log(f"step {step.name}: nothing to publish this run")
+            return StepRun(step.name, skipped="returned nothing to publish")
         if not isinstance(rows, pa.Table):
             raise StepError(f"step '{step.name}': {step.run} returned {type(rows).__name__}, not a pyarrow.Table")
     rows = _conform(step, rows, platform.table_schemas()[step.output])
