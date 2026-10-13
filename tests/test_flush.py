@@ -188,6 +188,16 @@ def test_large_backlogs_are_committed_in_batches(table):
     assert len(rows(table)) == 5
 
 
+def test_a_backlog_of_wide_events_is_committed_in_batches_that_fit_in_memory(table):
+    """Wide events (long text) fill memory long before batch_size: batches are capped in bytes too."""
+    wide = [event(i % 60, client_isp="x" * 2000) for i in range(250)]  # about 2.3 kB of JSON each
+    consumer = FakeConsumer(DATASET.topic, {0: wide})
+    result = flush(table, consumer, DATASET, now=NOW, lateness=LATENESS, batch_bytes=100_000)
+    assert result.events == 250
+    assert len(table.history()) == 3  # 100 + 100 + 50 events: each read of 100 passes 100 kB
+    assert len(rows(table)) == 250
+
+
 def test_events_that_expired_from_kafka_before_being_flushed_are_reported(table):
     run_flush(table, {0: [event(0), event(1)]})  # next to read: offset 2
     with pytest.raises(FlushError, match=r"offsets 2-4 expired from Kafka before being flushed"):

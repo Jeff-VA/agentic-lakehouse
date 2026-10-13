@@ -132,7 +132,7 @@ writes a proposal that the dashboard lists. Apply it with
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.4"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.5"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest

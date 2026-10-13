@@ -58,13 +58,16 @@ def flush(
     now: datetime,
     lateness: timedelta,
     batch_size: int = 50_000,
+    batch_bytes: int = 8 * 2**20,
     timeout: float = 30,
 ) -> FlushResult:
     """Append every message in `dataset.topic` that `table` doesn't hold yet.
 
     `consumer` is a confluent_kafka.Consumer (only assign/consume are used, no
-    consumer-group offsets). Events are committed in batches of `batch_size`;
-    the watermark only moves with the last one. `now` is naive UTC.
+    consumer-group offsets). Events are committed in batches of `batch_size`
+    events or about `batch_bytes` of JSON, whichever comes first, so a large
+    backlog of wide events fits in memory; the watermark only moves with the
+    last batch. `now` is naive UTC.
     """
     topic = dataset.topic
     start = json.loads(table.properties.get(OFFSETS, "{}"))
@@ -87,7 +90,7 @@ def flush(
     result = FlushResult(events=0, watermark=datetime.fromisoformat(previous) if previous else None)
     newest = datetime.fromisoformat(table.properties[NEWEST]) if NEWEST in table.properties else None
     while True:
-        events = _read(consumer, positions, ends, batch_size, timeout)
+        events = _read(consumer, positions, ends, batch_size, batch_bytes, timeout)
         done = all(positions[p] >= ends[p] for p in partitions)
         newest = max(filter(None, [newest, _newest(events, dataset.time_column)]), default=None)
         if events or done:
@@ -116,14 +119,16 @@ def _newest(events: list[dict], time_column: str) -> datetime | None:
     return None if newest is None else _EPOCH + timedelta(milliseconds=newest)
 
 
-def _read(consumer, positions: dict, ends: dict, batch_size: int, timeout: float) -> list[dict]:
-    """Up to `batch_size` events from where `positions` stand to `ends`, advancing `positions`."""
-    events = []
+def _read(consumer, positions: dict, ends: dict, batch_size: int, batch_bytes: int, timeout: float) -> list[dict]:
+    """Up to `batch_size` events, or about `batch_bytes` of them, from where `positions` stand to
+    `ends`, advancing `positions`."""
+    events, size = [], 0
     stalled_since = time.monotonic()
-    while len(events) < batch_size and (remaining := sum(max(0, ends[p] - positions[p]) for p in positions)):
+    while len(events) < batch_size and size < batch_bytes and (remaining := sum(max(0, ends[p] - positions[p]) for p in positions)):
         # consume() waits until it has num_messages or the timeout passes, so
-        # ask for no more than remain, and poll briefly.
-        messages = consumer.consume(num_messages=min(1000, batch_size - len(events), remaining), timeout=1)
+        # ask for no more than remain, and poll briefly. Small reads keep a
+        # batch close to batch_bytes.
+        messages = consumer.consume(num_messages=min(100, batch_size - len(events), remaining), timeout=1)
         if not messages:
             if time.monotonic() - stalled_since > timeout:
                 raise FlushError(f"no messages from Kafka for {timeout}s while reading up to offsets {ends}")
@@ -135,8 +140,10 @@ def _read(consumer, positions: dict, ends: dict, batch_size: int, timeout: float
             partition, offset = message.partition(), message.offset()
             if offset >= ends[partition]:
                 continue  # published after this flush started; the next flush takes it
+            value = message.value()
+            size += len(value)
             try:
-                events.append(json.loads(message.value()))
+                events.append(json.loads(value))
             except json.JSONDecodeError as e:
                 raise FlushError(f"{message.topic()}[{partition}] offset {offset} isn't JSON: {e}") from None
             positions[partition] = offset + 1
