@@ -36,7 +36,8 @@ def flush_dataset(config_dir: str, dataset_name: str) -> dict:
     logger = get_run_logger()
     logger.info(
         "%s: flushed %d events into %s, complete through %s UTC",
-        dataset_name, result.events, settings.table, f"{result.watermark:%Y-%m-%d %H:%M:%S}",
+        dataset_name, result.events, settings.table,
+        f"{result.watermark:%Y-%m-%d %H:%M:%S}" if result.watermark else "nothing yet",
     )
     if result.new_columns:
         logger.warning("%s: new event fields added as Iceberg columns: %s", dataset_name, result.new_columns)

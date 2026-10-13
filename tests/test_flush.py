@@ -7,7 +7,7 @@ import pytest
 from pyiceberg.catalog.sql import SqlCatalog
 
 from agentic_lakehouse.config import load_platform
-from agentic_lakehouse.flush import OFFSETS, FlushError, flush
+from agentic_lakehouse.flush import NEWEST, OFFSETS, FlushError, flush
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
 from agentic_lakehouse.schema_compiler import iceberg_partition_spec, iceberg_schema
 
@@ -92,12 +92,14 @@ def rows(table) -> list[dict]:
 
 
 def test_first_flush_loads_everything_with_offsets_and_watermark(table):
-    result = run_flush(table, {0: [event(0), event(1)], 1: [event(2)]})
+    result = run_flush(table, {0: [event(0), event(1)], 1: [event(2)]}, now=T0 + timedelta(minutes=2, seconds=5))
 
-    assert (result.events, result.watermark, result.new_columns) == (3, NOW - LATENESS, {})
-    assert [r["event_ts"] for r in rows(table)] == [T0, T0 + timedelta(minutes=1), T0 + timedelta(minutes=2)]
+    newest = T0 + timedelta(minutes=2)
+    assert (result.events, result.watermark, result.new_columns) == (3, newest - LATENESS, {})
+    assert [r["event_ts"] for r in rows(table)] == [T0, T0 + timedelta(minutes=1), newest]
     assert json.loads(table.properties[OFFSETS]) == {"0": 2, "1": 1}
-    assert table.properties[FLUSHED_THROUGH] == (NOW - LATENESS).isoformat()
+    assert table.properties[FLUSHED_THROUGH] == (newest - LATENESS).isoformat()
+    assert table.properties[NEWEST] == newest.isoformat()
 
 
 def test_flushing_again_loads_nothing_twice(table):
@@ -107,9 +109,29 @@ def test_flushing_again_loads_nothing_twice(table):
 
     assert result.events == 0
     assert len(rows(table)) == 2
-    assert table.properties[FLUSHED_THROUGH] == (NOW + timedelta(minutes=5) - LATENESS).isoformat()
-    run_flush(table, published, now=NOW - timedelta(hours=1))  # a clock behind the last flush
-    assert table.properties[FLUSHED_THROUGH] == (NOW + timedelta(minutes=5) - LATENESS).isoformat()
+    # No new events: the watermark can't claim more than the newest event flushed
+    assert table.properties[FLUSHED_THROUGH] == (T0 + timedelta(minutes=1) - LATENESS).isoformat()
+    grown = {0: [event(0), event(1), event(30)]}
+    run_flush(table, grown, now=T0 + timedelta(minutes=31))
+    run_flush(table, grown, now=T0)  # a clock behind the last flush
+    assert table.properties[FLUSHED_THROUGH] == (T0 + timedelta(minutes=30) - LATENESS).isoformat()
+
+
+def test_the_watermark_follows_event_time_while_a_source_catches_up(table):
+    """A feed that was down for hours replays its backlog: Iceberg is complete only through
+    the newest event it holds, however late the clock says it is."""
+    result = run_flush(table, {0: [event(0), event(5), event(10)]}, now=T0 + timedelta(hours=6))
+    assert result.watermark == T0 + timedelta(minutes=10) - LATENESS
+
+
+def test_an_event_from_a_skewed_clock_cant_move_the_watermark_past_now(table):
+    result = run_flush(table, {0: [event(0), event(240)]}, now=NOW)  # minute 240 is three hours ahead
+    assert result.watermark == NOW - LATENESS
+
+
+def test_an_empty_topic_claims_nothing(table):
+    result = run_flush(table, {0: []})
+    assert result.watermark is None and FLUSHED_THROUGH not in table.properties
 
 
 def test_later_flushes_pick_up_where_the_last_stopped(table):

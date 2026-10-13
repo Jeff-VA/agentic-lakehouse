@@ -8,8 +8,11 @@ events to Iceberg and, in the same Iceberg commit, records:
   Kafka consumer group means a crash between writing rows and saving offsets
   can't load a batch twice: both happen in one commit, or neither does.
 - the flush watermark (agentic-lakehouse.flushed-through): Iceberg now holds every event
-  older than the flush's start minus the allowed lateness. The router relies
-  on it to decide what the historical tier can answer.
+  older than this, the newest event flushed so far (or the flush's start, if
+  earlier) minus the allowed lateness. It follows event time, not the clock,
+  so it stays honest while a source catches up on a backlog after an outage:
+  rollups then wait for the hours still arriving instead of publishing them
+  short. The router relies on it to decide what the historical tier can answer.
 
 Producers can evolve their events without breaking the flush: a new field
 becomes an optional Iceberg column (NULL in older rows), and a field that
@@ -31,6 +34,7 @@ from agentic_lakehouse.config import Dataset
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
 
 OFFSETS = "agentic-lakehouse.kafka-offsets"  # JSON {partition: next offset to read}
+NEWEST = "agentic-lakehouse.newest-event"  # the newest event time flushed so far (ISO, naive UTC)
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -42,7 +46,7 @@ class FlushError(RuntimeError):
 @dataclass
 class FlushResult:
     events: int
-    watermark: datetime
+    watermark: datetime | None  # None until the first event is flushed
     new_columns: dict[str, str] = field(default_factory=dict)  # name -> Iceberg type
 
 
@@ -79,13 +83,20 @@ def flush(
         ends[partition], positions[partition] = high, position
     consumer.assign([TopicPartition(topic, p, positions[p]) for p in partitions])
 
-    result = FlushResult(events=0, watermark=_watermark(table, now - lateness))
+    previous = table.properties.get(FLUSHED_THROUGH)
+    result = FlushResult(events=0, watermark=datetime.fromisoformat(previous) if previous else None)
+    newest = datetime.fromisoformat(table.properties[NEWEST]) if NEWEST in table.properties else None
     while True:
         events = _read(consumer, positions, ends, batch_size, timeout)
         done = all(positions[p] >= ends[p] for p in partitions)
+        newest = max(filter(None, [newest, _newest(events, dataset.time_column)]), default=None)
         if events or done:
             properties = {OFFSETS: json.dumps({str(p): o for p, o in positions.items()})}
-            if done:
+            if newest is not None:
+                properties[NEWEST] = newest.isoformat()
+            if done and newest is not None:
+                # Never ahead of the clock (a producer's skewed clock), never back from the last flush
+                result.watermark = _watermark(table, min(now, newest) - lateness)
                 properties[FLUSHED_THROUGH] = result.watermark.isoformat()
             new_columns = _commit(table, events, properties)
             result.events += len(events)
@@ -97,6 +108,12 @@ def flush(
 def _watermark(table: Table, candidate: datetime) -> datetime:
     previous = table.properties.get(FLUSHED_THROUGH)
     return max(candidate, datetime.fromisoformat(previous)) if previous else candidate
+
+
+def _newest(events: list[dict], time_column: str) -> datetime | None:
+    """The newest event time in `events`, which carry it as epoch milliseconds."""
+    newest = max((e[time_column] for e in events if isinstance(e.get(time_column), int)), default=None)
+    return None if newest is None else _EPOCH + timedelta(milliseconds=newest)
 
 
 def _read(consumer, positions: dict, ends: dict, batch_size: int, timeout: float) -> list[dict]:
