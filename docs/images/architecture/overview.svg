@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1262 522" width="1262" height="522" role="img" aria-label="Producers send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.">
-  <title>Producers send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1262 522" width="1262" height="522" role="img" aria-label="Producers and live feeds send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups and pipeline steps read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.">
+  <title>Producers and live feeds send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups and pipeline steps read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.</title>
   <style>
   svg {
     --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
@@ -72,7 +72,7 @@
           <!-- boxes -->
           <rect class="box" x="20" y="150" width="145" height="56" rx="8"/>
           <text class="title" x="92" y="174" text-anchor="middle">Your producers</text>
-          <text class="sub" x="92" y="193" text-anchor="middle">or the demo stream</text>
+          <text class="sub" x="92" y="193" text-anchor="middle">or a live feed</text>
           <rect class="box" x="215" y="150" width="145" height="56" rx="8"/>
           <text class="title" x="287" y="174" text-anchor="middle">Kafka</text>
           <text class="sub" x="287" y="193" text-anchor="middle">a topic per dataset</text>
@@ -89,7 +89,7 @@
           <text class="title" x="480" y="394" text-anchor="middle">Drift agent</text>
           <text class="sub" x="480" y="413" text-anchor="middle">Claude</text>
           <rect class="box hist" x="620" y="370" width="160" height="56" rx="8"/>
-          <text class="title" x="700" y="394" text-anchor="middle">Rollups</text>
+          <text class="title" x="700" y="394" text-anchor="middle">Rollups, steps</text>
           <text class="sub" x="700" y="413" text-anchor="middle">behind quality gates</text>
           <rect class="box" x="20" y="370" width="310" height="56" rx="8"/>
           <text class="title file" x="175" y="394" text-anchor="middle">config/</text>

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1252 504" width="1252" height="504" role="img" aria-label="In wiki-pulse, a rollup counts each article's edits per hour, and a SQL step turns those counts into baselines. The burst detector, a stream processor, reads every edit, loads the baselines and the news classifier's weights every 15 minutes, asks Claude about fresh bursts, and publishes the bursts as a dataset. A Python step trains the classifier on the bursts Claude labeled. Every model is a gold table.">
+  <title>In wiki-pulse, a rollup counts each article's edits per hour, and a SQL step turns those counts into baselines. The burst detector, a stream processor, reads every edit, loads the baselines and the news classifier's weights every 15 minutes, asks Claude about fresh bursts, and publishes the bursts as a dataset. A Python step trains the classifier on the bursts Claude labeled. Every model is a gold table.</title>
+  <style>
+  svg {
+    --fg: #17202a; --muted: #5a6572; --line: #c3cbd4; --surface: #ffffff;
+    --rt: #c05f10; --rt-soft: #fdf0e4; --hist: #2461a6; --hist-soft: #e7eff9;
+    --ai: #7550c0; --ai-soft: #f0ebfa; --both: #0d7a6b;
+    color: var(--fg);
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      --fg: #e5eaef; --muted: #95a1ad; --line: #3a4552; --surface: #161d24;
+      --rt: #f09650; --rt-soft: #2b1f15; --hist: #6ba6ea; --hist-soft: #15212e;
+      --ai: #b195f0; --ai-soft: #221b32; --both: #4fc4b1;
+    }
+  }
+  .card { fill: var(--surface); stroke: var(--line); }
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .box.rt { fill: var(--rt-soft); stroke: var(--rt); }
+  .box.hist { fill: var(--hist-soft); stroke: var(--hist); }
+  .box.ai { fill: var(--ai-soft); stroke: var(--ai); }
+  .title { fill: var(--fg); font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .title.file { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sub, .label { fill: var(--muted); font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+  </style>
+  <rect class="card" x="0.5" y="0.5" width="1251" height="503" rx="12"/>
+  <g transform="translate(16 16)">
+          <defs>
+            <marker id="arrow-pipe" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <!-- edges -->
+          <path class="edge" d="M200 56 H270" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="235" y="47" text-anchor="middle">rollup</text>
+          <path class="edge" d="M450 56 H520" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="485" y="47" text-anchor="middle">SQL step</text>
+          <path class="edge" d="M610 88 V144" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="620" y="120" text-anchor="start">loads</text>
+          <path class="edge" d="M200 176 H520" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="360" y="167" text-anchor="middle">every edit</text>
+          <path class="edge" d="M700 164 H770" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="735" y="155" text-anchor="middle">bursts</text>
+          <path class="edge" d="M950 176 H1020" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="985" y="167" text-anchor="middle">flush</text>
+          <path class="edge" d="M610 264 V208" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="620" y="240" text-anchor="start">loads</text>
+          <path class="edge" d="M700 190 H735 V296 H770" marker-start="url(#arrow-pipe)" marker-end="url(#arrow-pipe)"/>
+          <path class="edge" d="M1110 208 V416 H610 V328" marker-end="url(#arrow-pipe)"/>
+          <text class="label" x="860" y="407" text-anchor="middle">Python step: trains on Claude's labels</text>
+          <text class="label" x="743" y="240" text-anchor="start">fresh bursts</text>
+          <!-- boxes -->
+          <rect class="box hist" x="20" y="24" width="180" height="64" rx="8"/>
+          <text class="title file" x="110" y="51" text-anchor="middle">raw.edits</text>
+          <text class="sub" x="110" y="71" text-anchor="middle">Iceberg · every edit</text>
+          <rect class="box hist" x="270" y="24" width="180" height="64" rx="8"/>
+          <text class="title file" x="360" y="51" text-anchor="middle">gold.article_hourly</text>
+          <text class="sub" x="360" y="71" text-anchor="middle">edits per article, hour</text>
+          <rect class="box hist" x="520" y="24" width="180" height="64" rx="8"/>
+          <text class="title file" x="610" y="51" text-anchor="middle">gold.trend_baselines</text>
+          <text class="sub" x="610" y="71" text-anchor="middle">what's usual, per hour</text>
+          <rect class="box" x="20" y="144" width="180" height="64" rx="8"/>
+          <text class="title file" x="110" y="171" text-anchor="middle">edits</text>
+          <text class="sub" x="110" y="191" text-anchor="middle">Kafka · live</text>
+          <rect class="box rt" x="520" y="144" width="180" height="64" rx="8"/>
+          <text class="title" x="610" y="171" text-anchor="middle">Burst detector</text>
+          <text class="sub" x="610" y="191" text-anchor="middle">processor · 30-min windows</text>
+          <rect class="box" x="770" y="144" width="180" height="64" rx="8"/>
+          <text class="title file" x="860" y="171" text-anchor="middle">trends</text>
+          <text class="sub" x="860" y="191" text-anchor="middle">Kafka · a dataset</text>
+          <rect class="box hist" x="1020" y="144" width="180" height="64" rx="8"/>
+          <text class="title file" x="1110" y="171" text-anchor="middle">raw.trends</text>
+          <text class="sub" x="1110" y="191" text-anchor="middle">Iceberg · every burst</text>
+          <rect class="box hist" x="520" y="264" width="180" height="64" rx="8"/>
+          <text class="title file" x="610" y="291" text-anchor="middle">gold.news_classifier</text>
+          <text class="sub" x="610" y="311" text-anchor="middle">a model: its weights</text>
+          <rect class="box ai" x="770" y="264" width="180" height="64" rx="8"/>
+          <text class="title" x="860" y="291" text-anchor="middle">Claude</text>
+          <text class="sub" x="860" y="311" text-anchor="middle">labels fresh bursts</text>
+  </g>
+</svg>
