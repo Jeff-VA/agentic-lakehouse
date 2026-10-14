@@ -116,6 +116,9 @@ def test_a_project_metric_using_a_macro_loads_and_answers(tmp_path):
          "model playback_telemetry doesn't compile with the project's macros, for duckdb: Catalog Error"),
         (SLOW_START | {"duckdb.sql": "{% macro sum(expr) %}SUM({{ expr }}) +{% endmacro %}\n"}, SLOW_STARTS,
          "model playback_telemetry doesn't compile with the project's macros, for duckdb: Parser Error"),
+        # What a model-written drift proposal could try: the sandbox stops it, and the config fails
+        (SLOW_START, SLOW_STARTS | {"filters": ["{{ slow_start.__class__.__init__.__globals__ }}"]},
+         "metric slow_starts, filters[0], for duckdb: not allowed in a macro"),
     ],
 )
 def test_macro_mistakes_fail_the_config_with_their_place(tmp_path, macros, metric, message):

@@ -20,7 +20,7 @@ Each event's data then says which `view` value it answers:
 
 That stream also carries news about the project to every open page: `hello`
 first (with the server's boot id: a page that sees a new one reloads), then
-`reload` after a dashboard or view file changes, or `problem` when an edit
+`reload` after a dashboard, view or macro file changes, or `problem` when an edit
 broke a view (the page keeps showing the last good version).
 
 Everyone watching the same view with the same parameters shares one feed, which

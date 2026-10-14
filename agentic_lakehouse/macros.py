@@ -28,7 +28,9 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
+import jinja2.sandbox
 from jinja2 import nodes
+from jinja2.sandbox import SandboxedEnvironment
 
 ENGINES = ("duckdb", "trino", "pinot")
 TEMPLATES = Path(__file__).parent / "templates"
@@ -59,11 +61,12 @@ def templated(text: str) -> bool:
     return bool(_JINJA.search(text))
 
 
-def _environment(project: Path | None) -> jinja2.Environment:
-    loaders = {"engine": jinja2.FileSystemLoader(TEMPLATES)}
-    if project is not None:
-        loaders["project"] = jinja2.FileSystemLoader(project)
-    env = jinja2.Environment(
+def _environment(project: dict[str, str]) -> jinja2.Environment:
+    """The engine's templates and the project's macro files (read once: name -> text). Sandboxed:
+    project files are trusted, but the drift agent's proposals, written by a model, are rendered
+    when they're checked, and the sandbox keeps any template from reaching Python's internals."""
+    loaders = {"engine": jinja2.FileSystemLoader(TEMPLATES), "project": jinja2.DictLoader(project)}
+    env = SandboxedEnvironment(
         loader=jinja2.PrefixLoader(loaders),
         undefined=jinja2.StrictUndefined,  # a typo fails instead of rendering ""
         trim_blocks=True,
@@ -84,15 +87,21 @@ class ProjectMacros:
     def __init__(self, directory: str | Path | None = None):
         directory = Path(directory) if directory is not None else None
         self.directory = directory if directory is not None and directory.is_dir() else None
-        self.env = _environment(self.directory)
         self.files = [name for name in ("default", *ENGINES) if self.directory and (self.directory / f"{name}.sql").is_file()]
+        # Read once: a file edited or broken on disk later doesn't change these macros (a reload does).
+        self.sources = {f"{name}.sql": (self.directory / f"{name}.sql").read_text() for name in self.files}
+        self.env = _environment(self.sources)
         for name in self.files:  # a syntax error fails now, naming the file and line
-            path = self.directory / f"{name}.sql"
             try:
-                self.env.parse(path.read_text(), name=f"{name}.sql", filename=str(path))
+                self.env.parse(self.sources[f"{name}.sql"], name=f"{name}.sql")
             except jinja2.TemplateSyntaxError as e:
                 raise MacroError(f"macros/{name}.sql, line {e.lineno}: {e.message}") from None
         self._adapters: dict[str, Adapter] = {}
+        for engine in ENGINES:  # each engine's lookup, built now, so a file that can't load fails now
+            try:
+                self.adapter(engine)
+            except jinja2.TemplateError as e:
+                raise MacroError(f"macros: {e}") from None
 
     def adapter(self, engine: str) -> "Adapter":
         """The macros for `engine`, looked up in the four places, in order."""
@@ -112,16 +121,19 @@ class ProjectMacros:
             raise MacroError(f"line {e.lineno}: {e.message}") from None
         except jinja2.UndefinedError as e:
             raise MacroError(f"{e.message} (macros: {', '.join(sorted(adapter.names())) or 'none'})") from None
-        except TypeError as e:  # e.g. a macro called with an argument it doesn't take
-            raise MacroError(str(e)) from None
+        except jinja2.sandbox.SecurityError as e:
+            raise MacroError(f"not allowed in a macro: {e}") from None
+        except MacroError:
+            raise
+        except Exception as e:  # a macro called with an argument it doesn't take, 1 / 0, ...
+            raise MacroError(f"{type(e).__name__}: {e}" if not isinstance(e, TypeError) else str(e)) from None
 
     def catalog(self) -> list[MacroInfo]:
         """Every macro, the project's and the engine's, with where each is defined."""
-        sources = [(f"project/{name}.sql", self.directory / f"{name}.sql") for name in self.files]
-        sources += [(f"engine/macros/{name}.sql", TEMPLATES / "macros" / f"{name}.sql") for name in ("default", *ENGINES)]
+        sources = [(f"project/{name}.sql", self.sources[f"{name}.sql"]) for name in self.files]
+        sources += [(f"engine/macros/{name}.sql", (TEMPLATES / "macros" / f"{name}.sql").read_text()) for name in ("default", *ENGINES)]
         found: dict[str, MacroInfo] = {}
-        for label, path in sources:
-            text = path.read_text()
+        for label, text in sources:
             described = {name: " ".join(comment.split()) for comment, name in _DESCRIBED.findall(text)}
             for macro in self.env.parse(text).find_all(nodes.Macro):
                 info = found.get(macro.name)

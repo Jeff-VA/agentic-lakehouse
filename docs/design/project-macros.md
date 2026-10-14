@@ -213,11 +213,34 @@ API, and WS4 merges them.
 - **Jinja in view and step SQL** makes `{{` and `{%` special there. That's
   rare in SQL; `{% raw %}` escapes it.
 
+## What implementation found
+
+- **Rendering is sandboxed.** Jinja could otherwise reach Python's
+  internals: `{{ adapter.__init__.__globals__ }}` ran. Project files are
+  trusted, but the drift agent's proposals are written by a model and
+  rendered when they're checked. So every macro rendering uses Jinja's
+  `SandboxedEnvironment`, and any failure while rendering becomes a
+  `MacroError` that the config reports.
+- **Ad-hoc SQL can't call macros.** `/sql` and MCP `query_sql` refuse
+  `{{ … }}`; saving the SQL as a view lets it use them. Clients reach the
+  gateway without authentication, and even sandboxed Jinja can exhaust
+  memory.
+- **Macro files are read once, at load.** A file broken on disk changes
+  nothing until the next reload, and the live reload keeps the last good
+  macros when an edit is broken.
+- **A description is the comment directly above a macro**, with no blank line
+  between. A file's header comment describes no macro.
+- **The drift agent lists a project's own macros.** It leaves out
+  overrides of built-ins, and macros that aren't defined for every engine.
+  Its validation copies `config/macros/`.
+- **Trino has no exact percentile aggregate**, so the README's override
+  example is an exact percentile on Pinot.
+
 ## Checklist
 
 - [x] WS0: `macros.py`, `Ontology.macros`, the compiler's adapter from the ontology, `parse_fragment(read=)`, loading
 - [x] WS1: templated ontology snippets, load-time validation, the override proof, tests
-- [ ] WS2: macros in views and steps, reload, catalog and MCP, tests
-- [ ] WS3: drift agent context, `init` scaffold, docs, tests
+- [x] WS2: macros in views and steps, reload, catalog and MCP, tests
+- [x] WS3: drift agent context, `init` scaffold, docs, tests
 - [ ] WS4: merge, end-to-end, architecture docs, v0.5.0 release
 - [ ] WS4: wiki-pulse adoption, verified on the live stack

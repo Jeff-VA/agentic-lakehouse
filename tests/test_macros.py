@@ -125,3 +125,24 @@ def test_a_files_header_comment_isnt_a_description(tmp_path):
     engine = {m.name: m.description for m in ProjectMacros(None).catalog()}
     assert engine["quote"].startswith("Output column names.")  # not the engine file's header
     assert engine["percentile"].startswith("Exact percentile")  # duckdb.sql's comment, not its header
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("{{ adapter.__init__.__globals__ }}", "not allowed in a macro: "),  # Python's internals, out of reach
+        ("{{ human_edit.__class__ }}", "not allowed in a macro: "),
+        ("{{ 1 / 0 }}", "ZeroDivisionError: division by zero"),  # any failure is a MacroError, which the config reports
+    ],
+)
+def test_rendering_is_sandboxed_and_every_failure_is_a_macro_error(macros, text, message):
+    with pytest.raises(MacroError, match=message):
+        macros.render(text, "trino")
+
+
+def test_macro_files_are_read_once(tmp_path):
+    (tmp_path / "default.sql").write_text(DEFAULT)
+    loaded = ProjectMacros(tmp_path)
+    (tmp_path / "default.sql").write_text("{% macro broken( %}")  # broken on disk after loading
+    assert loaded.render("{{ human_edit() }}", "pinot") == "is_bot = false AND is_anonymous = false"
+    assert "human_edit" in {m.name for m in loaded.catalog()}

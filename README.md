@@ -459,7 +459,8 @@ SELECT * FROM read_parquet('http://127.0.0.1:8000/sql?format=parquet&errors=inli
 ```
 
 The SQL may also be a composed view's: parts in a `WITH` clause, then any SQL
-over them (see [Views](#views)). `agentic-lakehouse duckdb` sets DuckDB up
+over them (see [Views](#views)). It can't call the project's macros
+(`{{ ... }}`): only the project's own files can, so save the SQL as a view. `agentic-lakehouse duckdb` sets DuckDB up
 with macros for all of this: see [SQL access](#sql-access-duckdb-and-dbeaver).
 
 ### GET /status
