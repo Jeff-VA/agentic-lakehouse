@@ -16,6 +16,9 @@ needs to change in it, change it there and upgrade the pin, not here.
   the rollups, and the checks a rollup must pass before it publishes.
 - `config/views/*.sql`: named queries that dashboards and agents read.
 - `config/dashboards/*.html`: pages of live chart tags, at `/d/<name>`.
+- `tools/duckdb/`: SQL access from DuckDB and DBeaver, to the Iceberg tables
+  and through the gateway. `agentic-lakehouse duckdb` writes it from
+  `config/deployment.yaml`; run that again rather than editing it.
 - Python modules next to `config/`: the project's own code, such as a
   dataset's `simulator: module:function`.
 
