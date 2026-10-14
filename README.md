@@ -628,6 +628,93 @@ rejected, for example integer division (`//`), which DuckDB truncates and
 Trino rounds. Filter values sent by clients are built as escaped literals,
 never pasted into SQL as text.
 
+### Macros
+
+A project names its business definitions once, writes SQL that differs by
+engine, and changes how a built-in compiles, with Jinja macros of its own in
+`config/macros/`. The folder mirrors the engine's
+[`templates/macros/`](agentic_lakehouse/templates/macros/):
+
+| File | Holds |
+|---|---|
+| `default.sql` | macros for every engine |
+| `pinot.sql`, `trino.sql`, `duckdb.sql` | an engine's own versions, optional |
+
+For each engine, a macro is looked up in the project's `<engine>.sql`, the
+engine's `<engine>.sql`, the project's `default.sql`, then the engine's
+`default.sql`: an engine-specific macro beats a generic one, and at the same
+level the project's beats the engine's. A comment right before a macro
+describes it; `/catalog`, MCP's `list_metrics` and the drift agent's prompt
+show it to people and agents.
+
+A business definition, written once in `default.sql`:
+
+```sql
+{# An edit by a person with an account: not a bot, not anonymous. #}
+{% macro human_edit() %}is_bot = false AND is_anonymous = false{% endmacro %}
+```
+
+is called by name from the ontology's SQL (a dimension's `sql`, a metric's
+`sql` and `filters`), from views and from steps:
+
+```yaml
+- name: human_edits
+  description: Edits by people with accounts.
+  agg: count
+  filters: ["{{ human_edit() }}"]
+```
+
+SQL that differs by engine gets a generic version and an engine's own:
+
+```sql
+-- config/macros/default.sql
+{# The host of a URL, e.g. en.wikipedia.org. #}
+{% macro url_host(column) %}regexp_extract({{ column }}, '^https?://([^/]+)', 1){% endmacro %}
+
+-- config/macros/trino.sql
+{% macro url_host(column) %}url_extract_host({{ column }}){% endmacro %}
+```
+
+A dimension with `sql: "{{ url_host('page_url') }}"` (each argument is SQL,
+in quotes) uses `url_extract_host` on Trino and the regular expression on
+Pinot and DuckDB. An ontology snippet that calls a macro is rendered for
+each engine, then parsed in that engine's dialect, so the SQL around the
+call must be portable; anything engine-specific belongs in a macro. Views
+and steps are written for Trino, so they get Trino's versions.
+
+The engine's own macros render every query, so a project's version of one
+changes every query compiled for that engine. Pinot's percentile is an
+approximate t-digest; this makes it exact, on Pinot only:
+
+```sql
+-- config/macros/pinot.sql
+{# Exact, where the built-in t-digest is approximate. #}
+{% macro percentile(expr, fraction) %}PERCENTILE({{ expr }}, {{ "%g" | format(fraction * 100) }}){% endmacro %}
+```
+
+The same `percentile` in `default.sql` would change nothing, since every
+engine has its own. (Trino has no exact percentile aggregate, and one built
+from `array_agg` isn't a single aggregate call, which the table below
+requires.)
+
+Loading the config compiles every model for every engine with the project's
+macros: Pinot's and Trino's SQL must parse, and DuckDB's must run, merge
+included. That catches SQL that doesn't parse or run, not a change in
+meaning, so an override must keep what its built-in promises:
+
+| Built-in | Must keep true |
+|---|---|
+| `count`, `sum`, `avg`, `min`, `max` | One aggregate call: a metric's `filters` follow it as `FILTER (WHERE …)`. Results from both tiers combine: counts and sums are added, minimums and maximums compared, and an average is a sum over a count. `count(none)` counts rows. |
+| `count_distinct`, `percentile` | One aggregate call. These are never combined across tiers, so they can be approximate. `percentile` gets a fraction, such as 0.99. |
+| `filtered(aggregate, predicate)` | The aggregate over only the rows where `predicate` holds. |
+| `ratio(numerator, denominator)` | Floating-point division, NULL rather than an error when the denominator is 0. DuckDB's also merges averages across tiers. |
+| `quote(name)` | Quotes an identifier, keeping the name as it is: results and the cross-tier merge find columns by name. |
+| `timestamp(ts)` | A literal for the UTC datetime `ts` that the time column compares with. Pinot's must stay epoch milliseconds, rounded up (`ts \| epoch_millis`), as Pinot stores timestamps. |
+| `time_bucket(expr, grain)` | The start of the bucket, as a `TIMESTAMP`, like `date_trunc` (weeks start on Monday): the router splits a range at bucket boundaries it works out itself. |
+| `limit(n)` | `n` is a row count or none. Pinot's must keep a high limit for none: Pinot returns 10 rows without one, and each tier's part of a query split across tiers has no limit. |
+
+Design: [`docs/design/project-macros.md`](docs/design/project-macros.md).
+
 ### Routing across tiers
 
 Pinot keeps the last 7 days. Iceberg holds everything up to the flush
@@ -875,6 +962,7 @@ that already has a pending patch isn't proposed (or paid for) again.
 | [`quality_rules.yaml`](config/quality_rules.yaml) | the checks each rollup or step must pass |
 | `pipelines.yaml` | steps: SQL or Python transformations, each writing a table |
 | [`deployment.yaml`](config/deployment.yaml) | service endpoints (a container-network version lives in `docker/config/`) |
+| `macros/*.sql` | SQL macros: business definitions, engine-specific SQL and overrides of the built-ins ([Macros](#macros)) |
 | `views/*.sql` | named queries that dashboards and agents read, at `/views/<name>` |
 | `dashboards/*.html` | dashboards, served at `/d/<name>` (and at `/` when there is just one) |
 
