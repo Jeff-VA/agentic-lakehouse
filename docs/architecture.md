@@ -120,6 +120,9 @@ and dashboards read the same versioned tables. The diagram shows
   dimensions, becomes a semantic query, and is routed across both tiers, so it
   includes events from seconds ago. Over Iceberg tables (a gold rollup, say)
   it's plain Trino SQL. Views are checked against the config when it loads.
+  A **composed** view puts semantic queries and table queries in a `WITH`
+  clause, then runs any SQL over their answers in a sandboxed DuckDB, for
+  example to compare two time windows or join a model with a gold table.
 - **A feed** ([`agentic_lakehouse/live.py`](../agentic_lakehouse/live.py)) keeps one view with one set
   of parameters fresh while anyone watches, and pushes a new result only when
   it changed. A view over a model reruns every 10 seconds; a view over tables
@@ -135,6 +138,21 @@ and dashboards read the same versioned tables. The diagram shows
   page in headless Chrome with live data. Open pages reload when a file is
   saved; an edit that breaks a view keeps the last good version and says what
   broke.
+
+## SQL access
+
+People who work in SQL have two ways in. Both work from DBeaver, the DuckDB
+CLI or a notebook.
+
+| Way in | What it reads | Fresh to |
+|---|---|---|
+| `lake.<namespace>.<table>`: DuckDB attaches the Iceberg catalog | raw and gold tables, any SQL | the last flush or rollup run |
+| `gateway_view(name, params)`, `lakehouse_sql('…')`: DuckDB reads the gateway's answers as Parquet | views, and SQL written like one, composed views included | the second, for anything that reads a model |
+
+`agentic-lakehouse duckdb` writes the setup from the project's config. The
+gateway does the cutting and merging in both cases, so a DuckDB user gets
+the same numbers as a dashboard. The design is in
+[design/sql-access.md](design/sql-access.md).
 
 ## What you edit, what it drives
 

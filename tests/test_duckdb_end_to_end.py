@@ -1,7 +1,7 @@
 """DuckDB end to end: the generated macros reading the gateway's answers as Parquet, in a real DuckDB.
 
-The gateway is the stand-in, served over HTTP. These need GET /views/<name> and GET /sql to answer
-format=parquet, with errors=inline (docs/design/sql-access.md); until then the module is skipped.
+The gateway is the stand-in, served over HTTP; GET /views/<name> and GET /sql answer with
+format=parquet and errors=inline (docs/design/sql-access.md).
 """
 
 from pathlib import Path
@@ -15,7 +15,6 @@ from agentic_lakehouse.config import load_platform
 from agentic_lakehouse.duckdb_client import render
 from agentic_lakehouse.testing import standin_gateway
 
-pytestmark = pytest.mark.skip(reason="needs the /sql endpoint and format=parquet (WS2); enabled when WS2 merges")
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "playback" / "config"
 
@@ -97,3 +96,36 @@ def test_a_mistake_comes_back_as_an_error_row(con, sql, mentions):
     columns, rows = ask(con, sql)
     assert columns == ["error"]
     assert len(rows) == 1 and mentions in rows[0][0]
+
+
+def test_a_composed_query_compares_two_windows(con):
+    """A WITH query sent from DuckDB: each part is cut across the tiers by the gateway, the rest
+    runs over their answers, and DuckDB gets the result."""
+    columns, rows = ask(
+        con,
+        """SELECT * FROM lakehouse_sql('
+            WITH recent AS (
+              SELECT isp_provider, unique_sessions FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''1'' HOUR
+            ),
+            usual AS (
+              SELECT isp_provider, unique_sessions AS sessions_6h FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''6'' HOUR
+            )
+            SELECT recent.isp_provider, recent.unique_sessions, usual.sessions_6h,
+                   rank() OVER (ORDER BY recent.unique_sessions DESC) AS place
+            FROM recent JOIN usual USING (isp_provider)
+            ORDER BY place
+        ')""",
+    )
+    assert columns == ["isp_provider", "unique_sessions", "sessions_6h", "place"]
+    assert rows and all(last_hour <= six_hours for _, last_hour, six_hours, _ in rows)
+    assert [place for *_, place in rows] == sorted(place for *_, place in rows)
+
+
+def test_a_composed_query_with_a_mistake_answers_with_the_error(con):
+    columns, rows = ask(
+        con,
+        "SELECT * FROM lakehouse_sql('WITH r AS (SELECT isp_provider, unique_sessions FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''1'' HOUR) "
+        "SELECT r.isp_provider FROM r JOIN gold.hourly_isp_quality AS g ON g.isp_provider = r.isp_provider')",
+    )
+    assert columns == ["error"]
+    assert "read the table gold.hourly_isp_quality in a CTE of its own" in rows[0][0]

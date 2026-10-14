@@ -305,11 +305,31 @@ WS2 and WS3 can be built against the WS0 interfaces: before WS1 lands,
   caps and the DuckDB `memory_limit` bound it. Revisit if real views need
   more.
 
+## What implementation found
+
+- **`HEAD`** is answered 200 with the content type and no `Content-Length`,
+  without running the query. DuckDB then reads each answer with one plain
+  `GET`. With a real length it would read Parquet in ranges, up to 6
+  requests, each running the query again.
+- **`force_download` stays** in the generated `session.sql`. It makes every
+  gateway read a single `GET`, with no `HEAD`. On the live stack, Iceberg
+  reads through `lake.*` stay ranged with it on: 172 ranged requests against
+  335 with it off, with the same timings. It doesn't fetch whole data files.
+- **`url_encode` is a core function** in DuckDB 1.5.6, so `lakehouse_sql`
+  needs no fallback. DBeaver's DuckDB driver downloads the latest release.
+- **Known limits**, possible follow-ups:
+  - Exports drop `notes`, `truncated` and `coverage`. Response headers or
+    Parquet metadata could carry them.
+  - An empty Parquet result types number columns as float64, because
+    `ViewColumn` doesn't distinguish integer from decimal.
+  - Exports are built from rows as Python dicts.
+  - Ad-hoc SQL errors name the view "sql".
+
 ## Checklist
 
 - [x] WS0: `run_view` refactor, `ViewResult.parts`, `ViewInfo.source` "composed"
 - [x] WS1: composed views (parse, validate, execute, sandbox, live, catalog) with tests
-- [ ] WS2: formats, inline errors, `HEAD`, `/sql`, MCP `query_sql`, docs, tests
+- [x] WS2: formats, inline errors, `HEAD`, `/sql`, MCP `query_sql`, docs, tests
 - [x] WS3: `duckdb_client.py`, `agentic-lakehouse duckdb`, `init` integration, docs, tests (keep `force_download` even with HEAD: it makes each read one GET)
 - [ ] WS4: merge, end-to-end tests, architecture docs, v0.4.0 release
 - [ ] WS4: wiki-pulse adoption, verified on the live stack

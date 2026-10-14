@@ -51,7 +51,7 @@ def to_csv(columns: Sequence[ViewColumn], rows: Rows) -> bytes:
 
 def to_parquet(columns: Sequence[ViewColumn], rows: Rows) -> bytes:
     """A Parquet file with a column per view column, typed by the view column's type."""
-    arrays =[_array(column, [row.get(column.name) for row in rows]) for column in columns]
+    arrays = [_array(column, [row.get(column.name) for row in rows]) for column in columns]
     table = pa.Table.from_arrays(arrays, names=[c.name for c in columns])
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink)

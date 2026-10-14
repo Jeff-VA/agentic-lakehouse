@@ -132,7 +132,7 @@ writes a proposal that the dashboard lists. Apply it with
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.3.5"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.4.0"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
@@ -446,6 +446,10 @@ the body's `params` with `POST`. A `400` says what to fix in the SQL.
 SELECT * FROM read_parquet('http://127.0.0.1:8000/sql?format=parquet&errors=inline&q='
   || url_encode('SELECT isp_provider, p99_ttfb FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''1'' HOUR'));
 ```
+
+The SQL may also be a composed view's: parts in a `WITH` clause, then any SQL
+over them (see [Views](#views)). `agentic-lakehouse duckdb` sets DuckDB up
+with macros for all of this: see [SQL access](#sql-access-duckdb-and-dbeaver).
 
 ### GET /status
 
