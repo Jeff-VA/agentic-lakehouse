@@ -13,8 +13,10 @@ from typing import Annotated, Any, Literal, Self, Union
 
 import sqlglot
 import yaml
-from pydantic import AfterValidator, BaseModel, ConfigDict, Discriminator, Field, StringConstraints, Tag, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Discriminator, Field, PrivateAttr, StringConstraints, Tag, model_validator
 from sqlglot import exp
+
+from agentic_lakehouse.macros import NO_PROJECT_MACROS, ProjectMacros
 
 # Names become SQL column aliases and API/MCP identifiers, so keep them plain:
 # lowercase snake_case only. This also rules out SQL injection through a name.
@@ -25,8 +27,9 @@ Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 FRAGMENT_DIALECT = "duckdb"
 
 
-def parse_fragment(sql: str) -> exp.Expression:
-    """Parse an ontology SQL fragment into a sqlglot expression tree.
+def parse_fragment(sql: str, read: Any = FRAGMENT_DIALECT) -> exp.Expression:
+    """Parse an ontology SQL fragment into a sqlglot expression tree, in `read`'s dialect
+    (DuckDB's, unless it was rendered for an engine by a project macro).
 
     A fragment must be one scalar expression over the source table's columns.
     Statements, subqueries, aliases and `*` are rejected, and so are aggregate
@@ -36,7 +39,7 @@ def parse_fragment(sql: str) -> exp.Expression:
     # Parsing it as a SELECT list item catches anything that isn't a single
     # expression, including a smuggled second statement ("x; DROP TABLE t").
     try:
-        statements = sqlglot.parse(f"SELECT {sql}", read=FRAGMENT_DIALECT)
+        statements = sqlglot.parse(f"SELECT {sql}", read=read)
     except sqlglot.ParseError as e:
         raise ValueError(f"invalid SQL {sql!r}: {e.errors[0]['description']}") from None
     select = statements[0] if len(statements) == 1 else None
@@ -230,6 +233,12 @@ class SemanticModel(StrictModel):
 class Ontology(StrictModel):
     version: str
     models: list[SemanticModel] = Field(min_length=1)
+    _macros: Any = PrivateAttr(default=None)  # set by load_platform from config/macros/
+
+    @property
+    def macros(self) -> "ProjectMacros":
+        """The SQL macros this ontology compiles with: its project's over the engine's."""
+        return self._macros or NO_PROJECT_MACROS
 
     @model_validator(mode="after")
     def _check_unique_names(self) -> Self:

@@ -7,7 +7,8 @@ time range. SqlCompiler turns it into SQL for DuckDB, Trino or Pinot:
 - templates/macros/<engine>.sql renders the engine-specific parts
   (aggregations, time buckets, literals) and overrides only what differs from
   templates/macros/default.sql, like dbt's adapter.dispatch. Supporting another
-  engine means writing one macro file.
+  engine means writing one macro file. A project's own macros (config/macros/,
+  agentic_lakehouse/macros.py) come first, so it can add and override them.
 - SQL from the ontology and filter values from clients never reach a template
   as raw text: sqlglot parses or builds them and prints them in the engine's
   syntax, correctly quoted.
@@ -17,11 +18,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, NamedTuple, Self
 
-import jinja2
 from pydantic import Field, field_validator, model_validator
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
 
+from agentic_lakehouse.macros import Adapter
 from agentic_lakehouse.ontology import (
     AggregateMetric,
     Dimension,
@@ -36,9 +37,6 @@ from agentic_lakehouse.ontology import (
 Engine = Literal["duckdb", "trino", "pinot"]
 Grain = Literal["minute", "hour", "day", "week", "month"]
 Scalar = str | bool | int | float
-
-TEMPLATES = Path(__file__).parent / "templates"
-
 
 class Pinot(Dialect):
     """sqlglot dialect for Apache Pinot, which sqlglot doesn't ship.
@@ -133,49 +131,6 @@ class _Column(NamedTuple):
     sql: str
 
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-
-
-def _environment() -> jinja2.Environment:
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(TEMPLATES),
-        undefined=jinja2.StrictUndefined,  # a typo in a template fails instead of rendering ""
-        trim_blocks=True,
-        lstrip_blocks=True,
-        autoescape=False,  # this renders SQL, not HTML; values are already escaped by sqlglot
-    )
-    env.filters["sql_timestamp"] = lambda ts: ts.replace(tzinfo=None).isoformat(sep=" ")
-    # Rounded up: Pinot holds whole milliseconds, and for an integer x, x >= 12.0005 is x >= 13
-    # (likewise for <). Flooring would put an event at 12 ms on both sides of a tier split.
-    env.filters["epoch_millis"] = lambda ts: -((_EPOCH - ts) // timedelta(milliseconds=1))
-    return env
-
-
-class _Adapter:
-    """dbt-style macro dispatch: the engine's macro file first, then default.sql.
-
-    Each macro comes back as a function returning a stripped SQL string. Macro
-    files see this object as `adapter`, so macros calling each other get the
-    same engine-first lookup.
-    """
-
-    def __init__(self, env: jinja2.Environment, engine: Engine):
-        self.engine = engine
-        context = {"adapter": self}
-        self._modules = [
-            env.get_template(f"macros/{engine}.sql").make_module(context),
-            env.get_template("macros/default.sql").make_module(context),
-        ]
-
-    def __getattr__(self, name: str):
-        if name.startswith("_"):  # not a macro; also stops recursion before _modules exists
-            raise AttributeError(name)
-        for module in self._modules:
-            if (macro := getattr(module, name, None)) is not None:
-                return lambda *args: str(macro(*args)).strip()
-        raise AttributeError(f"no SQL macro '{name}' for engine '{self.engine}'")
-
-
 # Expressions that are safe as an operand without parentheses.
 _ATOMIC = (exp.Column, exp.Literal, exp.Boolean, exp.Null, exp.Func, exp.Paren)
 
@@ -217,8 +172,8 @@ class SqlCompiler:
     def __init__(self, ontology: Ontology):
         self.ontology = ontology
         self._model_of = {metric.name: model for model in ontology.models for metric in model.metrics}
-        self._env = _environment()
-        self._adapters: dict[Engine, _Adapter] = {}
+        self._macros = ontology.macros  # the project's, over the engine's
+        self._env = self._macros.env
 
     def model_for(self, query: MetricQuery) -> SemanticModel:
         """The model the query's metrics belong to. Raises QueryError if they don't share one."""
@@ -279,7 +234,7 @@ class SqlCompiler:
                     denominator = self._aggregate_sql(metrics[metric.denominator], adapter, dialect)
                     aggregates.append(_Column(name, adapter.ratio(numerator, denominator)))
 
-        return self._env.get_template("query.sql").render(
+        return self._env.get_template("engine/query.sql").render(
             adapter=adapter,
             columns=grouped + aggregates,
             table=table,
@@ -312,7 +267,7 @@ class SqlCompiler:
                 columns.append(_Column(name, _final_sql(metrics[name], metrics, adapter)))
             else:
                 columns.append(_Column(name, quote(name)))
-        return self._env.get_template("merge.sql").render(
+        return self._env.get_template("engine/merge.sql").render(
             adapter=adapter,
             columns=columns,
             relation=relation,
@@ -321,10 +276,8 @@ class SqlCompiler:
             limit=query.limit,
         ).strip()
 
-    def _adapter(self, engine: Engine) -> _Adapter:
-        if engine not in self._adapters:
-            self._adapters[engine] = _Adapter(self._env, engine)
-        return self._adapters[engine]
+    def _adapter(self, engine: Engine) -> Adapter:
+        return self._macros.adapter(engine)
 
     @staticmethod
     def _order_by(query: MetricQuery, model: SemanticModel, columns: list[_Column]) -> list[OrderBy]:
@@ -346,7 +299,7 @@ class SqlCompiler:
                 raise QueryError(f"{where}: unknown dimension '{name}' in model '{model.name}'. Available: {available}")
 
     @staticmethod
-    def _aggregate_sql(metric: AggregateMetric, adapter: _Adapter, dialect: str | type[Dialect]) -> str:
+    def _aggregate_sql(metric: AggregateMetric, adapter: Adapter, dialect: str | type[Dialect]) -> str:
         expr = parse_fragment(metric.sql).sql(dialect=dialect) if metric.sql else None
         args = (expr, metric.percentile) if metric.agg == "percentile" else (expr,)
         aggregate = getattr(adapter, metric.agg)(*args)
@@ -374,7 +327,7 @@ def _partial_pieces(metric: AggregateMetric) -> list[tuple[str, AggregateMetric]
     return [(f"_{metric.agg}__{metric.name}", metric)]
 
 
-def _final_sql(metric: Metric, metrics: dict, adapter: _Adapter) -> str:
+def _final_sql(metric: Metric, metrics: dict, adapter: Adapter) -> str:
     """DuckDB expression combining a metric's partial columns across tiers."""
     quote = adapter.quote
     if not isinstance(metric, AggregateMetric):

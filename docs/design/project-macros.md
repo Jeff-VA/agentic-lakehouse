@@ -213,7 +213,7 @@ API, and WS4 merges them.
 
 ## Checklist
 
-- [ ] WS0: `macros.py`, `Ontology.macros`, the compiler's adapter from the ontology, `parse_fragment(read=)`, loading
+- [x] WS0: `macros.py`, `Ontology.macros`, the compiler's adapter from the ontology, `parse_fragment(read=)`, loading
 - [ ] WS1: templated ontology snippets, load-time validation, the override proof, tests
 - [ ] WS2: macros in views and steps, reload, catalog and MCP, tests
 - [ ] WS3: drift agent context, `init` scaffold, docs, tests

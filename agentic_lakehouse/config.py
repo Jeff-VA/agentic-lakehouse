@@ -27,6 +27,7 @@ from pydantic import Field, model_validator
 from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
 from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name
 from agentic_lakehouse.hooks import SPEC
+from agentic_lakehouse.macros import MacroError, ProjectMacros
 from agentic_lakehouse.quality import QualityConfig, TableName
 from agentic_lakehouse.views import View, ViewError, describe_query, load_views, tables_in
 
@@ -370,8 +371,13 @@ def load_platform(config_dir: str | Path) -> Platform:
     files that disagree or an invalid view.
     """
     config_dir = Path(config_dir)
+    ontology = Ontology.model_validate(_load_yaml(config_dir / "ontology.yaml"))
+    try:
+        ontology._macros = ProjectMacros(config_dir / "macros")
+    except MacroError as e:
+        raise ConfigError(str(e)) from None
     platform = Platform(
-        ontology=Ontology.model_validate(_load_yaml(config_dir / "ontology.yaml")),
+        ontology=ontology,
         ingestion=IngestionConfig.model_validate(_load_yaml(config_dir / "ingestion.yaml")),
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
         quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),
