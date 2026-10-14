@@ -255,7 +255,7 @@ def test_editing_a_macro_reloads_the_views_the_queries_and_open_pages(tmp_path):
     shutil.copytree(EXAMPLE, config)
     (config / "macros").mkdir(exist_ok=True)
     macros = config / "macros" / "default.sql"
-    macros.write_text(PLAYBACK_MACROS)
+    macros.write_text((macros.read_text() + "\n" if macros.exists() else "") + PLAYBACK_MACROS)  # after the example's own, if any
     (config / "views" / "big_isps.sql").write_text(BIG_ISPS)
     project = Project(config, gateway=standin_gateway)
     gateway = standin_gateway(load_platform(config))
@@ -269,7 +269,7 @@ def test_editing_a_macro_reloads_the_views_the_queries_and_open_pages(tmp_path):
         with client.stream("GET", f"{url}/live") as response:
             stream = events(response)
             assert next(stream)[0] == "hello"
-            macros.write_text(PLAYBACK_MACROS.replace("'comcast', 'att'", "'cox', 'frontier'") + RATIO)
+            macros.write_text(macros.read_text().replace("'comcast', 'att'", "'cox', 'frontier'") + RATIO)
             assert next(stream) == ("reload", {})
             assert isps(gateway.views["big_isps"]) == {"cox", "frontier"}  # rendered again
             sql = gateway.view("big_isps", include_sql=True).sql
