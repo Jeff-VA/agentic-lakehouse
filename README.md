@@ -182,9 +182,10 @@ The examples use the example project's metrics and views.
 | `GET /catalog` | see the metrics and dimensions you can ask for |
 | `POST /query` | ask for metrics over a time range |
 | `GET /views` | see the project's views: parameters, columns, SQL |
-| `GET /views/{name}` | run a view |
+| `GET /views/{name}` | run a view, as JSON, CSV or Parquet |
 | `GET /views/{name}/live` | follow a view as it changes (Server-Sent Events) |
 | `GET /live` | follow several views over one connection, as dashboards do |
+| `GET /sql`, `POST /sql` | run SQL over models and tables without saving a view |
 | `GET /status` | see how fresh the data is, the quality gates, and schema drift |
 | `GET /rollups/{table}` | read a gold table's recent rows |
 | `GET /d/{name}`, `GET /` | open a dashboard |
@@ -329,6 +330,23 @@ a parameter the view doesn't take or a value it doesn't accept
 (`parameter 'minutes' must be a whole number, not 'abc'`), and a `502` that an
 engine failed.
 
+Add `format=csv` or `format=parquet` to get the rows as a file, for SQL
+clients such as DuckDB. A file holds up to 100,000 rows, where JSON holds
+5,000, and it keeps its columns when there are no rows: CSV always has its
+header row, and Parquet's columns are typed from the view's. CSV writes times
+in ISO 8601 UTC (`2026-10-12T00:00:00Z`). With `errors=inline`, a file request
+that fails still answers `200`, with one row in one column, `error`, holding
+the message: a SQL client shows it, where it would show a bare `HTTP 400`.
+JSON always answers with the status code.
+
+```sql
+-- DuckDB, with its httpfs extension
+SELECT * FROM read_parquet('http://127.0.0.1:8000/views/isp_now?format=parquet&errors=inline&minutes=30');
+```
+
+`HEAD` answers with the status and content type `GET` would, without running
+the view, so DuckDB needs no `SET force_download = true`.
+
 ### GET /views/{name}/live
 
 The same result as a Server-Sent Events stream: a `result` event now, and
@@ -397,6 +415,37 @@ source.addEventListener("reload", () => location.reload());
 ```
 
 `/al.js` does all of this for dashboards.
+
+### GET and POST /sql
+
+SQL without a view file. It runs the way a view does (see [Views](#views)),
+with the same checks and the same result: read a model by name to get its
+metrics live across both tiers, or tables as `namespace.table` with any Trino
+SELECT. `GET` takes the SQL URL-encoded in `q`, for clients that can only
+`GET`, such as DuckDB. `POST` takes it in a JSON body.
+
+```bash
+curl -G http://127.0.0.1:8000/sql --data-urlencode "q=SELECT isp_provider, rebuffer_incidence_rate
+  FROM playback_telemetry WHERE event_ts >= now() - INTERVAL '1' HOUR"
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/sql -H 'Content-Type: application/json' -d '{
+  "sql": "SELECT isp_provider, max(p99_ttfb) AS worst_p99 FROM gold.hourly_isp_quality GROUP BY isp_provider"
+}'
+```
+
+The result is a view's, with `view` set to `sql`. `format`, `errors` and
+`include_sql` work as on `GET /views/{name}`, and go in the query string with
+`POST` too. To use parameters, start the SQL with a view's header comment
+(`description` and `params`), and give their values in the query string, or in
+the body's `params` with `POST`. A `400` says what to fix in the SQL.
+
+```sql
+-- DuckDB, with its httpfs extension; url_encode is built in
+SELECT * FROM read_parquet('http://127.0.0.1:8000/sql?format=parquet&errors=inline&q='
+  || url_encode('SELECT isp_provider, p99_ttfb FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''1'' HOUR'));
+```
 
 ### GET /status
 
@@ -483,6 +532,7 @@ which is what [`.mcp.json`](.mcp.json) sets up for Claude Code. Its tools:
 | `data_status` | | as `GET /status` |
 | `list_views` | | as `GET /views` |
 | `query_view` | `name`; optional `params`, `include_sql` | as `GET /views/{name}` |
+| `query_sql` | `sql`; optional `include_sql` | as `GET /sql` |
 | `check_dashboards` | | config errors, and each dashboard's problems by file and line |
 | `screenshot_dashboard` | `name`; optional `theme`, `width` | a PNG of the page with live data, and the problems it shows |
 
