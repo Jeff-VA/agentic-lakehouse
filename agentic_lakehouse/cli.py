@@ -22,6 +22,9 @@ simulator, from there too.
     check                    check the config, views and dashboards (exit 1 on problems)
     screenshot NAME          render dashboard NAME in headless Chrome, with live data:
                              writes NAME.png and lists the problems the page shows
+    duckdb [--out DIR]       write the DuckDB setup for SQL access, in DBeaver or the DuckDB
+                             CLI (tools/duckdb/): live views and SQL through the gateway, and
+                             the Iceberg tables read directly
 
 `docker compose -f docker/docker-compose.yml up -d --build` runs all of this in
 containers; the command is for development against the same stack.
@@ -40,6 +43,7 @@ from typing import get_args
 from confluent_kafka import Consumer
 from dotenv import load_dotenv
 
+from agentic_lakehouse import duckdb_client
 from agentic_lakehouse.api_gateway import Gateway, Project, create_app, create_mcp_server
 from agentic_lakehouse.browser import BrowserError
 from agentic_lakehouse.scaffold import create_project, engine_version
@@ -149,6 +153,11 @@ def main() -> None:
     screenshot.add_argument("--theme", choices=["light", "dark"], default="light")
     screenshot.add_argument("--width", type=int, default=1280, help="viewport width in CSS pixels (400 for a phone)")
     screenshot.add_argument("--out", help="where to write the PNG (default: NAME.png)")
+    duckdb_command = commands.add_parser("duckdb", help="write the DuckDB setup for SQL access, in DBeaver or the DuckDB CLI")
+    duckdb_command.add_argument(
+        "--gateway", default=duckdb_client.GATEWAY_URL, help=f"the gateway's URL, as DuckDB reaches it (default: {duckdb_client.GATEWAY_URL})"
+    )
+    duckdb_command.add_argument("--out", default="tools/duckdb", help="the folder to write setup.sql and session.sql in (default: tools/duckdb)")
     args = parser.parse_args()
     load_dotenv()  # ANTHROPIC_API_KEY for the drift agent, if kept in .env
 
@@ -269,6 +278,8 @@ def main() -> None:
         uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "mcp":
         create_mcp_server(Gateway.from_platform(platform), project=Project(platform.config_dir)).run("stdio")
+    elif args.command == "duckdb":
+        write_duckdb_setup(platform, args.gateway, Path(args.out))
 
 
 def init_project(path: str, engine: str | None) -> int:
@@ -283,6 +294,16 @@ def init_project(path: str, engine: str | None) -> int:
     print("  docker compose -f docker/docker-compose.yml up -d --build    # then open http://127.0.0.1:8000")
     print("  .venv/bin/agentic-lakehouse check && .venv/bin/pytest")
     return 0
+
+
+def write_duckdb_setup(platform: Platform, gateway: str, out: Path) -> None:
+    """Write setup.sql and session.sql into `out`, and say how to use them."""
+    setup_file, session_file = duckdb_client.write(platform, out, gateway)
+    print(f"wrote {setup_file} and {session_file}. With the stack running:")
+    print(f"  DuckDB CLI: duckdb my.duckdb < {setup_file}         # once per database")
+    print(f"              duckdb -init {session_file} my.duckdb   # each session")
+    print(f"  DBeaver:    in a DuckDB connection, run {setup_file.name} once (Execute SQL Script), and put each")
+    print(f"              line of {session_file.name} that isn't a comment in the connection's Bootstrap queries")
 
 
 def check(project: Project) -> int:

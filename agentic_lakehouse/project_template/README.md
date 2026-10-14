@@ -17,6 +17,16 @@ Then open http://127.0.0.1:8000 for the dashboards, `/docs` for the API, and
 http://127.0.0.1:4200 for the pipelines. Setup publishes 24 hours of synthetic
 events, and a stream keeps them coming until your producers write to Kafka.
 
+## Query it in SQL
+
+`tools/duckdb/` sets up DuckDB (DBeaver, the DuckDB CLI or a notebook) for this
+project: `lake.raw.*` and `lake.gold.*` read the Iceberg tables directly, and
+`gateway_view(...)` and `lakehouse_sql(...)` ask the gateway, which adds the
+live data. With the stack running, run `setup.sql` once per DuckDB database and
+`session.sql` in each session (in DBeaver, as the connection's bootstrap
+queries). After changing `config/deployment.yaml`, rewrite them with
+`.venv/bin/agentic-lakehouse duckdb`.
+
 ## Make it yours
 
 1. Describe your events in `config/ingestion.yaml` and what they mean in

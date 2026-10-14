@@ -771,6 +771,34 @@ platform's own status. Custom code reads the same live data with
 [`al.js`](agentic_lakehouse/static/al.js), and the example's
 [dashboard](examples/playback/config/dashboards/playback.html) uses most of them.
 
+### SQL access: DuckDB and DBeaver
+
+DuckDB, in DBeaver, its CLI or a notebook, reaches the data two ways:
+
+- **`lake.<namespace>.<table>`** reads the Iceberg tables directly, through
+  their REST catalog: `raw.*` and `gold.*`, as of the last flush or rollup run.
+  Treat them as read-only: the flush, rollups and steps own them.
+- **Through the gateway**, live data and history together, as dashboards see
+  them. `gateway_view(name, params)` reads a view, `lakehouse_sql(sql)` runs
+  SQL written like a view without saving it, and `gateway_views()` lists the
+  views and what each answers from. They read the gateway's answers as
+  Parquet, and a mistake (an unknown view, a bad parameter or query) comes back
+  as a row in an `error` column.
+
+`agentic-lakehouse duckdb` writes the setup into `tools/duckdb/`, from the
+project's `deployment.yaml` ([`duckdb_client.py`](agentic_lakehouse/duckdb_client.py));
+`init` does it for a new project. Run `setup.sql` once per DuckDB database,
+with the stack running (`duckdb my.duckdb < tools/duckdb/setup.sql`, or
+Execute SQL Script in DBeaver), and `session.sql` in each session
+(`duckdb -init tools/duckdb/session.sql my.duckdb`, or the DBeaver
+connection's bootstrap queries). Then:
+
+```sql
+SELECT * FROM gateway_view('isp_now', 'minutes=30');
+SELECT * FROM lakehouse_sql('SELECT isp_provider, p99_ttfb FROM playback_telemetry WHERE event_ts >= now() - INTERVAL ''6'' HOUR');
+SELECT isp_provider, max(p99_ttfb) FROM lake.gold.hourly_isp_quality GROUP BY isp_provider;
+```
+
 ### The drift agent
 
 [`agentic_lakehouse/agent_sync.py`](agentic_lakehouse/agent_sync.py) compares the live Iceberg schema
