@@ -10,9 +10,12 @@ it to the Iceberg table as a column. This agent then:
 3. Proposes config changes. Adding the new columns to ingestion.yaml is
    mechanical and done here; Claude proposes which of them deserve ontology
    dimensions or metrics, with names and descriptions, as structured output.
-4. Validates the proposal: the patched config must pass load_platform's checks,
-   and every proposed dimension and metric must compile and run on DuckDB over
-   the sampled rows. Errors go back to Claude to fix, up to `max_attempts` times.
+   The prompt lists the project's own macros (config/macros/), so a proposal
+   can reuse the business definitions they name instead of re-deriving them.
+4. Validates the proposal: the patched config, with the project's macros, must
+   pass load_platform's checks, and every proposed dimension and metric must
+   compile and run on DuckDB over the sampled rows. Errors go back to Claude to
+   fix, up to `max_attempts` times.
 5. Writes a patch of the config directory for a person to review and apply with
    `git apply`. It never edits config in place.
 """
@@ -47,6 +50,7 @@ from ruamel.yaml.comments import CommentedMap
 from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler
 from agentic_lakehouse.config import ColumnType, ConfigError, Dataset, Platform, load_platform
 from agentic_lakehouse.engines import DuckDBEngine, EngineError
+from agentic_lakehouse.macros import ENGINES, MacroInfo, ProjectMacros
 from agentic_lakehouse.orchestrator import iceberg_catalog
 
 MODEL = "claude-opus-5-5"
@@ -165,6 +169,16 @@ suit count_distinct, or nothing. Prefer a few well-described definitions over on
 don't duplicate existing ones. Use the column profiles to choose types and infer units. List \
 every new column you don't model in not_modeled, with the reason."""
 
+# Added to the request when the project has macros of its own, followed by the list of them.
+MACROS_PROMPT = """\
+The project names its business definitions, and SQL that differs by engine, as macros in \
+config/macros/, listed below. A dimension's or metric's `sql` and a metric's `filters` can call \
+them with Jinja: `{{ macro_name() }}`, or `{{ macro_name('column_name') }}`, where each argument \
+is SQL text in quotes. When a macro already defines what you need, call it rather than writing \
+its SQL out again, so the definition stays in one place. A snippet that calls a macro is \
+rendered for each engine, with the engine's own version where it has one, then read in that \
+engine's SQL dialect, so the SQL around the call must be plain SQL that every engine reads."""
+
 
 def unmodeled_columns(dataset: Dataset, table: Table) -> list[str]:
     """Columns the dataset's Iceberg table has but ingestion.yaml doesn't list: fields producers
@@ -249,7 +263,8 @@ def propose_changes(
         raise DriftAgentError(
             "no Claude API credentials: put ANTHROPIC_API_KEY=... in .env (git-ignored) or the environment"
         )
-    messages = [{"role": "user", "content": _request(report, texts["ontology.yaml"])}]
+    macros = _own_macros(ProjectMacros(config_dir / "macros"))
+    messages = [{"role": "user", "content": _request(report, texts["ontology.yaml"], macros)}]
     for attempt in range(1, max_attempts + 1):
         log(f"drift: asking {MODEL} for a proposal (attempt {attempt} of {max_attempts})")
         response = _ask(client, messages)
@@ -300,14 +315,39 @@ def _ask(client: anthropic.Anthropic, messages: list[dict]):
     return response
 
 
-def _request(report: DriftReport, ontology_text: str) -> str:
+def _request(report: DriftReport, ontology_text: str, macros: list[MacroInfo]) -> str:
     columns = report.model_dump_json(include={"new_columns"}, indent=2)
-    return (
+    request = (
         f"Dataset `{report.dataset}` (Iceberg table {report.table}) has new columns. They are being added "
         f"to ingestion.yaml. Profiles from rows where at least one of them is set:\n\n"
         f"<new_columns>\n{columns}\n</new_columns>\n\n"
         f"The current ontology:\n\n<ontology_yaml>\n{ontology_text}</ontology_yaml>"
     )
+    if macros:
+        listed = "\n".join(_macro_line(macro) for macro in macros)
+        request += f"\n\n{MACROS_PROMPT}\n\n<project_macros>\n{listed}\n</project_macros>"
+    return request
+
+
+def _own_macros(macros: ProjectMacros) -> list[MacroInfo]:
+    """The project's macros that ontology SQL can call: its own, defined for every engine. The
+    engine's built-ins (count, percentile, quote, ...) and a project's overrides of them are left
+    out: the compiler applies those itself, for example through a metric's `agg`."""
+    own = []
+    for macro in macros.catalog():
+        if any(f.startswith("engine/") for f in macro.files):
+            continue
+        if "project/default.sql" in macro.files or all(f"project/{e}.sql" in macro.files for e in ENGINES):
+            own.append(macro)  # an ontology snippet is rendered for all three engines
+    return own
+
+
+def _macro_line(macro: MacroInfo) -> str:
+    """The macro as the prompt lists it: how to call it, what it means, and where its SQL differs."""
+    line = f"- {macro.name}({', '.join(macro.args)})" + (f": {macro.description}" if macro.description else "")
+    if engines := [e for e in ENGINES if f"project/{e}.sql" in macro.files]:
+        line += f"\n  Engine-specific versions: {', '.join(engines)}."
+    return line
 
 
 def _yaml() -> YAML:
@@ -367,11 +407,14 @@ def apply_proposal(text: str, proposal: Proposal) -> str:
 
 
 def validate(config_dir: Path, patched: dict[str, str], dataset_name: str, sample: pa.Table, proposal: Proposal) -> list[str]:
-    """Problems with the patched config, empty if none: it must load, and each
-    proposed dimension and metric must run on DuckDB over the sampled rows."""
+    """Problems with the patched config, empty if none: it must load, with the
+    project's macros, and each proposed dimension and metric must run on DuckDB
+    over the sampled rows."""
     with tempfile.TemporaryDirectory() as tmp:
         for path in config_dir.glob("*.yaml"):
             shutil.copy(path, tmp)
+        if (config_dir / "macros").is_dir():  # the proposal may call them
+            shutil.copytree(config_dir / "macros", Path(tmp) / "macros")
         for name, text in patched.items():
             (Path(tmp) / name).write_text(text)
         try:
@@ -379,24 +422,25 @@ def validate(config_dir: Path, patched: dict[str, str], dataset_name: str, sampl
         except (ValidationError, ConfigError) as e:
             return [str(e)]
 
-    time_column = platform.dataset(dataset_name).time_column
-    times = sample.column(time_column)
-    window = {"start": pc.min(times).as_py(), "end": pc.max(times).as_py() + timedelta(milliseconds=1)}
-    engine = DuckDBEngine()
-    engine.con.register("sample", sample)
-    compiler = SqlCompiler(platform.ontology)
-    models = {m.name: m for m in platform.ontology.models}
-    checks = [(f"metric '{m.name}'", {"metrics": [m.name]}) for m in proposal.metrics] + [
-        (f"dimension '{d.name}'", {"metrics": [models[d.model].metrics[0].name], "dimensions": [d.name]})
-        for d in proposal.dimensions
-    ]
-    errors = []
-    for label, fields in checks:
-        try:
-            engine.execute(compiler.compile(MetricQuery(**fields, **window), engine="duckdb", table="sample"))
-        except (QueryError, EngineError) as e:
-            errors.append(f"{label} failed on sampled data: {e}")
-    return errors
+        # Compiled while the copy exists: macro files are read when they're first used.
+        time_column = platform.dataset(dataset_name).time_column
+        times = sample.column(time_column)
+        window = {"start": pc.min(times).as_py(), "end": pc.max(times).as_py() + timedelta(milliseconds=1)}
+        engine = DuckDBEngine()
+        engine.con.register("sample", sample)
+        compiler = SqlCompiler(platform.ontology)
+        models = {m.name: m for m in platform.ontology.models}
+        checks = [(f"metric '{m.name}'", {"metrics": [m.name]}) for m in proposal.metrics] + [
+            (f"dimension '{d.name}'", {"metrics": [models[d.model].metrics[0].name], "dimensions": [d.name]})
+            for d in proposal.dimensions
+        ]
+        errors = []
+        for label, fields in checks:
+            try:
+                engine.execute(compiler.compile(MetricQuery(**fields, **window), engine="duckdb", table="sample"))
+            except (QueryError, EngineError) as e:
+                errors.append(f"{label} failed on sampled data: {e}")
+        return errors
 
 
 def render_patch(result: DriftProposal, config_dir: str | Path) -> str:
