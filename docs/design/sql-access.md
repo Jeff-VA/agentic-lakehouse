@@ -1,6 +1,6 @@
 # Design: SQL access to live and historical data
 
-Status: approved for implementation, 2026-10-14. Target release: v0.4.0.
+Status: shipped in v0.4.0, 2026-10-14.
 Tracking: the checklist at the end; update it as work lands.
 
 ## The problem
@@ -331,5 +331,9 @@ WS2 and WS3 can be built against the WS0 interfaces: before WS1 lands,
 - [x] WS1: composed views (parse, validate, execute, sandbox, live, catalog) with tests
 - [x] WS2: formats, inline errors, `HEAD`, `/sql`, MCP `query_sql`, docs, tests
 - [x] WS3: `duckdb_client.py`, `agentic-lakehouse duckdb`, `init` integration, docs, tests (keep `force_download` even with HEAD: it makes each read one GET)
-- [ ] WS4: merge, end-to-end tests, architecture docs, v0.4.0 release
-- [ ] WS4: wiki-pulse adoption, verified on the live stack
+- [x] WS4: merge, end-to-end tests, architecture docs, v0.4.0 release
+- [x] WS4: wiki-pulse adoption, verified on the live stack (2026-10-14): `reverts_vs_usual` ran its 7-day part on Trino and Pinot and merged it; DuckDB used the generated files for views, ad-hoc composed SQL, error rows and `lake.*`
+
+Follow-ups:
+- `al.js` shows tiny negative values as "-0.0%".
+- A step that publishes nothing before its table exists shows as "never ran" in `/status`.
