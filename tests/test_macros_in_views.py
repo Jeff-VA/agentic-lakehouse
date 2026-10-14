@@ -148,8 +148,9 @@ def starter(tmp_path) -> Path:
     create_project(tmp_path / "demo")
     config = tmp_path / "demo" / "config"
     (config / "macros").mkdir(exist_ok=True)
-    for name, text in STEP_MACROS.items():
-        (config / "macros" / name).write_text(text)
+    for name, text in STEP_MACROS.items():  # added to what init wrote, which the starter's ontology uses
+        path = config / "macros" / name
+        path.write_text((path.read_text() + "\n" if path.exists() else "") + text)
     (config / "pipelines.yaml").write_text(yaml.safe_dump({"version": "1.0.0", "steps": [DAILY]}, sort_keys=False))
     (config / "views" / "daily.sql").write_text("/*\ndescription: Events per category and day.\n*/\nSELECT day, category, events FROM gold.daily_activity")
     return config

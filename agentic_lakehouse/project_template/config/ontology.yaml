@@ -32,3 +32,8 @@ models:
         sql: units
         label: Units
         format: integer
+      - name: large_events
+        description: Number of large events (an amount of 500 or more).
+        agg: count
+        filters: ["{{ large_event() }}"]  # a business definition, in config/macros/default.sql
+        label: Large events

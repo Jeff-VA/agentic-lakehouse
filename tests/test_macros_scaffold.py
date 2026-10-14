@@ -8,6 +8,7 @@ from pathlib import Path
 import duckdb
 import pyarrow as pa
 import pytest
+import yaml
 from sqlglot import exp
 from test_agent_sync import claude
 
@@ -40,9 +41,9 @@ TRINO = """\
 """
 
 CHANNEL = ProposedDimension(model="activity", name="channel", type="string", description="Where the event came from: web or app.", sql=None)
-LARGE_EVENTS = ProposedMetric(
-    model="activity", name="large_events", description="Events with an amount of 500 or more.", type="aggregate",
-    agg="count", sql=None, percentile=None, filters=["{{ large_event() }}"], numerator=None, denominator=None,
+LARGE_APP_EVENTS = ProposedMetric(
+    model="activity", name="large_app_events", description="Large events from the app.", type="aggregate",
+    agg="count", sql=None, percentile=None, filters=["{{ large_event() }}", "channel = 'app'"], numerator=None, denominator=None,
 )
 
 
@@ -105,7 +106,7 @@ def test_the_drift_agent_offers_claude_the_projects_macros_and_validates_with_th
     (config / "macros" / "trino.sql").write_text(TRINO)
     requests = []
     # One attempt: the metric calls large_event(), so this fails unless validation knows the project's macros.
-    result = propose_changes(*drift, config, claude(proposal(LARGE_EVENTS), requests=requests), max_attempts=1, log=lambda m: None)
+    result = propose_changes(*drift, config, claude(proposal(LARGE_APP_EVENTS), requests=requests), max_attempts=1, log=lambda m: None)
 
     prompt = requests[0]["body"]["messages"][0]["content"]
     assert "can call them with Jinja" in prompt
@@ -115,12 +116,16 @@ def test_the_drift_agent_offers_claude_the_projects_macros_and_validates_with_th
         "- url_host(column): The host of a URL, e.g. en.wikipedia.org.",
         "  Engine-specific versions: trino.",
     ]
-    assert "- '{{ large_event() }}'" in result.patched["ontology.yaml"]
+    assert "large_app_events" in result.patched["ontology.yaml"] and "{{ large_event() }}" in result.patched["ontology.yaml"]
 
 
 @pytest.mark.parametrize("files", [None, {"trino.sql": TRINO.split("\n\n")[1]}], ids=["no folder", "only an override"])
 def test_the_drift_agent_says_nothing_of_macros_when_the_project_has_none_of_its_own(config, drift, files):
     shutil.rmtree(config / "macros")
+    ontology = yaml.safe_load((config / "ontology.yaml").read_text())
+    for model in ontology["models"]:  # the starter's metric that calls large_event() goes too
+        model["metrics"] = [m for m in model["metrics"] if m["name"] != "large_events"]
+    (config / "ontology.yaml").write_text(yaml.safe_dump(ontology, sort_keys=False))
     if files:
         (config / "macros").mkdir()
         for name, text in files.items():
