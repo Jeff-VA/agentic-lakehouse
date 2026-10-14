@@ -310,6 +310,6 @@ WS2 and WS3 can be built against the WS0 interfaces: before WS1 lands,
 - [x] WS0: `run_view` refactor, `ViewResult.parts`, `ViewInfo.source` "composed"
 - [x] WS1: composed views (parse, validate, execute, sandbox, live, catalog) with tests
 - [ ] WS2: formats, inline errors, `HEAD`, `/sql`, MCP `query_sql`, docs, tests
-- [ ] WS3: `duckdb_client.py`, `agentic-lakehouse duckdb`, `init` integration, docs, tests
+- [x] WS3: `duckdb_client.py`, `agentic-lakehouse duckdb`, `init` integration, docs, tests (keep `force_download` even with HEAD: it makes each read one GET)
 - [ ] WS4: merge, end-to-end tests, architecture docs, v0.4.0 release
 - [ ] WS4: wiki-pulse adoption, verified on the live stack
