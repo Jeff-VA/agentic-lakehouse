@@ -1,6 +1,6 @@
 # Design: project macros
 
-Status: approved for implementation, 2026-10-14. Target release: v0.5.0.
+Status: shipped in v0.5.0, 2026-10-14.
 Tracking: the checklist at the end; update it as work lands.
 
 ## The problem
@@ -243,4 +243,4 @@ API, and WS4 merges them.
 - [x] WS2: macros in views and steps, reload, catalog and MCP, tests
 - [x] WS3: drift agent context, `init` scaffold, docs, tests
 - [x] WS4: merge, end-to-end, architecture docs, v0.5.0 release
-- [ ] WS4: wiki-pulse adoption, verified on the live stack
+- [x] WS4: wiki-pulse adoption, verified on the live stack (2026-10-14): a query of human_share by site since Oct 12 ran Trino's url_extract_host on Iceberg and default.sql's regex on Pinot, merged; /catalog lists the project's macros
