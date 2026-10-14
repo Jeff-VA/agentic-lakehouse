@@ -242,5 +242,5 @@ API, and WS4 merges them.
 - [x] WS1: templated ontology snippets, load-time validation, the override proof, tests
 - [x] WS2: macros in views and steps, reload, catalog and MCP, tests
 - [x] WS3: drift agent context, `init` scaffold, docs, tests
-- [ ] WS4: merge, end-to-end, architecture docs, v0.5.0 release
+- [x] WS4: merge, end-to-end, architecture docs, v0.5.0 release
 - [ ] WS4: wiki-pulse adoption, verified on the live stack
