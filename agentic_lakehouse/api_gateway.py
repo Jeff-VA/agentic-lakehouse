@@ -11,7 +11,10 @@ The same operations are served over REST and over the Model Context Protocol
   proposals waiting for review: whether the data can be trusted right now
 
 REST:  GET /catalog, POST /query, GET /views, GET /views/{name}?<params>,
-       GET /status, GET /rollups/{table} (interactive docs at /docs)
+       GET and POST /sql (SQL run as a view, without a view file),
+       GET /status, GET /rollups/{table} (interactive docs at /docs).
+       Views and /sql answer in JSON, or with format=csv|parquet as files
+       for SQL clients such as DuckDB (agentic_lakehouse/formats.py)
 Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
        view's result each time it changes, and GET /live?view=<name>&view=...
        for several views over one connection (agentic_lakehouse/live.py)
@@ -38,7 +41,7 @@ from typing import Annotated, Any, Literal, get_args
 
 import pyarrow as pa
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -53,15 +56,17 @@ from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, Quer
 from agentic_lakehouse.config import ConfigError, Platform, load_platform
 from agentic_lakehouse.dashboards import check_dashboards, dashboard_files, describe_dashboard
 from agentic_lakehouse.engines import EngineError, QueryEngine, TrinoEngine
+from agentic_lakehouse.formats import MEDIA_TYPES, error_table, render
 from agentic_lakehouse.live import LiveViews
 from agentic_lakehouse.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
 from agentic_lakehouse.router import QueryResult, Router
 from agentic_lakehouse.steps import IcebergStepStore
-from agentic_lakehouse.views import ModelSource, View, ViewColumn, ViewError
+from agentic_lakehouse.views import ModelSource, TableSchemas, View, ViewColumn, ViewError, parse_view
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
+EXPORT_MAX_ROWS = 100_000  # CSV and Parquet results: files for SQL clients, not context windows
 STATIC = Path(__file__).parent / "static"  # al.js, the chart tags dashboards use
 BOOT = uuid.uuid4().hex  # this server process: a page that sees another one reloads
 
@@ -322,7 +327,10 @@ class Gateway:
     `views` (by name) and the `warehouse` that runs views over tables are
     optional, and so are `rollups`, `proposals_dir` and `schema_drift` (dataset
     name -> columns the config doesn't describe); without them the status
-    leaves out rollups, drift proposals and unmodeled columns.
+    leaves out rollups, drift proposals and unmodeled columns. `tables` are the
+    schemas of the tables ad-hoc SQL may read (Platform.table_schemas()); without
+    them it reads models only. Results hold at most `max_rows` rows as JSON, and
+    `export_max_rows` as CSV or Parquet.
     """
 
     def __init__(
@@ -336,6 +344,8 @@ class Gateway:
         schema_drift: Callable[[str], list[str]] | None = None,
         step_runs: Callable[[], list[StepInfo]] | None = None,
         max_rows: int = MAX_ROWS,
+        export_max_rows: int = EXPORT_MAX_ROWS,
+        tables: TableSchemas | None = None,
     ):
         self.router = router
         self.views = dict(views or {})
@@ -345,6 +355,8 @@ class Gateway:
         self.schema_drift = schema_drift
         self.step_runs = step_runs
         self.max_rows = max_rows
+        self.export_max_rows = export_max_rows
+        self.tables = dict(tables or {})
 
     @classmethod
     def from_platform(cls, platform: Platform, proposals_dir: str | Path = "proposals") -> "Gateway":
@@ -386,6 +398,7 @@ class Gateway:
             proposals_dir=proposals_dir,
             schema_drift=schema_drift,
             step_runs=step_runs,
+            tables=platform.table_schemas(),
         )
 
     def status(self) -> Status:
@@ -485,6 +498,14 @@ class Gateway:
             truncated=truncated,
             sql=result.sql if include_sql else None,
         )
+
+    def parse_sql(self, text: str) -> View:
+        """Ad-hoc SQL (/sql, and MCP's query_sql) as a view named "sql", to run with run_view.
+        Its header comment is optional: without one, the description is "ad-hoc query" and
+        there are no parameters. Raises ViewError saying what to fix."""
+        if not text.lstrip().startswith("/*"):
+            text = f"/*\ndescription: ad-hoc query\n*/\n{text}"
+        return parse_view("sql", text, self.router.compiler.ontology, self.tables)
 
     def view_catalog(self) -> ViewCatalog:
         return ViewCatalog(views=[_view_info(view) for view in self.views.values()])
@@ -693,7 +714,8 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
             "Times are UTC; ranges are half-open [start, end). Read `coverage` and `notes` in every result: "
             "an answer can cover less than the requested range, and the notes say why. "
             "Views are the project's named queries, which its dashboards read: list_views shows each "
-            "one's parameters, columns and SQL, and query_view runs one."
+            "one's parameters, columns and SQL, and query_view runs one. query_sql runs SQL the way a "
+            "view runs, without saving a view file."
         ),
     )
     read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -717,6 +739,23 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
             raise ToolError(f"no view named '{name}'. Views: {', '.join(gateway.views) or 'none'}")
         try:
             return gateway.view(name, params or {}, include_sql)
+        except (ViewError, QueryError, EngineError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool(annotations=read_only)
+    def query_sql(
+        sql: Annotated[str, Field(description="One SELECT, in Trino's SQL dialect")],
+        include_sql: Annotated[bool, Field(description="Also return the SQL each engine ran")] = False,
+    ) -> ViewResult:
+        """Run SQL the way a view runs, without saving a view file, and get its rows with how fresh
+        the data is. Read a model by name (FROM <model>, from list_metrics) to get its metrics live
+        across both tiers: select metrics and dimensions by name rather than computing them, group by
+        time with date_trunc('hour', <time dimension>), and bound the time dimension with >= and <.
+        Read tables as namespace.table (raw tables, gold rollups) with any Trino SELECT. A WITH query
+        can combine them: each CTE reads one model, or tables, and the final SELECT runs on the
+        merged results."""
+        try:
+            return gateway.run_view(gateway.parse_sql(sql), {}, include_sql)
         except (ViewError, QueryError, EngineError) as e:
             raise ToolError(str(e)) from e
 
@@ -840,6 +879,39 @@ async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, in
         live.announce("reload", {})
 
 
+# Query-string options of GET /views/{name} and /sql. Views can't declare parameters with these
+# names (views.RESERVED_PARAMS), so the rest of the query string is the view's parameters.
+VIEW_OPTIONS = {"format", "errors", "include_sql"}
+SQL_OPTIONS = VIEW_OPTIONS | {"q"}
+ResultFormat = Literal["json", "csv", "parquet"]
+FormatOption = Annotated[
+    ResultFormat,
+    Query(
+        alias="format",
+        description=f"json, csv or parquet. A file holds up to {EXPORT_MAX_ROWS:,} rows, and its columns when there are none",
+    ),
+]
+ErrorsOption = Annotated[
+    Literal["raise", "inline"],
+    Query(description="inline: a csv or parquet request that fails answers 200, with the message in a one-row column, `error`"),
+]
+FILE_RESPONSES: dict[int | str, dict[str, Any]] = {200: {"content": {MEDIA_TYPES["csv"]: {}, MEDIA_TYPES["parquet"]: {}}}}
+
+
+class SqlRequest(BaseModel):
+    sql: str  # one SELECT in Trino's dialect, optionally after a header comment as in a view file
+    params: dict[str, Any] = {}  # values for the parameters its header declares
+
+
+def _head(media_type: str) -> Response:
+    """A HEAD answer: GET's status and content type, without running anything. It has no
+    Content-Length, which would take computing the result: DuckDB then reads the result with one
+    GET, where a length makes it ask for byte ranges, and each range would run the query again."""
+    response = Response(media_type=media_type)
+    del response.headers["content-length"]
+    return response
+
+
 def create_app(
     gateway: Gateway,
     dashboards_dir: str | Path | None = None,
@@ -897,13 +969,75 @@ def create_app(
     def views() -> ViewCatalog:
         return gateway.view_catalog()
 
-    @app.get("/views/{name}")
-    def view(name: str, request: Request, include_sql: bool = False) -> ViewResult:
+    @app.head("/views", include_in_schema=False)
+    def views_head() -> Response:
+        return _head(MEDIA_TYPES["json"])
+
+    def answer(run: Callable[[int | None], ViewResult], file_format: ResultFormat, errors: str) -> ViewResult | Response:
+        """`run`'s result (it takes the row cap) as JSON, or as a CSV or Parquet file. With
+        errors=inline, a file request that fails on something the client can fix (an unknown
+        view, a bad parameter, bad SQL) or on a failed engine is answered with a one-row table
+        holding the message: SQL clients show it, where they'd report a bare HTTP status."""
+        if file_format == "json":
+            return run(None)
+        try:
+            result = run(gateway.export_max_rows)
+            columns, rows = result.columns, result.rows
+        except (HTTPException, ViewError, QueryError, EngineError) as e:
+            if errors != "inline":
+                raise
+            columns, rows = error_table(e.detail if isinstance(e, HTTPException) else str(e))
+        return Response(render(file_format, columns, rows), media_type=MEDIA_TYPES[file_format])
+
+    @app.get("/views/{name}", response_model=ViewResult, responses=FILE_RESPONSES)
+    def view(
+        name: str, request: Request, include_sql: bool = False, fmt: FormatOption = "json", errors: ErrorsOption = "raise"
+    ) -> ViewResult | Response:
         """Run a view. Its parameters go in the query string: /views/isp_now?minutes=30"""
-        if name not in gateway.views:
+        params = {key: value for key, value in request.query_params.items() if key not in VIEW_OPTIONS}
+
+        def run(max_rows: int | None) -> ViewResult:
+            if (found := gateway.views.get(name)) is None:
+                raise HTTPException(status_code=404, detail=f"no view named '{name}'")
+            return gateway.run_view(found, params, include_sql, max_rows)
+
+        return answer(run, fmt, errors)
+
+    @app.head("/views/{name}", include_in_schema=False)
+    def view_head(name: str, fmt: FormatOption = "json", errors: ErrorsOption = "raise") -> Response:
+        """What GET answers, without running the view: SQL clients such as DuckDB ask before reading."""
+        if name not in gateway.views and not (errors == "inline" and fmt != "json"):
             raise HTTPException(status_code=404, detail=f"no view named '{name}'")
-        params = {key: value for key, value in request.query_params.items() if key != "include_sql"}
-        return gateway.view(name, params, include_sql)
+        return _head(MEDIA_TYPES[fmt])
+
+    def run_sql(text: str, params: Mapping[str, Any], include_sql: bool) -> Callable[[int | None], ViewResult]:
+        # Parsed in answer(), so that errors=inline covers bad SQL too.
+        return lambda max_rows: gateway.run_view(gateway.parse_sql(text), params, include_sql, max_rows)
+
+    @app.get("/sql", response_model=ViewResult, responses=FILE_RESPONSES)
+    def sql(
+        request: Request,
+        q: Annotated[str, Query(description="The SQL, URL-encoded")],
+        include_sql: bool = False,
+        fmt: FormatOption = "json",
+        errors: ErrorsOption = "raise",
+    ) -> ViewResult | Response:
+        """Run SQL as a view runs, without saving one: models by name (FROM <model>), live across
+        both tiers, and tables as namespace.table. A header comment, as in a view file, can declare
+        parameters; their values go in the query string."""
+        params = {key: value for key, value in request.query_params.items() if key not in SQL_OPTIONS}
+        return answer(run_sql(q, params, include_sql), fmt, errors)
+
+    @app.post("/sql", response_model=ViewResult, responses=FILE_RESPONSES)
+    def sql_post(
+        body: SqlRequest, include_sql: bool = False, fmt: FormatOption = "json", errors: ErrorsOption = "raise"
+    ) -> ViewResult | Response:
+        """GET /sql, with the SQL and its parameters in a JSON body: for SQL too long for a URL."""
+        return answer(run_sql(body.sql, body.params, include_sql), fmt, errors)
+
+    @app.head("/sql", include_in_schema=False)
+    def sql_head(q: str, fmt: FormatOption = "json") -> Response:
+        return _head(MEDIA_TYPES[fmt])
 
     def subscription(name: str, request: Request) -> tuple[str, dict[str, Any]]:
         # A dependency, so a bad request gets its 404 or 400 before the stream starts.

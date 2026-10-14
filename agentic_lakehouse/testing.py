@@ -67,7 +67,7 @@ def standin_gateway(platform: Platform, *, hours: int = 6, rate: float = 6, seed
         run_step(platform, step, query=duckdb_query(engine), store=store, now=now, log=lambda message: None, force=True)
 
     warehouse = Warehouse(engine, table_state=lambda table: TableState(exists=True, complete_through=complete, snapshot=1))
-    return Gateway(Router(compiler, placements), views=platform.views, warehouse=warehouse)
+    return Gateway(Router(compiler, placements), views=platform.views, warehouse=warehouse, tables=platform.table_schemas())
 
 
 def duckdb_query(engine: DuckDBEngine):
