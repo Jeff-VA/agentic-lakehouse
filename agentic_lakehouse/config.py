@@ -169,7 +169,7 @@ class Step(StrictModel):
     name: Identifier
     description: str = Field(min_length=1)
     output: TableName  # <namespace>.<table> it writes
-    sql: str | None = None  # a Trino SELECT over <namespace>.<table> names
+    sql: str | None = None  # a Trino SELECT over <namespace>.<table> names; load_platform renders its macro calls
     run: str | None = Field(default=None, pattern=SPEC)  # module:function(StepContext) -> pyarrow.Table, or None
     reads: list[TableName] = []  # what a Python step reads (a SQL step's reads come from its SQL)
     columns: dict[Identifier, ColumnType] = {}  # a Python step's output columns (a SQL step's are worked out)
@@ -352,6 +352,21 @@ def _load_yaml(path: Path) -> dict:
         raise ConfigError(f"{path.name} isn't valid YAML: {problem}{where}{hint}") from None
 
 
+def _rendered_steps(pipelines: PipelinesConfig, macros: ProjectMacros) -> PipelinesConfig:
+    """The steps with the macro calls in their SQL rendered, with Trino's version of each macro
+    since steps run there: the rendered SQL is what's parsed, typed and run. Raises ConfigError
+    naming the step."""
+    steps = []
+    for step in pipelines.steps:
+        if step.sql is not None:
+            try:
+                step = step.model_copy(update={"sql": macros.render(step.sql, "trino")})
+            except MacroError as e:
+                raise ConfigError(f"step '{step.name}': macros: {e}") from None
+        steps.append(step)
+    return pipelines.model_copy(update={"steps": steps})
+
+
 def _step_columns(step: Step, schemas: dict[str, dict[str, str]]) -> dict[str, str]:
     if step.sql:
         return describe_query(step.sql, schemas)[1]
@@ -382,7 +397,10 @@ def load_platform(config_dir: str | Path) -> Platform:
         storage=StorageConfig.model_validate(_load_yaml(config_dir / "storage.yaml")),
         quality=QualityConfig.model_validate(_load_yaml(config_dir / "quality_rules.yaml")),
         deployment=DeploymentConfig.model_validate(_load_yaml(config_dir / "deployment.yaml")),
-        pipelines=PipelinesConfig.model_validate(_load_yaml(config_dir / "pipelines.yaml")) if (config_dir / "pipelines.yaml").exists() else PipelinesConfig(),
+        pipelines=_rendered_steps(
+            PipelinesConfig.model_validate(_load_yaml(config_dir / "pipelines.yaml")) if (config_dir / "pipelines.yaml").exists() else PipelinesConfig(),
+            ontology.macros,
+        ),
         config_dir=config_dir,
     )
     _check_consistency(platform)

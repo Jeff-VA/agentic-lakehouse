@@ -45,6 +45,10 @@ parameter declared with `default: null` is optional: in a view over a model, a
 dimension condition comparing with it is dropped while it has no value, which
 is how a dashboard offers "all ISPs".
 
+The SQL can call the project's macros (config/macros/, agentic_lakehouse/macros.py),
+such as `WHERE isp IN ({{ big_isps() }})`: it's rendered with Trino's version of
+each before it's parsed. A View keeps its SQL as written, for people and agents.
+
 load_views() checks every view when the platform loads, naming the file in each
 error: one SELECT, reading known models or tables, using known columns. Each
 view's output columns are known up front, so dashboards can be checked against
@@ -69,6 +73,7 @@ from sqlglot.optimizer.qualify import qualify
 
 from agentic_lakehouse import compose
 from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler, bucket_start
+from agentic_lakehouse.macros import MacroError, templated
 from agentic_lakehouse.ontology import (
     AggregateMetric,
     Better,
@@ -342,7 +347,7 @@ class View:
     name: str
     description: str
     params: dict[str, ViewParam]
-    sql: str  # the SELECT as written, without the header
+    sql: str  # the SELECT as written, without the header; `source` holds it with its macros rendered
     columns: tuple[ViewColumn, ...]
     source: ModelSource | TableSource | ComposedSource
     refresh_seconds: float | None = None
@@ -400,8 +405,11 @@ def load_views(directory: str | Path, ontology: Ontology, tables: TableSchemas) 
     return views
 
 
-def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas) -> View:
-    """Parse and check one view file's text. Raises ViewError saying what to fix."""
+def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas, *, macros: bool = True) -> View:
+    """Parse and check one view file's text. Raises ViewError saying what to fix.
+
+    `macros`: whether its SQL may call the project's macros. Not for SQL from outside the project's
+    files, such as GET /sql's: rendering a template runs the code in it."""
     match = re.match(r"\s*/\*(.*?)\*/(.*)", text, re.DOTALL)
     if match is None:
         raise ViewError("start the file with a /* ... */ comment holding YAML, at least `description: ...`")
@@ -414,8 +422,14 @@ def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas) -
     if reserved := RESERVED_PARAMS & header.params.keys():
         raise ViewError(f"parameter names {', '.join(sorted(reserved))} are reserved")
     sql = match[2].strip().rstrip(";").strip()
+    if not macros and templated(sql):
+        raise ViewError("only the project's files can call macros ({{ ... }}): save the SQL as a view, views/<name>.sql, and run that")
+    try:  # views are written for Trino, so they call Trino's version of each macro
+        rendered = ontology.macros.render(sql, VIEW_DIALECT)
+    except MacroError as e:
+        raise ViewError(f"macros: {e}") from None
     try:
-        statements = [s for s in sqlglot.parse(sql, read=VIEW_DIALECT) if s is not None]
+        statements = [s for s in sqlglot.parse(rendered, read=VIEW_DIALECT) if s is not None]
     except sqlglot.ParseError as e:
         raise ViewError(f"invalid SQL: {e.errors[0]['description']} (line {e.errors[0]['line']})") from None
     except SqlglotError as e:  # e.g. an unterminated string
