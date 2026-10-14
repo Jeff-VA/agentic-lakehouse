@@ -201,8 +201,9 @@ class ViewInfo(BaseModel):
     name: str
     description: str
     # "model": answered by the tier router, up to the second. "tables": SQL over Iceberg
-    # tables, complete up to their last flush or rollup run.
-    source: Literal["model", "tables"]
+    # tables, complete up to their last flush or rollup run. "composed": semantic queries and
+    # table queries (stage 1) combined by SQL over their results (stage 2); see docs/design/sql-access.md.
+    source: Literal["model", "tables", "composed"]
     reads: list[str]  # the model, or the tables
     params: list[ViewParamInfo]
     columns: list[ViewColumn]
@@ -212,6 +213,16 @@ class ViewInfo(BaseModel):
 
 class ViewCatalog(BaseModel):
     views: list[ViewInfo]
+
+
+class PartInfo(BaseModel):
+    """One stage-1 part of a composed view: what it read and what its rows cover."""
+
+    source: Literal["model", "tables"]
+    rows: int
+    coverage: Coverage | None  # a model part: the time range its rows cover
+    data_through: datetime | None  # a table part: its tables hold every row before this time
+    notes: list[str]
 
 
 class ViewResult(BaseModel):
@@ -225,6 +236,7 @@ class ViewResult(BaseModel):
     truncated: bool  # more rows matched than were returned
     computed_at: datetime
     sql: dict[str, str] | None = None  # what each engine ran, when requested
+    parts: dict[str, PartInfo] | None = None  # a composed view's stage-1 parts, by CTE name
 
 
 class DashboardInfo(BaseModel):
@@ -483,13 +495,21 @@ class Gateway:
         Raises KeyError for an unknown view, ViewError for bad parameters, and
         QueryError or EngineError like a query.
         """
-        view = self.views[name]
+        return self.run_view(self.views[name], params, include_sql)
+
+    def run_view(
+        self, view: View, params: Mapping[str, Any] | None = None, include_sql: bool = False, max_rows: int | None = None
+    ) -> ViewResult:
+        """Run `view`, a project view or one parsed from ad-hoc SQL, returning at most `max_rows`
+        rows (default: the gateway's max_rows). Raises like view()."""
+        max_rows = max_rows or self.max_rows
+        name = view.name
         values = view.bind(params or {})
         computed_at = datetime.now(UTC)
         advice = "narrow the view with its parameters, or give it a LIMIT"
         if isinstance(view.source, ModelSource):
             query = view.source.query(values, now=_utc(self.router.clock()))
-            result, rows, notes, truncated = self._run(query, advice)
+            result, rows, notes, truncated = self._run(query, advice, max_rows)
             return ViewResult(
                 view=name,
                 params=values,
@@ -507,17 +527,17 @@ class Gateway:
             raise ViewError(f"view '{name}' reads tables, and this gateway has no warehouse engine to run it on")
         states = {table: self.warehouse.table_state(table) for table in view.source.tables}
         engine = self.warehouse.engine
-        sql = view.source.sql(values, dialect=engine.name, catalog=self.warehouse.catalog, limit=self.max_rows + 1)
+        sql = view.source.sql(values, dialect=engine.name, catalog=self.warehouse.catalog, limit=max_rows + 1)
         notes = []
         if missing := [table for table, state in states.items() if not state.exists]:
             rows = []  # e.g. a rollup that hasn't run yet; its first run creates the table
             notes.append(f"{', '.join(missing)} doesn't exist yet, so there are no rows")
         else:
             rows = _rows(engine.execute(sql))
-        truncated = len(rows) > self.max_rows
+        truncated = len(rows) > max_rows
         if truncated:
-            rows = rows[: self.max_rows]
-            notes.append(f"Only the first {self.max_rows} rows are returned; {advice}.")
+            rows = rows[:max_rows]
+            notes.append(f"Only the first {max_rows} rows are returned; {advice}.")
         through = [state.complete_through for state in states.values()]
         return ViewResult(
             view=name,
@@ -532,18 +552,22 @@ class Gateway:
             sql={"warehouse": sql} if include_sql else None,
         )
 
-    def _run(self, query: MetricQuery, advice: str) -> tuple[QueryResult, list[dict[str, Any]], list[str], bool]:
-        """Route `query`, returning at most max_rows rows and notes on what the result covers."""
-        capped = query.limit is None or query.limit > self.max_rows
+    def _run(
+        self, query: MetricQuery, advice: str, max_rows: int | None = None
+    ) -> tuple[QueryResult, list[dict[str, Any]], list[str], bool]:
+        """Route `query`, returning at most `max_rows` rows (default: the gateway's) and notes on
+        what the result covers."""
+        max_rows = max_rows or self.max_rows
+        capped = query.limit is None or query.limit > max_rows
         if capped:  # fetch one extra row to tell whether anything was cut off
-            query = query.model_copy(update={"limit": self.max_rows + 1})
+            query = query.model_copy(update={"limit": max_rows + 1})
         result = self.router.run(query)
         rows = _rows(result.table)
         notes = list(result.notes)
-        truncated = capped and len(rows) > self.max_rows
+        truncated = capped and len(rows) > max_rows
         if truncated:
-            rows = rows[: self.max_rows]
-            notes.append(f"Only the first {self.max_rows} rows are returned; {advice}.")
+            rows = rows[:max_rows]
+            notes.append(f"Only the first {max_rows} rows are returned; {advice}.")
         return result, rows, notes, truncated
 
 
