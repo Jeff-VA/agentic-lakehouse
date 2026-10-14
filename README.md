@@ -208,6 +208,11 @@ Every model's metrics and dimensions: what each means (`description`), how
 it's computed (`calculation`), how to show it (`label`, `format`, `unit`,
 `better`), and how far each tier reaches. Read it before asking for anything.
 
+`macros` lists the SQL macros views can call, like `{{ url_host('url') }}`:
+the project's own (`config/macros/`) first, then the engine's, each with its
+arguments, what it's for, and the `files` that define it. A macro in
+`project/trino.sql` has a version of its own for Trino.
+
 ```bash
 curl http://127.0.0.1:8000/catalog
 ```
@@ -228,6 +233,12 @@ curl http://127.0.0.1:8000/catalog
       "calculation": "0.99 quantile of request_latency_ms (approximate on Trino and Pinot) where stream_start_event = true",
       "label": "p99 time to first byte", "format": "integer", "unit": "ms", "better": "lower"
     }]
+  }],
+  "macros": [{
+    "name": "url_host",
+    "args": ["column"],
+    "description": "The host of a URL, e.g. en.wikipedia.org.",
+    "files": ["project/default.sql", "project/trino.sql"]
   }]
 }
 ```

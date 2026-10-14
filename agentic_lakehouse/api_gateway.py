@@ -3,7 +3,8 @@
 The same operations are served over REST and over the Model Context Protocol
 (MCP), so the dashboard and AI agents get identical answers:
 
-- catalog: the metrics and dimensions you can ask for, and what they mean
+- catalog: the metrics and dimensions you can ask for, and what they mean; and
+  the SQL macros views can call (agentic_lakehouse/macros.py)
 - query: a MetricQuery, answered by the tier router
 - views: the project's named queries (views/*.sql, see agentic_lakehouse/views.py), which
   dashboards read by name with parameters
@@ -22,7 +23,7 @@ Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only on
        they draw views with the chart tags in /al.js (agentic_lakehouse/static/al.js)
 MCP:   Streamable HTTP at /mcp, or stdio via `agentic-lakehouse mcp`. Given the project
        (Project), it also checks and screenshots dashboards for the agent
-       building them, and open pages reload when a view or dashboard file changes.
+       building them, and open pages reload when a view, macro or dashboard file changes.
 """
 
 import asyncio
@@ -59,6 +60,7 @@ from agentic_lakehouse.dashboards import check_dashboards, dashboard_files, desc
 from agentic_lakehouse.engines import EngineError, QueryEngine, TrinoEngine
 from agentic_lakehouse.formats import MEDIA_TYPES, error_table, render
 from agentic_lakehouse.live import LiveViews
+from agentic_lakehouse.macros import MacroInfo
 from agentic_lakehouse.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
@@ -105,6 +107,9 @@ class ModelInfo(BaseModel):
 class Catalog(BaseModel):
     now: datetime  # server time, for choosing time ranges
     models: list[ModelInfo]
+    # The SQL macros views can call, {{ name(...) }}: the project's own (config/macros/) first, then
+    # the engine's. `files` says where each is defined, e.g. project/trino.sql for Trino's own version.
+    macros: list[MacroInfo]
 
 
 class ResultColumn(BaseModel):
@@ -483,7 +488,7 @@ class Gateway:
                     historical_through=_utc(flushed) if flushed else None,
                 )
             )
-        return Catalog(now=datetime.now(UTC), models=models)
+        return Catalog(now=datetime.now(UTC), models=models, macros=self.router.compiler.ontology.macros.catalog())
 
     def query(self, query: MetricQuery, include_sql: bool = False) -> QueryResponse:
         """Run `query`. Raises QueryError if it doesn't fit the ontology, EngineError if an engine fails."""
@@ -506,10 +511,12 @@ class Gateway:
     def parse_sql(self, text: str) -> View:
         """Ad-hoc SQL (/sql, and MCP's query_sql) as a view named "sql", to run with run_view.
         Its header comment is optional: without one, the description is "ad-hoc query" and
-        there are no parameters. Raises ViewError saying what to fix."""
+        there are no parameters. It can't call the project's macros: they're rendered as Jinja,
+        which can run any code, and this text comes from the client. Raises ViewError saying
+        what to fix."""
         if not text.lstrip().startswith("/*"):
             text = f"/*\ndescription: ad-hoc query\n*/\n{text}"
-        return parse_view("sql", text, self.router.compiler.ontology, self.tables)
+        return parse_view("sql", text, self.router.compiler.ontology, self.tables, macros=False)
 
     def view_catalog(self) -> ViewCatalog:
         return ViewCatalog(views=[_view_info(view) for view in self.views.values()])
@@ -769,6 +776,8 @@ views in views/<name>.sql, pages in dashboards/<name>.html. Work in small steps:
    To combine questions (compare two time windows, join a model with a gold table, rank),
    put each part in a WITH clause, one model or tables per CTE, and write the rest over the
    CTEs: the parts are answered first, then the rest runs over their results.
+   View files can call the project's SQL macros, {{{{ name(...) }}}}, to reuse a definition named
+   once (a filter, say) instead of writing it out again; list_metrics lists them and what each is for.
    query_view runs a view so you can see its rows.
 3. Write the page in plain HTML with the chart tags below. Names are enough: labels and number
    formats come from the ontology. Keep the page small and readable.
@@ -830,7 +839,7 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
         time with date_trunc('hour', <time dimension>), and bound the time dimension with >= and <.
         Read tables as namespace.table (raw tables, gold rollups) with any Trino SELECT. A WITH query
         can combine them: each CTE reads one model, or tables, and the final SELECT runs on the
-        merged results."""
+        merged results. The project's macros ({{ ... }}) work in view files only."""
         try:
             return gateway.run_view(gateway.parse_sql(sql), {}, include_sql)
         except (ViewError, QueryError, EngineError) as e:
@@ -841,7 +850,8 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
 
     @mcp.tool(annotations=read_only)
     def list_metrics() -> Catalog:
-        """List the metrics and dimensions you can query, what each one means, and how far the data reaches."""
+        """List the metrics and dimensions you can query, what each one means, and how far the data reaches;
+        and the SQL macros views can call, with what each one is for."""
         return gateway.catalog()
 
     @mcp.tool(annotations=read_only)
@@ -926,12 +936,13 @@ def _add_project_tools(mcp: MCPServer, project: Project, read_only: ToolAnnotati
 
 
 async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, interval: float = 1.0) -> None:
-    """Reload the views when a view file changes, and open pages when a view or dashboard does.
-    An edit that breaks a view keeps the last good views, and pages say what broke."""
+    """Reload the views when a view or macro file changes, and open pages when a view, macro or
+    dashboard does. A macro edit also reaches every query the gateway compiles from then on. An
+    edit that breaks a view or a macro keeps the last good views and macros, and pages say what broke."""
 
     def stamps() -> dict[str, int]:
         found = {}
-        for path in [*project.config_dir.glob("views/*.sql"), *project.dashboards_dir.glob("*.html")]:
+        for path in [*project.config_dir.glob("views/*.sql"), *project.config_dir.glob("macros/*.sql"), *project.dashboards_dir.glob("*.html")]:
             with contextlib.suppress(OSError):  # deleted while listing
                 found[str(path)] = path.stat().st_mtime_ns
         return found
@@ -942,16 +953,19 @@ async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, in
         current = await asyncio.to_thread(stamps)
         if current == last:
             continue
-        views_changed = any(path.endswith(".sql") for path in current.keys() ^ last.keys() | {p for p in current if current[p] != last.get(p)})
+        sql_changed = any(path.endswith(".sql") for path in current.keys() ^ last.keys() | {p for p in current if current[p] != last.get(p)})
         last = current
-        if views_changed:
+        if sql_changed:  # a view or a macro
             try:
                 platform = await asyncio.to_thread(load_platform, project.config_dir)
             except (ConfigError, ValidationError, OSError) as e:
-                log.warning("not reloading the views: %s", e)
+                log.warning("not reloading the views and macros: %s", e)
                 live.announce("problem", {"detail": str(e)})
                 continue
-            gateway.views = dict(platform.views)
+            gateway.views = dict(platform.views)  # rendered with the macros as they are now
+            # The compiler reads the ontology's macros at each query (SqlCompiler._macros), so
+            # every query from now on compiles with these.
+            gateway.router.compiler.ontology._macros = platform.ontology.macros
             live.restart()
         live.announce("reload", {})
 
@@ -998,7 +1012,7 @@ def create_app(
     """REST endpoints, live views, the MCP server (Streamable HTTP) at /mcp, and
     the HTML dashboards in `dashboards_dir` (the project's config/dashboards).
     With a `project`, MCP gets the tools for building dashboards, and open pages
-    reload when its view or dashboard files change."""
+    reload when its view, macro or dashboard files change."""
     dashboards = Path(dashboards_dir) if dashboards_dir else None
     live = live or LiveViews(gateway)
     mcp = create_mcp_server(gateway, project)
@@ -1149,8 +1163,8 @@ def create_app(
         `view` is a name, with its parameters after a ?, URL-encoded (isp_hourly%3Fhours%3D24).
         Events are `result` ({subscription, result}) and `error` ({subscription, detail}), where
         `subscription` is the `view` value as requested; and, for every page, `hello` ({boot}) first,
-        then `reload` when a view or dashboard file changed, or `problem` ({detail}) when an edit
-        broke a view."""
+        then `reload` when a view, macro or dashboard file changed, or `problem` ({detail}) when an
+        edit broke a view or a macro."""
         yield ServerSentEvent(event="hello", data={"boot": BOOT})
         async for key, event in live.watch(subscribed):
             if not key:  # news for every page
