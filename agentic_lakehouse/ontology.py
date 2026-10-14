@@ -9,6 +9,7 @@ later.
 """
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import Annotated, Any, Literal, Self, Union
 
 import sqlglot
@@ -16,7 +17,7 @@ import yaml
 from pydantic import AfterValidator, BaseModel, ConfigDict, Discriminator, Field, PrivateAttr, StringConstraints, Tag, model_validator
 from sqlglot import exp
 
-from agentic_lakehouse.macros import NO_PROJECT_MACROS, ProjectMacros
+from agentic_lakehouse.macros import NO_PROJECT_MACROS, ProjectMacros, templated
 
 # Names become SQL column aliases and API/MCP identifiers, so keep them plain:
 # lowercase snake_case only. This also rules out SQL injection through a name.
@@ -67,7 +68,8 @@ def parse_fragment(sql: str, read: Any = FRAGMENT_DIALECT) -> exp.Expression:
 
 
 def _check_fragment(sql: str) -> str:
-    parse_fragment(sql)
+    if not templated(sql):  # one that calls the project's macros is checked once they're loaded (load_platform)
+        parse_fragment(sql)
     return sql
 
 
@@ -189,8 +191,9 @@ class SemanticModel(StrictModel):
     dimensions: list[Dimension] = Field(min_length=1)
     metrics: list[Metric] = Field(min_length=1)
 
-    def source_columns(self) -> set[str]:
-        """Columns of the source dataset that this model's dimensions and metrics read."""
+    def source_columns(self, render: Callable[[str], str] = lambda sql: sql) -> set[str]:
+        """Columns of the source dataset that this model's dimensions and metrics read. `render`
+        turns a snippet that calls macros into SQL (DuckDB's dialect)."""
         columns = {d.name for d in self.dimensions if d.sql is None}
         fragments = [d.sql for d in self.dimensions if d.sql is not None]
         for metric in self.metrics:
@@ -198,7 +201,7 @@ class SemanticModel(StrictModel):
                 fragments += [metric.sql] if metric.sql else []
                 fragments += metric.filters
         for sql in fragments:
-            columns |= {column.name for column in parse_fragment(sql).find_all(exp.Column)}
+            columns |= {column.name for column in parse_fragment(render(sql)).find_all(exp.Column)}
         return columns
 
     @model_validator(mode="after")

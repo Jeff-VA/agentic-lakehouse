@@ -21,13 +21,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Self
 
+import sqlglot
 import yaml
 from pydantic import Field, model_validator
 
-from agentic_lakehouse.compiler import Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
-from agentic_lakehouse.ontology import Identifier, Ontology, SemanticModel, StrictModel, index_by_name
+from agentic_lakehouse.compiler import SQLGLOT_DIALECTS, Engine, Filter, Grain, MetricQuery, QueryError, SqlCompiler
+from agentic_lakehouse.ontology import AggregateMetric, Identifier, Ontology, SemanticModel, StrictModel, index_by_name, parse_fragment
 from agentic_lakehouse.hooks import SPEC
-from agentic_lakehouse.macros import MacroError, ProjectMacros
+from agentic_lakehouse.macros import ENGINES, MacroError, ProjectMacros, templated
 from agentic_lakehouse.quality import QualityConfig, TableName
 from agentic_lakehouse.views import View, ViewError, describe_query, load_views, tables_in
 
@@ -393,6 +394,75 @@ def load_platform(config_dir: str | Path) -> Platform:
     return replace(platform, views=views)
 
 
+def _snippets(model: SemanticModel) -> list[tuple[str, str]]:
+    """(where, SQL) of each of a model's SQL snippets, e.g. ("metric human_edits, filters[0]", "...")."""
+    found = [(f"dimension {d.name}, sql", d.sql) for d in model.dimensions if d.sql]
+    for metric in model.metrics:
+        if isinstance(metric, AggregateMetric):
+            found += [(f"metric {metric.name}, sql", metric.sql)] if metric.sql else []
+            found += [(f"metric {metric.name}, filters[{i}]", f) for i, f in enumerate(metric.filters)]
+    return found
+
+
+def _snippet_problems(model: SemanticModel, macros: ProjectMacros) -> list[str]:
+    """Each snippet that calls macros, rendered and read for every engine: an unknown macro, a
+    missing argument, or SQL an engine can't read fails here, with its place."""
+    problems = []
+    for where, sql in _snippets(model):
+        if not templated(sql):
+            continue  # checked when ontology.yaml loaded
+        for engine in ENGINES:
+            try:
+                parse_fragment(macros.render(sql, engine), read=SQLGLOT_DIALECTS[engine])
+            except ValueError as e:  # MacroError is one too
+                problems.append(f"ontology.yaml: model {model.name}, {where}, for {engine}: {e}")
+                break
+    return problems
+
+
+_DUCKDB_TYPES = {"string": "VARCHAR", "int": "INTEGER", "long": "BIGINT", "double": "DOUBLE", "boolean": "BOOLEAN", "timestamp": "TIMESTAMP"}
+_SAMPLE_VALUES = {"string": "x", "number": 0, "boolean": True}
+
+
+def _override_problems(platform: Platform) -> list[str]:
+    """With project macros, which may override the engine's built-ins: every model compiled for
+    every engine. Pinot's and Trino's SQL must parse (no engine runs at load time), and DuckDB's
+    must run over an empty table with the dataset's columns, as must the merge of partial results
+    a query across both tiers uses."""
+    import duckdb  # only projects with macros pay for it
+
+    problems = []
+    compiler = SqlCompiler(platform.ontology)
+    for model in platform.ontology.models:
+        dataset = platform.dataset(model.source)
+        dimensions = [d for d in model.dimensions if d.name != model.time_dimension]
+        filters = [
+            Filter(dimension=d.name, op="!=", value=_SAMPLE_VALUES[d.type]) for d in dimensions[:1] if d.type in _SAMPLE_VALUES
+        ]
+        query = MetricQuery(
+            metrics=[m.name for m in model.metrics], dimensions=[d.name for d in dimensions],
+            start=_EPOCH, end=_EPOCH + timedelta(hours=1), grain="hour", filters=filters,
+        )
+        engine = ENGINES[0]
+        try:
+            for engine in ENGINES:
+                sql = compiler.compile(query, engine=engine, table="t")
+                if engine != "duckdb":
+                    sqlglot.parse_one(sql, read=SQLGLOT_DIALECTS[engine])
+            engine = "duckdb"  # running it, and the merge
+            con = duckdb.connect()
+            con.execute(f"CREATE TABLE t ({', '.join(f'{c.name} {_DUCKDB_TYPES[c.type]}' for c in dataset.columns)})")
+            con.execute(compiler.compile(query, engine="duckdb", table="t"))
+            mergeable = [m for m in query.metrics if m not in compiler.unmergeable_metrics(query)]
+            if mergeable:
+                partial = query.model_copy(update={"metrics": mergeable})
+                con.execute(f"CREATE TABLE p AS {compiler.compile(partial, engine='duckdb', table='t', partial=True)}")
+                con.execute(compiler.merge_sql(partial, "(SELECT * FROM p UNION ALL BY NAME SELECT * FROM p)", partial=True))
+        except (QueryError, MacroError, sqlglot.errors.SqlglotError, duckdb.Error) as e:
+            problems.append(f"model {model.name} doesn't compile with the project's macros, for {engine}: {str(e).splitlines()[0]}")
+    return problems
+
+
 def _check_steps(platform: Platform, problems: list[str]) -> dict[str, dict[str, str]]:
     """Check pipelines.yaml against the rest; returns each step output's columns that could be worked out."""
     if not platform.pipelines.steps:
@@ -433,12 +503,16 @@ def _check_consistency(platform: Platform) -> None:
     stored = {t.dataset for t in platform.storage.tables}
     for name in datasets.keys() - stored:
         problems.append(f"dataset '{name}' has no Iceberg table in storage.yaml")
+    macros = platform.ontology.macros
     for model in platform.ontology.models:
         dataset = datasets.get(model.source)
         if dataset is None:
             problems.append(f"model '{model.name}' reads unknown dataset '{model.source}'")
             continue
-        if missing := model.source_columns() - {c.name for c in dataset.columns}:
+        if snippet_problems := _snippet_problems(model, macros):
+            problems += snippet_problems
+            continue
+        if missing := model.source_columns(lambda sql: macros.render(sql, "duckdb")) - {c.name for c in dataset.columns}:
             problems.append(
                 f"model '{model.name}' reads columns that dataset '{dataset.name}' doesn't have: "
                 + ", ".join(sorted(missing))
@@ -452,6 +526,8 @@ def _check_consistency(platform: Platform) -> None:
             rollup_columns[rollup.table] = set(platform.rollup_columns(rollup))
         except QueryError as e:
             problems.append(f"rollup '{rollup.table}': {e}")
+    if macros.files and not problems:
+        problems += _override_problems(platform)
     step_columns = _check_steps(platform, problems)
     for rules in platform.quality.rules:
         if rules.table in step_columns:

@@ -22,7 +22,7 @@ from pydantic import Field, field_validator, model_validator
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
 
-from agentic_lakehouse.macros import Adapter
+from agentic_lakehouse.macros import Adapter, templated
 from agentic_lakehouse.ontology import (
     AggregateMetric,
     Dimension,
@@ -143,11 +143,6 @@ def _operand(tree: exp.Expression) -> exp.Expression:
     return tree if isinstance(tree, _ATOMIC) else exp.Paren(this=tree)
 
 
-def _dimension_tree(dimension: Dimension) -> exp.Expression:
-    # exp.column quotes names that are keywords in the target dialect.
-    return parse_fragment(dimension.sql) if dimension.sql else exp.column(dimension.name)
-
-
 def _filter_tree(query_filter: Filter, column: exp.Expression) -> exp.Expression:
     operand = _operand(column)
     if query_filter.op in ("in", "not_in"):
@@ -213,12 +208,12 @@ class SqlCompiler:
         adapter = self._adapter(engine)
         dialect = SQLGLOT_DIALECTS[engine]
 
-        time_tree = _dimension_tree(dimensions[model.time_dimension])
+        time_tree = self._dimension_tree(dimensions[model.time_dimension], engine)
         grouped: list[_Column] = []
         if query.grain:
             grouped.append(_Column(model.time_dimension, adapter.time_bucket(time_tree.sql(dialect=dialect), query.grain)))
         for name in query.dimensions:
-            grouped.append(_Column(name, _dimension_tree(dimensions[name]).sql(dialect=dialect)))
+            grouped.append(_Column(name, self._dimension_tree(dimensions[name], engine).sql(dialect=dialect)))
 
         metrics = {m.name: m for m in model.metrics}
         aggregates: list[_Column] = []
@@ -229,16 +224,16 @@ class SqlCompiler:
             for name in query.metrics:
                 for part in _parts(metrics[name], metrics):
                     for column, piece in _partial_pieces(part):
-                        columns[column] = self._aggregate_sql(piece, adapter, dialect)
+                        columns[column] = self._aggregate_sql(piece, engine)
             aggregates = [_Column(column, sql) for column, sql in columns.items()]
         else:
             for name in query.metrics:
                 metric = metrics[name]
                 if isinstance(metric, AggregateMetric):
-                    aggregates.append(_Column(name, self._aggregate_sql(metric, adapter, dialect)))
+                    aggregates.append(_Column(name, self._aggregate_sql(metric, engine)))
                 else:
-                    numerator = self._aggregate_sql(metrics[metric.numerator], adapter, dialect)
-                    denominator = self._aggregate_sql(metrics[metric.denominator], adapter, dialect)
+                    numerator = self._aggregate_sql(metrics[metric.numerator], engine)
+                    denominator = self._aggregate_sql(metrics[metric.denominator], engine)
                     aggregates.append(_Column(name, adapter.ratio(numerator, denominator)))
 
         return self._env.get_template("engine/query.sql").render(
@@ -249,7 +244,7 @@ class SqlCompiler:
             start=query.start,
             end=query.end,
             filters=[
-                _filter_tree(f, _dimension_tree(dimensions[f.dimension])).sql(dialect=dialect) for f in query.filters
+                _filter_tree(f, self._dimension_tree(dimensions[f.dimension], engine)).sql(dialect=dialect) for f in query.filters
             ],
             group_by=[c.sql for c in grouped],
             order_by=[] if partial else self._order_by(query, model, grouped + aggregates),
@@ -305,15 +300,27 @@ class SqlCompiler:
             if name not in dimensions:
                 raise QueryError(f"{where}: unknown dimension '{name}' in model '{model.name}'. Available: {available}")
 
-    @staticmethod
-    def _aggregate_sql(metric: AggregateMetric, adapter: Adapter, dialect: str | type[Dialect]) -> str:
-        expr = parse_fragment(metric.sql).sql(dialect=dialect) if metric.sql else None
+    def _aggregate_sql(self, metric: AggregateMetric, engine: Engine) -> str:
+        adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
+        expr = self._fragment(metric.sql, engine).sql(dialect=dialect) if metric.sql else None
         args = (expr, metric.percentile) if metric.agg == "percentile" else (expr,)
         aggregate = getattr(adapter, metric.agg)(*args)
         if metric.filters:
-            predicate = exp.and_(*(parse_fragment(f) for f in metric.filters))
+            predicate = exp.and_(*(self._fragment(f, engine) for f in metric.filters))
             aggregate = adapter.filtered(aggregate, predicate.sql(dialect=dialect))
         return aggregate
+
+    def _dimension_tree(self, dimension: Dimension, engine: Engine) -> exp.Expression:
+        # exp.column quotes names that are keywords in the target dialect.
+        return self._fragment(dimension.sql, engine) if dimension.sql else exp.column(dimension.name)
+
+    def _fragment(self, sql: str, engine: Engine) -> exp.Expression:
+        """An ontology snippet as a tree for `engine`. One that calls the project's macros is
+        rendered with the engine's and read in its dialect; a plain one is read in DuckDB's, as
+        written, and printed for the engine by sqlglot."""
+        if not templated(sql):
+            return parse_fragment(sql)
+        return parse_fragment(self._macros.render(sql, engine), read=SQLGLOT_DIALECTS[engine])
 
 
 def _parts(metric: Metric, metrics: dict) -> list[AggregateMetric]:
