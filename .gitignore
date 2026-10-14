@@ -9,3 +9,6 @@ venv/
 *.egg-info/
 build/
 proposals/
+
+# Claude Code's git worktrees for parallel work
+.claude/worktrees/
