@@ -47,6 +47,7 @@ from mcp_types import TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 from pyiceberg.exceptions import NoSuchTableError
 
+from agentic_lakehouse import compose
 from agentic_lakehouse.agent_sync import pending_proposals, unmodeled_columns
 from agentic_lakehouse.browser import BrowserError, Capture, capture, serving
 from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
@@ -59,7 +60,7 @@ from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
 from agentic_lakehouse.router import QueryResult, Router
 from agentic_lakehouse.steps import IcebergStepStore
-from agentic_lakehouse.views import ModelSource, View, ViewColumn, ViewError
+from agentic_lakehouse.views import ComposedSource, ModelSource, View, ViewColumn, ViewError
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
 STATIC = Path(__file__).parent / "static"  # al.js, the chart tags dashboards use
@@ -325,6 +326,9 @@ class Gateway:
     leaves out rollups, drift proposals and unmodeled columns.
     """
 
+    part_max_rows = 100_000  # a composed view's stage-1 part may hold this many rows, for stage 2 to work on
+    stage2_timeout_seconds = 30.0  # how long a composed view's stage 2 may run
+
     def __init__(
         self,
         router: Router,
@@ -507,6 +511,8 @@ class Gateway:
         values = view.bind(params or {})
         computed_at = datetime.now(UTC)
         advice = "narrow the view with its parameters, or give it a LIMIT"
+        if isinstance(view.source, ComposedSource):
+            return self._run_composed(view, values, include_sql, max_rows, computed_at)
         if isinstance(view.source, ModelSource):
             query = view.source.query(values, now=_utc(self.router.clock()))
             result, rows, notes, truncated = self._run(query, advice, max_rows)
@@ -550,6 +556,74 @@ class Gateway:
             truncated=truncated,
             computed_at=computed_at,
             sql={"warehouse": sql} if include_sql else None,
+        )
+
+    def _run_composed(
+        self, view: View, values: dict[str, Any], include_sql: bool, max_rows: int, computed_at: datetime
+    ) -> ViewResult:
+        """A composed view: answer each stage-1 part in full, then run stage 2 over the results."""
+        source = view.source
+        now = _utc(self.router.clock())
+        tables, parts, sql = {}, {}, {}
+        for name, part in source.parts.items():
+            if isinstance(part, ModelSource):
+                query = part.query(values, now=now)
+                if query.limit is None or query.limit > self.part_max_rows:
+                    query = query.model_copy(update={"limit": self.part_max_rows + 1})
+                result = self.router.run(query)
+                fields = [output.field for output in part.outputs]
+                table = result.table.select(fields).rename_columns([output.name for output in part.outputs])
+                coverage = Coverage(start=result.start, end=result.end)
+                parts[name] = PartInfo(source="model", rows=table.num_rows, coverage=coverage, data_through=None, notes=list(result.notes))
+                sql |= {f"{name}: {engine}": text for engine, text in result.sql.items()}
+            else:
+                if self.warehouse is None:
+                    raise ViewError(f"view '{view.name}' reads tables in part {name}, and this gateway has no warehouse engine")
+                states = {t: self.warehouse.table_state(t) for t in part.tables}
+                engine = self.warehouse.engine
+                text = part.sql(values, dialect=engine.name, catalog=self.warehouse.catalog, limit=self.part_max_rows + 1)
+                notes = []
+                if missing := [t for t, state in states.items() if not state.exists]:
+                    table = compose.empty([(c.name, c.type) for c in source.part_columns[name]])
+                    notes.append(f"{', '.join(missing)} doesn't exist yet, so there are no rows")
+                else:
+                    table = engine.execute(text)
+                through = [state.complete_through for state in states.values()]
+                data_through = _utc(min(through)) if through and None not in through else None
+                parts[name] = PartInfo(source="tables", rows=table.num_rows, coverage=None, data_through=data_through, notes=notes)
+                sql[f"{name}: {engine.name}"] = text
+            if table.num_rows > self.part_max_rows:
+                raise ViewError(
+                    f"part {name} of view '{view.name}' has more than {self.part_max_rows:,} rows, too many to combine; "
+                    "narrow it with a filter, a coarser grain or a LIMIT"
+                )
+            tables[name] = table
+
+        stage2 = source.stage2_sql(values)
+        try:
+            result = compose.run(tables, stage2, timeout=self.stage2_timeout_seconds)
+        except compose.StageTwoError as e:
+            raise ViewError(f"view '{view.name}', after the WITH: {e}") from None
+        rows = _rows(result)
+        notes = [f"{name}: {note}" for name, info in parts.items() for note in info.notes]
+        truncated = len(rows) > max_rows
+        if truncated:
+            rows = rows[:max_rows]
+            notes.append(f"Only the first {max_rows} rows are returned; narrow the view with its parameters, or give it a LIMIT.")
+        coverages = [info.coverage for info in parts.values() if info.coverage]
+        throughs = [info.data_through for info in parts.values() if info.source == "tables"]
+        return ViewResult(
+            view=view.name,
+            params=values,
+            columns=list(view.columns),
+            rows=rows,
+            coverage=Coverage(start=min(c.start for c in coverages), end=max(c.end for c in coverages)) if coverages else None,
+            data_through=min(throughs) if throughs and None not in throughs else None,
+            notes=notes,
+            truncated=truncated,
+            computed_at=computed_at,
+            sql=sql | {"stage 2": stage2} if include_sql else None,
+            parts=parts,
         )
 
     def _run(
@@ -606,7 +680,7 @@ def _view_info(view: View) -> ViewInfo:
     return ViewInfo(
         name=view.name,
         description=view.description,
-        source="model" if isinstance(view.source, ModelSource) else "tables",
+        source="composed" if isinstance(view.source, ComposedSource) else "model" if isinstance(view.source, ModelSource) else "tables",
         reads=view.reads,
         params=[
             ViewParamInfo(
@@ -671,6 +745,9 @@ views in views/<name>.sql, pages in dashboards/<name>.html. Work in small steps:
    time with date_trunc, and bound the time dimension with >= and <: it runs live across both
    tiers. FROM a table (namespace.table, e.g. a gold rollup), write any Trino SELECT; label a
    column it computes in the header: columns: {{share: {{label: Share, format: percent}}}}.
+   To combine questions (compare two time windows, join a model with a gold table, rank),
+   put each part in a WITH clause, one model or tables per CTE, and write the rest over the
+   CTEs: the parts are answered first, then the rest runs over their results.
    query_view runs a view so you can see its rows.
 3. Write the page in plain HTML with the chart tags below. Names are enough: labels and number
    formats come from the ontology. Keep the page small and readable.

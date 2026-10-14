@@ -701,6 +701,36 @@ optional, and a condition on it is dropped while it has no value ("all ISPs").
 Each view is checked when the platform loads: one SELECT, known models,
 tables and columns. Its result columns are known up front.
 
+**Composed views** combine questions. A `WITH` clause holds the parts: each
+CTE reads one model (a semantic query, cut across the tiers by the router),
+or tables (Trino SQL), or other CTEs. The parts are answered first, in full,
+and the rest of the SQL then runs over their results in a sandboxed DuckDB:
+joins, window functions, comparing one time window with another. Metrics are
+still cut across the tiers only by the router, so nothing is counted twice.
+
+```sql
+/*
+description: Each ISP's rebuffer rate in the last hour against its last day.
+columns:
+  change: {label: Change, format: percent, better: lower}
+*/
+WITH recent AS (
+  SELECT isp_provider, rebuffer_incidence_rate FROM playback_telemetry
+  WHERE event_ts >= now() - INTERVAL '1' HOUR
+),
+usual AS (
+  SELECT isp_provider, rebuffer_incidence_rate AS usual_rate FROM playback_telemetry
+  WHERE event_ts >= now() - INTERVAL '24' HOUR
+)
+SELECT recent.isp_provider, recent.rebuffer_incidence_rate,
+       recent.rebuffer_incidence_rate - usual.usual_rate AS change
+FROM recent JOIN usual USING (isp_provider)
+ORDER BY change DESC
+```
+
+A composed view is live like a view over a model, and its result says what
+each part covers. The design is in [docs/design/sql-access.md](docs/design/sql-access.md).
+
 **Live views.** `GET /views/<name>/live?<params>` is a Server-Sent Events
 stream ([`agentic_lakehouse/live.py`](agentic_lakehouse/live.py)): the view's result now, then again each
 time it changes, and an `error` event if a refresh fails (the last result

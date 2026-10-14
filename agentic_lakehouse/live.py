@@ -48,7 +48,7 @@ from fastapi.sse import ServerSentEvent
 
 from agentic_lakehouse.compiler import QueryError
 from agentic_lakehouse.engines import EngineError
-from agentic_lakehouse.views import ModelSource, View, ViewError
+from agentic_lakehouse.views import View, ViewError
 
 if TYPE_CHECKING:
     from agentic_lakehouse.api_gateway import Gateway
@@ -166,7 +166,8 @@ class LiveViews:
                     version, computed_at = current, time.monotonic()
                     # When it was computed, and the time range a live view covers, move on every
                     # refresh; only a change in what the result says is worth pushing.
-                    said = ("result", result.model_dump_json(exclude={"computed_at", "coverage"}))
+                    # A composed view's parts each carry a coverage that moves too.
+                    said = ("result", result.model_dump_json(exclude={"computed_at": True, "coverage": True, "parts": {"__all__": {"coverage"}}}))
                     if said != published:
                         feed.publish(ServerSentEvent(event="result", data=result))
                         published = said
@@ -180,9 +181,10 @@ class LiveViews:
             await asyncio.sleep(interval)
 
     def _version(self, view: View) -> tuple | None:
-        """What a view over tables last read: its tables' states. None for a view over a model,
-        whose real-time data has no version to compare, so it reruns every time."""
+        """What a view over tables last read: its tables' states. None for a view that reads a
+        model (composed ones too), whose real-time data has no version to compare, so it reruns
+        every time."""
         warehouse = self.gateway.warehouse
-        if isinstance(view.source, ModelSource) or warehouse is None:
+        if view.realtime or warehouse is None:
             return None
-        return tuple(warehouse.table_state(table) for table in view.source.tables)
+        return tuple(warehouse.table_state(table) for table in view.tables)

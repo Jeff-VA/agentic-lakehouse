@@ -25,6 +25,12 @@ What the SELECT reads decides how it runs:
 - FROM Iceberg tables, written <namespace>.<table> (each dataset's raw table and
   the gold rollups in storage.yaml): any SELECT, run on Trino as written. Its
   data ends where each table's last flush or rollup run did.
+- Composed (docs/design/sql-access.md): a WITH query whose CTEs read a model
+  (as above), or tables (as above), or other CTEs. The model and table parts
+  are answered first, in full; the rest of the SQL then runs over their
+  results in a sandboxed DuckDB (agentic_lakehouse/compose.py): joins, window
+  functions, comparing one time window with another. Metrics are still cut
+  across the tiers only by the router, so nothing is counted twice.
 
 The header can also set `refresh_seconds`: how often a live view rechecks its
 data (agentic_lakehouse/live.py), and `columns`: how to read columns the
@@ -61,6 +67,7 @@ from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 
+from agentic_lakehouse import compose
 from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler, bucket_start
 from agentic_lakehouse.ontology import (
     AggregateMetric,
@@ -313,6 +320,23 @@ class TableSource:
         return tree.sql(dialect=dialect)
 
 
+@dataclass(frozen=True)
+class ComposedSource:
+    """A composed view: stage-1 parts, each a view over a model or over tables, answered in
+    full first; then stage 2, SQL over their results, which DuckDB runs (agentic_lakehouse/compose.py)."""
+
+    parts: dict[str, ModelSource | TableSource]  # by CTE name, in the order written
+    part_columns: dict[str, tuple[ViewColumn, ...]]  # each part's columns, so an empty part still has them
+    stage2: exp.Query  # the query over the parts' names, in Trino's dialect, with :parameters in place
+
+    def stage2_sql(self, values: Mapping[str, Any]) -> str:
+        """Stage 2 in DuckDB's dialect, with parameter `values` bound as literals."""
+        tree = self.stage2.copy()
+        for placeholder in list(tree.find_all(exp.Placeholder)):
+            placeholder.replace(_literal(values[placeholder.name], in_interval=isinstance(placeholder.parent, exp.Interval)))
+        return tree.sql(dialect="duckdb")
+
+
 @dataclass(frozen=True, eq=False)
 class View:
     name: str
@@ -320,13 +344,29 @@ class View:
     params: dict[str, ViewParam]
     sql: str  # the SELECT as written, without the header
     columns: tuple[ViewColumn, ...]
-    source: ModelSource | TableSource
+    source: ModelSource | TableSource | ComposedSource
     refresh_seconds: float | None = None
 
     @property
     def reads(self) -> list[str]:
-        """The model, or the tables, the view reads."""
-        return [self.source.model] if isinstance(self.source, ModelSource) else list(self.source.tables)
+        """The models and tables the view reads."""
+        names = []
+        for source in self._sources():
+            names += [source.model] if isinstance(source, ModelSource) else list(source.tables)
+        return list(dict.fromkeys(names))
+
+    @property
+    def realtime(self) -> bool:
+        """Whether it reads a model, whose data changes from second to second."""
+        return any(isinstance(source, ModelSource) for source in self._sources())
+
+    @property
+    def tables(self) -> list[str]:
+        """The tables it reads directly, which a flush or rollup run changes."""
+        return list(dict.fromkeys(t for source in self._sources() if isinstance(source, TableSource) for t in source.tables))
+
+    def _sources(self) -> list["ModelSource | TableSource"]:
+        return list(self.source.parts.values()) if isinstance(self.source, ComposedSource) else [self.source]
 
     def bind(self, params: Mapping[str, Any]) -> dict[str, Any]:
         """Every parameter's value for a request: from `params`, else the default. Raises ViewError."""
@@ -386,8 +426,9 @@ def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas) -
     _check_parameters(tree, header.params)
 
     models = {model.name: model for model in ontology.models}
-    model = _model_read(tree, models)
-    if model is not None:
+    if _composed(tree, models):
+        source, columns = _composed_source(tree, header.params, ontology, tables, models)
+    elif (model := _model_read(tree, models)) is not None:
         source, columns = _model_source(tree, model, header.params, ontology)
     else:
         source, columns = _table_source(tree, header.params, tables, models)
@@ -461,7 +502,8 @@ def _model_source(
     if extra := sorted(key for key, value in select.args.items() if value and key not in _CLAUSES):
         raise ViewError(
             f"{over} can only SELECT, WHERE, GROUP BY, ORDER BY and LIMIT (it has {', '.join(extra)}). "
-            "For anything else, write the view over a table, such as a gold rollup"
+            "To combine it with other data, read it in a WITH clause and join the CTE; "
+            "or write the view over a table, such as a gold rollup"
         )
     table = select.args["from_"].this
     qualifiers = {model.name, table.alias_or_name}
@@ -717,6 +759,124 @@ def _evaluate(node: exp.Expression, values: Mapping[str, Any], now: datetime) ->
     )
 
 
+# ---------------------------------------------------------------- composed views
+
+
+def _composed(tree: exp.Query, models: Mapping[str, SemanticModel]) -> bool:
+    """Whether a query is a composed view: a WITH query that reads a model somewhere (or names a
+    CTE like one, which _composed_source then explains)."""
+    with_ = tree.args.get("with_")
+    if with_ is None:
+        return False
+    ctes = {cte.alias_or_name for cte in tree.find_all(exp.CTE)}
+    return bool(ctes & models.keys()) or any(not t.db and t.name in models and t.name not in ctes for t in tree.find_all(exp.Table))
+
+
+def _composed_source(
+    tree: exp.Query,
+    params: Mapping[str, ViewParam],
+    ontology: Ontology,
+    tables: TableSchemas,
+    models: Mapping[str, SemanticModel],
+) -> tuple[ComposedSource, list[ViewColumn]]:
+    with_ = tree.args["with_"]
+    if with_.args.get("recursive"):
+        raise ViewError("composed views can't use WITH RECURSIVE")
+    names = [cte.alias_or_name for cte in with_.expressions]
+    if clash := sorted(set(names) & models.keys()):
+        raise ViewError(f"name the CTE {clash[0]} something other than the model it shares a name with")
+    parts, part_columns, stage2_ctes = {}, {}, []
+    for cte in with_.expressions:
+        name, body = cte.alias_or_name, cte.this
+        kind = _cte_kind(name, body, models, set(names))
+        if kind == "model":
+            model = _model_read(body, models)
+            if model is None or not isinstance(body, exp.Select):
+                raise ViewError(f"CTE {name}: read the model alone, like SELECT … FROM {next(iter(_models_in(body, models)))} WHERE …")
+            try:
+                parts[name], columns = _model_source(body, model, params, ontology)
+            except ViewError as e:
+                raise ViewError(f"CTE {name}: {e}") from None
+        elif kind == "tables":
+            try:
+                parts[name], columns = _table_source(body, params, tables, models)
+            except ViewError as e:
+                raise ViewError(f"CTE {name}: {e}") from None
+        else:
+            stage2_ctes.append(cte)
+            continue
+        part_columns[name] = tuple(columns)
+
+    stage2 = tree.copy()
+    if stage2_ctes:
+        stage2.set("with_", exp.With(expressions=[cte.copy() for cte in stage2_ctes]))
+    else:
+        stage2.set("with_", None)
+    stage2_names = {cte.alias_or_name for cte in stage2_ctes}
+    if forbidden := stage2.find(*_FORBIDDEN):
+        raise ViewError(f"views only read data; remove {forbidden.key.upper()}")
+    for table in stage2.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier):
+            raise ViewError(f"after the WITH, read the CTEs, not table functions like {table.sql(VIEW_DIALECT)}")
+        if table.db or (table.name not in parts and table.name not in stage2_names):
+            what = "the model" if table.name in models else "the table" if table.db else "the unknown table"
+            named = f"{table.db}.{table.name}" if table.db else table.name
+            raise ViewError(f"after the WITH, read only the CTEs; read {what} {named} in a CTE of its own")
+
+    # Run stage 2 over empty parts: what doesn't work in DuckDB fails now, naming the view,
+    # and the result's columns and their types are known up front.
+    sample = ComposedSource(parts, part_columns, stage2).stage2_sql(
+        {name: _SAMPLE_VALUES.get(param.type, datetime(2026, 1, 1)) for name, param in params.items()}
+    )
+    try:
+        outputs = compose.check({name: [(c.name, c.type) for c in cols] for name, cols in part_columns.items()}, sample)
+    except compose.StageTwoError as e:
+        raise ViewError(f"after the WITH: {e}") from None
+    names_out = [name for name, _ in outputs]
+    if repeated := sorted({n for n in names_out if names_out.count(n) > 1}):
+        raise ViewError(f"column names must be unique: {', '.join(repeated)}")
+
+    # A column named like a part's metric or dimension reads like it; anything else is plain.
+    described = {}
+    for cols in part_columns.values():
+        for column in cols:
+            if column.role is not None or column.format is not None or column.label != words(column.name):
+                described.setdefault(column.name, column)
+    columns = [
+        described[name].model_copy(update={"type": kind}) if name in described else ViewColumn(name=name, type=kind, label=words(name))
+        for name, kind in outputs
+    ]
+    return ComposedSource(parts, part_columns, stage2), columns
+
+
+def _cte_kind(name: str, body: exp.Query, models: Mapping[str, SemanticModel], ctes: set[str]) -> str:
+    """What a CTE of a composed view reads: "model" (one), "tables", or "ctes" (other CTEs, or nothing)."""
+    own = {cte.alias_or_name for cte in body.find_all(exp.CTE)}  # a table part may have a WITH of its own
+    reads = {"model": set(), "tables": set(), "ctes": set()}
+    for table in body.find_all(exp.Table):
+        if table.db:
+            reads["tables"].add(f"{table.db}.{table.name}")
+        elif table.name in models and table.name not in own:
+            reads["model"].add(table.name)
+        elif table.name in ctes and table.name not in own:
+            reads["ctes"].add(table.name)
+        elif table.name not in own:
+            raise ViewError(f"CTE {name} reads '{table.name}', which is no model, table or earlier CTE")
+    kinds = [kind for kind, found in reads.items() if found]
+    if len(kinds) > 1:
+        raise ViewError(
+            f"CTE {name} reads {' and '.join(sorted(n for found in reads.values() for n in found))}: a CTE reads one "
+            "model, or tables, or other CTEs. Split it into CTEs and join them"
+        )
+    if len(reads["model"]) > 1:
+        raise ViewError(f"CTE {name} reads {' and '.join(sorted(reads['model']))}: read each model in a CTE of its own")
+    return kinds[0] if kinds else "ctes"
+
+
+def _models_in(body: exp.Query, models: Mapping[str, SemanticModel]) -> set[str]:
+    return {t.name for t in body.find_all(exp.Table) if not t.db and t.name in models}
+
+
 # ---------------------------------------------------------------- views over tables
 
 _FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter, exp.Command, exp.Into)
@@ -794,7 +954,10 @@ def _analyze(
             if table.name in ctes:
                 continue
             if table.name in models:
-                raise ViewError(f"a view reading model '{table.name}' must select from it alone, without joins or subqueries")
+                raise ViewError(
+                    f"a view reading model '{table.name}' must select from it alone, without joins or subqueries; "
+                    f"to combine it with other data, read it in a WITH clause and join the CTE"
+                )
             raise ViewError(f"unknown model or table '{table.name}'. {known}")
         name = f"{table.db}.{table.name}"
         if name not in tables:
