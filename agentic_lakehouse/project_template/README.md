@@ -31,9 +31,13 @@ queries). After changing `config/deployment.yaml`, rewrite them with
 
 1. Describe your events in `config/ingestion.yaml` and what they mean in
    `config/ontology.yaml`.
-2. Write views in `config/views/` and dashboards in `config/dashboards/`.
+2. Name business definitions once, as macros in `config/macros/`:
+   `default.sql` for every engine, and `pinot.sql`, `trino.sql` or
+   `duckdb.sql` for an engine's own version, which wins. The ontology, views
+   and steps call them, like `filters: ["{{ large_event() }}"]`.
+3. Write views in `config/views/` and dashboards in `config/dashboards/`.
    With Claude Code, open this folder and ask for a dashboard: `.mcp.json` and
    `AGENTS.md` give it the tools and the workflow.
-3. Check everything with `.venv/bin/agentic-lakehouse check` and `.venv/bin/pytest`.
+4. Check everything with `.venv/bin/agentic-lakehouse check` and `.venv/bin/pytest`.
 
-The engine's README documents every endpoint, the view format and the chart tags.
+The engine's README documents every endpoint, the view format, macros and the chart tags.

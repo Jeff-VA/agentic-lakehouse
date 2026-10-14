@@ -1,9 +1,10 @@
 """agentic-lakehouse init: a new project in its own folder, ready to run.
 
 The project is a working starter (project_template/): a dataset of events, a
-model with a few metrics, views, a rollup with quality checks and a
-dashboard, plus its own Docker stack, CI, tests and agent files, and the
-DuckDB setup for SQL access (tools/duckdb/, rendered from its config). Its
+model with a few metrics, a macro file (config/macros/) with an example
+business definition, views, a rollup with quality checks and a dashboard,
+plus its own Docker stack, CI, tests and agent files, and the DuckDB setup
+for SQL access (tools/duckdb/, rendered from its config). Its
 requirements.txt pins this engine version's release, so the project upgrades
 the engine on its own schedule.
 """

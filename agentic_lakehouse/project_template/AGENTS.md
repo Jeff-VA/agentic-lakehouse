@@ -12,6 +12,12 @@ needs to change in it, change it there and upgrade the pin, not here.
 - `config/ingestion.yaml`: the datasets that arrive on Kafka, and their columns.
 - `config/ontology.yaml`: what the data means: dimensions and metrics, with
   their labels and formats.
+- `config/macros/*.sql`: SQL macros, such as the business definitions the
+  project names once (`large_event()`). `default.sql` is for every engine;
+  `pinot.sql`, `trino.sql` and `duckdb.sql` hold an engine's own versions.
+  An engine's own version beats a generic one, and at the same level the
+  project's beats the engine's built-in. The header of `default.sql`
+  explains the rest.
 - `config/storage.yaml` and `config/quality_rules.yaml`: the Iceberg tables,
   the rollups, and the checks a rollup must pass before it publishes.
 - `config/views/*.sql`: named queries that dashboards and agents read.
@@ -21,6 +27,18 @@ needs to change in it, change it there and upgrade the pin, not here.
   `config/deployment.yaml`; run that again rather than editing it.
 - Python modules next to `config/`: the project's own code, such as a
   dataset's `simulator: module:function`.
+
+## Adding a business definition
+
+When a rule such as "a large event" decides what metrics or views count,
+write it once as a macro in `config/macros/default.sql`, with a comment right
+before it saying what it means: `list_metrics` shows that comment to people
+and agents. Then call the macro instead of copying its SQL: in a metric's
+`filters` (`filters: ["{{ large_event() }}"]`), a dimension's or metric's
+`sql`, and views or steps over tables that have its columns. If an engine
+needs different SQL, put its version in that engine's file, such as
+`trino.sql`. `agentic-lakehouse check` renders every use for each engine and
+names any that fails.
 
 ## Building a dashboard
 
