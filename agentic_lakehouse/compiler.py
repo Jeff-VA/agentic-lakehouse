@@ -172,8 +172,15 @@ class SqlCompiler:
     def __init__(self, ontology: Ontology):
         self.ontology = ontology
         self._model_of = {metric.name: model for model in ontology.models for metric in model.metrics}
-        self._macros = ontology.macros  # the project's, over the engine's
-        self._env = self._macros.env
+
+    @property
+    def _macros(self):
+        # Read at each use, not kept: a live reload of config/macros/ replaces the ontology's macros.
+        return self.ontology.macros
+
+    @property
+    def _env(self):
+        return self.ontology.macros.env
 
     def model_for(self, query: MetricQuery) -> SemanticModel:
         """The model the query's metrics belong to. Raises QueryError if they don't share one."""
