@@ -112,3 +112,16 @@ def test_load_platform_reads_the_projects_macros(tmp_path):
     (config / "macros" / "default.sql").write_text("{% macro broken( %}")
     with pytest.raises(ConfigError, match=r"macros/default.sql, line 1: "):
         load_platform(config)
+
+
+def test_a_files_header_comment_isnt_a_description(tmp_path):
+    (tmp_path / "default.sql").write_text(
+        "{#- What these macros are for: a header, before any macro. -#}\n\n"
+        "{% macro undescribed() %}1{% endmacro %}\n\n"
+        "{# A described one. #}\n{% macro described() %}2{% endmacro %}\n"
+    )
+    catalog = {m.name: m.description for m in ProjectMacros(tmp_path).catalog()}
+    assert (catalog["undescribed"], catalog["described"]) == ("", "A described one.")
+    engine = {m.name: m.description for m in ProjectMacros(None).catalog()}
+    assert engine["quote"].startswith("Output column names.")  # not the engine file's header
+    assert engine["percentile"].startswith("Exact percentile")  # duckdb.sql's comment, not its header

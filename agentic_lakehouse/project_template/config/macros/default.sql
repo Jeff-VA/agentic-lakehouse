@@ -2,8 +2,8 @@
   This project's SQL macros: business definitions named once, and SQL that
   differs by engine. The ontology's SQL (a dimension's or metric's `sql`, a
   metric's `filters`), views and steps call them by name, for example
-  filters: ["{{ large_event() }}"]. A comment right before a macro describes
-  it to people and agents.
+  filters: ["{{ large_event() }}"]. The comment directly above a macro, with
+  no blank line between, describes it to people and agents.
 
   default.sql holds macros for every engine; pinot.sql, trino.sql and
   duckdb.sql, all optional, hold an engine's own versions. For each engine, a

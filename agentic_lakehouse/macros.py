@@ -17,8 +17,8 @@ silently replaces an engine-specific built-in. Macros call each other as
 adapter.<name>, which looks them up the same way.
 
 Projects use macros in ontology SQL snippets (`filters: ["{{ human_edit() }}"]`),
-in views and in steps; a comment right before a macro describes it to people
-and agents. Design: docs/design/project-macros.md.
+in views and in steps; the comment directly above a macro (no blank line
+between) describes it to people and agents. Design: docs/design/project-macros.md.
 """
 
 import re
@@ -34,8 +34,9 @@ ENGINES = ("duckdb", "trino", "pinot")
 TEMPLATES = Path(__file__).parent / "templates"
 
 _JINJA = re.compile(r"\{\{|\{%")
-# A macro's description: the comment right before its definition
-_DESCRIBED = re.compile(r"\{#-?\s*(.*?)\s*-?#\}\s*\{%-?\s*macro\s+([A-Za-z_]\w*)", re.DOTALL)
+# A macro's description: the one comment directly above its definition, with no blank line between
+# (so a file's header comment, set off by a blank line, describes no macro)
+_DESCRIBED = re.compile(r"\{#-?((?:(?!#\}).)*?)-?#\}[ \t]*\r?\n?[ \t]*\{%-?\s*macro\s+([A-Za-z_]\w*)", re.DOTALL)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 

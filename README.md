@@ -643,8 +643,8 @@ engine, and changes how a built-in compiles, with Jinja macros of its own in
 For each engine, a macro is looked up in the project's `<engine>.sql`, the
 engine's `<engine>.sql`, the project's `default.sql`, then the engine's
 `default.sql`: an engine-specific macro beats a generic one, and at the same
-level the project's beats the engine's. A comment right before a macro
-describes it; `/catalog`, MCP's `list_metrics` and the drift agent's prompt
+level the project's beats the engine's. The comment directly above a macro,
+with no blank line between, describes it; `/catalog`, MCP's `list_metrics` and the drift agent's prompt
 show it to people and agents.
 
 A business definition, written once in `default.sql`:

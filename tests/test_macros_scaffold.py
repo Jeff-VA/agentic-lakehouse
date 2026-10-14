@@ -95,10 +95,6 @@ def test_a_new_project_loads_with_its_macros(project):
     assert load_platform(project / "config").ontology.macros.files == ["default"]
 
 
-@pytest.mark.xfail(
-    strict=True,  # passes, and so fails here, once fixed: then remove this mark
-    reason="macros._DESCRIBED reads a file's header comment into its first described macro's description",
-)
 def test_the_examples_comment_describes_it(project):
     [example] = [m for m in ProjectMacros(project / "config" / "macros").catalog() if m.files == ["project/default.sql"]]
     assert example.description == "A large event: an amount of 500 or more."

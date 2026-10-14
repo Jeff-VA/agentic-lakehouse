@@ -40,8 +40,10 @@ The project's `config/macros/` folder mirrors the engine's
 | `default.sql` | macros for every engine |
 | `pinot.sql`, `trino.sql`, `duckdb.sql` | engine-specific versions, optional |
 
-These are ordinary Jinja macro files, the same format as the engine's. A
-comment right before a macro is its description, shown to people and agents:
+These are ordinary Jinja macro files, the same format as the engine's. The
+comment directly above a macro, with no blank line between, is its description,
+shown to people and agents (a file's header comment, set off by a blank line,
+describes no macro):
 
 ```sql
 {# An edit by a person with an account: not a bot, not anonymous. #}
