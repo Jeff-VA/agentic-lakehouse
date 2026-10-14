@@ -121,7 +121,7 @@ def call_mcp(target, method, *args):
 
 def test_mcp_tools_are_listed_with_schemas():
     tools = {t.name: t for t in call_mcp(create_mcp_server(Gateway(router())), "list_tools").tools}
-    assert tools.keys() == {"list_metrics", "query_metrics", "data_status", "list_views", "query_view"}
+    assert tools.keys() == {"list_metrics", "query_metrics", "data_status", "list_views", "query_view", "query_sql"}
     assert set(tools["query_metrics"].input_schema["required"]) == {"metrics", "start", "end"}
     assert tools["query_metrics"].annotations.read_only_hint is True
 
@@ -174,7 +174,7 @@ def test_run_py_serves_mcp_over_stdio():
     params = StdioServerParameters(command=sys.executable, args=["-m", "agentic_lakehouse", "mcp"], cwd=str(root))
     tools = call_mcp(params, "list_tools").tools
     assert {t.name for t in tools} == {
-        "list_metrics", "query_metrics", "data_status", "list_views", "query_view", "check_dashboards", "screenshot_dashboard"
+        "list_metrics", "query_metrics", "data_status", "list_views", "query_view", "query_sql", "check_dashboards", "screenshot_dashboard"
     }
 
 
@@ -273,7 +273,7 @@ def test_the_gateway_starts_while_the_stack_is_unreachable():
     )
     gateway = Gateway.from_platform(replace(platform, deployment=unreachable))
     assert {t.name for t in call_mcp(create_mcp_server(gateway), "list_tools").tools} == {
-        "list_metrics", "query_metrics", "data_status", "list_views", "query_view"
+        "list_metrics", "query_metrics", "data_status", "list_views", "query_view", "query_sql"
     }
 
 

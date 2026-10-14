@@ -85,7 +85,7 @@ from agentic_lakehouse.ontology import (
 
 VIEW_DIALECT = "trino"  # views over tables run on Trino as written
 VIEW_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
-RESERVED_PARAMS = {"include_sql"}  # the gateway's own query-string options
+RESERVED_PARAMS = {"include_sql", "format", "errors", "q"}  # the gateway's own query-string options
 
 ParamType = Literal["int", "float", "string", "boolean", "timestamp"]
 ValueType = Literal["string", "number", "boolean", "timestamp", "date", "unknown"]
