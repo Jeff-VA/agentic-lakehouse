@@ -12,7 +12,16 @@ import yaml
 from sqlglot import exp
 from test_agent_sync import claude
 
-from agentic_lakehouse.agent_sync import ColumnProfile, DriftReport, Proposal, ProposedDimension, ProposedMetric, propose_changes
+from agentic_lakehouse.agent_sync import (
+    ColumnProfile,
+    DriftReport,
+    DriftSamples,
+    Proposal,
+    ProposedDimension,
+    ProposedMetric,
+    new_column_signal,
+    propose_changes,
+)
 from agentic_lakehouse.compiler import SQLGLOT_DIALECTS
 from agentic_lakehouse.config import load_platform
 from agentic_lakehouse.macros import ENGINES, ProjectMacros
@@ -40,15 +49,20 @@ TRINO = """\
 {% macro weekday(ts) %}day_of_week({{ ts }}){% endmacro %}
 """
 
-CHANNEL = ProposedDimension(model="activity", name="channel", type="string", description="Where the event came from: web or app.", sql=None)
+CHANNEL = ProposedDimension(
+    signals=["S1"], model="activity", name="channel", type="string", description="Where the event came from: web or app.", sql=None, label=None
+)
 LARGE_APP_EVENTS = ProposedMetric(
-    model="activity", name="large_app_events", description="Large events from the app.", type="aggregate",
+    signals=["S1"], model="activity", name="large_app_events", description="Large events from the app.", type="aggregate",
     agg="count", sql=None, percentile=None, filters=["{{ large_event() }}", "channel = 'app'"], numerator=None, denominator=None,
+    label=None, format=None, unit=None, better=None,
 )
 
 
 def proposal(*metrics: ProposedMetric) -> Proposal:
-    return Proposal(summary="Upstream added the channel each event came from.", dimensions=[CHANNEL], metrics=list(metrics), not_modeled=[])
+    return Proposal(
+        summary="Upstream added the channel each event came from.", dimensions=[CHANNEL], metrics=list(metrics), changes=[], macros=[], unchanged=[]
+    )
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +79,7 @@ def config(project, tmp_path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def drift(project) -> tuple[DriftReport, pa.Table]:
+def drift(project) -> tuple[DriftReport, DriftSamples]:
     """Producers start sending a `channel` field with the starter events: the report and a sample."""
     dataset = load_platform(project / "config").dataset("events")
     events = generate_events(dataset, datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 10))
@@ -73,7 +87,7 @@ def drift(project) -> tuple[DriftReport, pa.Table]:
         event["channel"] = ("web", "app")[i % 2]
     sample = pa.Table.from_pylist(events, schema=arrow_schema(dataset).append(pa.field("channel", pa.string())))
     profile = ColumnProfile(name="channel", type="string", rows_sampled=len(events), rows_set=len(events), distinct_values=2)
-    return DriftReport(dataset="events", table="raw.events", new_columns=[profile]), sample
+    return DriftReport(dataset="events", table="raw.events", signals=[new_column_signal("events", profile)]), DriftSamples(sample, sample.slice(0, 0))
 
 
 def test_init_writes_a_macro_whose_example_works_on_every_engine(project):

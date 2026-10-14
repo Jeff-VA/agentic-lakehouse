@@ -272,7 +272,7 @@ API, and WS4 merges them.
 
 ## Checklist
 
-- [ ] WS0: the `drift/` package, `Signal`, `DriftSamples`, the new `Proposal`; existing tests pass
+- [x] WS0: the `drift/` package, `Signal`, `DriftSamples`, the new `Proposal`; existing tests pass
 - [ ] WS1: signals, lineage, samples, tests
 - [ ] WS2: patchers, tests
 - [ ] WS3: request, validation, review header, ledger, CLI, tests

@@ -12,10 +12,10 @@ from test_flush import NOW, FakeConsumer, event
 from agentic_lakehouse.agent_sync import (
     MODEL,
     DriftAgentError,
-    NotModeled,
     Proposal,
     ProposedDimension,
     ProposedMetric,
+    Unchanged,
     check_drift,
     detect_drift,
     propose_changes,
@@ -71,17 +71,20 @@ def repo(tmp_path, monkeypatch):
 
 def dimension(**overrides) -> ProposedDimension:
     fields = {
+        "signals": ["S1"],
         "model": MODEL_NAME,
         "name": "cdn_pop",
         "type": "string",
         "description": "CDN point of presence that served the stream.",
         "sql": None,
+        "label": "CDN PoP",
     }
     return ProposedDimension(**fields | overrides)
 
 
 def metric(**overrides) -> ProposedMetric:
     fields = {
+        "signals": ["S2"],
         "model": MODEL_NAME,
         "name": "avg_dropped_frames",
         "description": "Average video frames dropped per playback event.",
@@ -92,6 +95,10 @@ def metric(**overrides) -> ProposedMetric:
         "filters": [],
         "numerator": None,
         "denominator": None,
+        "label": None,
+        "format": None,
+        "unit": "frames",
+        "better": "lower",
     }
     return ProposedMetric(**fields | overrides)
 
@@ -101,7 +108,9 @@ def proposal(dimensions=None, metrics=None) -> Proposal:
         summary="Upstream added the serving CDN PoP, a dropped-frame count and a live-stream flag.",
         dimensions=[dimension()] if dimensions is None else dimensions,
         metrics=[metric()] if metrics is None else metrics,
-        not_modeled=[NotModeled(column="is_live", reason="Every sampled live event is also a late one; unclear.")],
+        changes=[],
+        macros=[],
+        unchanged=[Unchanged(signal="S3", reason="Every sampled live event is also a late one; unclear.")],
     )
 
 
@@ -134,7 +143,7 @@ def claude(*replies, requests: list | None = None) -> anthropic.Anthropic:
 
 
 def test_detect_drift_profiles_the_new_columns(table):
-    report, sample = detect_drift("telemetry", PLATFORM, table)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
 
     profiles = {c.name: c for c in report.new_columns}
     assert list(profiles) == ["cdn_pop", "dropped_frames", "is_live"]
@@ -142,13 +151,14 @@ def test_detect_drift_profiles_the_new_columns(table):
     assert (profiles["cdn_pop"].type, profiles["cdn_pop"].top_values) == ("string", [("den-1", 4), ("sea-2", 4)])
     assert (profiles["dropped_frames"].type, profiles["dropped_frames"].minimum, profiles["dropped_frames"].maximum) == ("double", 2, 9)
     assert profiles["is_live"].top_values == [(False, 4), (True, 4)]  # ties in value order
-    assert sample.num_rows == 8  # only rows where a new column is set
+    assert samples.recent.num_rows == 8  # only rows where a new column is set
+    assert [s.key for s in report.signals] == [f"telemetry:new_column:{name}" for name in profiles]
 
 
 def test_matching_config_has_no_drift(catalog):
     table = catalog.create_table("raw.telemetry", schema=iceberg_schema(DATASET))
-    report, sample = detect_drift("telemetry", PLATFORM, table)
-    assert (report.has_drift, sample) == (False, None)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    assert (report.has_drift, samples) == (False, None)
 
 
 def test_type_mismatches_are_reported(catalog):
@@ -159,14 +169,16 @@ def test_type_mismatches_are_reported(catalog):
 
 
 def test_a_valid_proposal_becomes_a_patch_that_applies(table, repo):
-    report, sample = detect_drift("telemetry", PLATFORM, table)
-    result = propose_changes(report, sample, "config", claude(proposal()), log=lambda m: None)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    result = propose_changes(report, samples, "config", claude(proposal()), log=lambda m: None)
     patch = render_patch(result, "config")
 
     assert result.attempts == 1
     assert "+      - {name: cdn_pop, type: string}" in patch
     assert "+      - name: avg_dropped_frames" in patch
-    assert "#   is_live: Every sampled live event" in patch
+    assert "+        unit: frames" in patch and "+        label: CDN PoP" in patch
+    assert "#      unchanged: Every sampled live event" in patch
+    assert "#      answered by: dimension cdn_pop" in patch
     (repo / "drift.patch").write_text(patch)
     subprocess.run(["git", "apply", "drift.patch"], cwd=repo, check=True)
     applied = load_platform(repo / "config")
@@ -177,8 +189,8 @@ def test_a_valid_proposal_becomes_a_patch_that_applies(table, repo):
 
 def test_claude_is_asked_for_structured_output_with_fallback(table, repo):
     requests = []
-    report, sample = detect_drift("telemetry", PLATFORM, table)
-    propose_changes(report, sample, "config", claude(proposal(), requests=requests), log=lambda m: None)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    propose_changes(report, samples, "config", claude(proposal(), requests=requests), log=lambda m: None)
 
     [request] = requests
     body = request["body"]
@@ -202,8 +214,8 @@ def test_claude_is_asked_for_structured_output_with_fallback(table, repo):
 )
 def test_invalid_proposals_go_back_to_claude_with_the_errors(table, repo, bad, error):
     requests = []
-    report, sample = detect_drift("telemetry", PLATFORM, table)
-    result = propose_changes(report, sample, "config", claude(bad, proposal(), requests=requests), log=lambda m: None)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    result = propose_changes(report, samples, "config", claude(bad, proposal(), requests=requests), log=lambda m: None)
 
     assert result.attempts == 2
     retry = requests[1]["body"]["messages"]
@@ -212,17 +224,17 @@ def test_invalid_proposals_go_back_to_claude_with_the_errors(table, repo, bad, e
 
 
 def test_the_agent_gives_up_after_max_attempts(table, repo):
-    report, sample = detect_drift("telemetry", PLATFORM, table)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
     bad = proposal(dimensions=[dimension(model="nope")])
     with pytest.raises(DriftAgentError, match="no valid proposal after 2 attempts"):
-        propose_changes(report, sample, "config", claude(bad, bad), max_attempts=2, log=lambda m: None)
+        propose_changes(report, samples, "config", claude(bad, bad), max_attempts=2, log=lambda m: None)
 
 
 def test_a_refusal_stops_the_agent(table, repo):
-    report, sample = detect_drift("telemetry", PLATFORM, table)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
     refusal = {"stop_reason": "refusal", "content": [], "stop_details": {"type": "refusal", "category": None, "explanation": "x"}}
     with pytest.raises(DriftAgentError, match="Claude declined"):
-        propose_changes(report, sample, "config", claude(refusal), log=lambda m: None)
+        propose_changes(report, samples, "config", claude(refusal), log=lambda m: None)
 
 
 def test_check_drift_proposes_each_drift_once(catalog, table, repo):
@@ -245,9 +257,9 @@ def test_missing_credentials_are_reported_before_calling_claude(table, repo, mon
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setenv("HOME", str(repo))  # an empty home: no `ant auth login` profile either
     monkeypatch.setenv("XDG_CONFIG_HOME", str(repo))
-    report, sample = detect_drift("telemetry", PLATFORM, table)
+    report, samples = detect_drift("telemetry", PLATFORM, table)
     with pytest.raises(DriftAgentError, match="no Claude API credentials: put ANTHROPIC_API_KEY"):
-        propose_changes(report, sample, "config", log=lambda m: None)
+        propose_changes(report, samples, "config", log=lambda m: None)
 
 
 def test_unmodeled_columns_lists_every_field_the_config_lacks(table):
