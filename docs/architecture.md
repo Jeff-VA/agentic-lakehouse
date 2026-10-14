@@ -90,6 +90,10 @@ and dashboards read the same versioned tables. The diagram shows
   question in metric names into SQL for one engine. Metrics are defined once in
   `ontology.yaml`; each engine's dialect lives in a Jinja macro file under
   [`agentic_lakehouse/templates/macros/`](../agentic_lakehouse/templates/macros/).
+  A project's own macros, in `config/macros/`, come first: business
+  definitions used in the ontology, views and steps (a "human edit", say),
+  engine-specific versions of a function, and overrides of the built-ins
+  ([`macros.py`](../agentic_lakehouse/macros.py), [design/project-macros.md](design/project-macros.md)).
 - **The router** ([`agentic_lakehouse/router.py`](../agentic_lakehouse/router.py)) picks the tier, or
   splits the range across both, using Pinot's retention and Iceberg's
   watermark.
@@ -160,6 +164,7 @@ the same numbers as a dashboard. The design is in
 |---|---|
 | `ingestion.yaml` | Kafka topics, Pinot and Iceberg tables, live feeds, processors, synthetic data |
 | `ontology.yaml` | every query: metrics and dimensions, with their labels and formats |
+| `macros/*.sql` | the project's SQL macros: business definitions and overrides of the engine's |
 | `storage.yaml` | the flush schedule and the rollups |
 | `pipelines.yaml` | steps: SQL or Python that writes tables, models among them |
 | `quality_rules.yaml` | the checks a rollup or step must pass before it publishes |
