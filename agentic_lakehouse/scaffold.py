@@ -2,7 +2,8 @@
 
 The project is a working starter (project_template/): a dataset of events, a
 model with a few metrics, views, a rollup with quality checks and a
-dashboard, plus its own Docker stack, CI, tests and agent files. Its
+dashboard, plus its own Docker stack, CI, tests and agent files, and the
+DuckDB setup for SQL access (tools/duckdb/, rendered from its config). Its
 requirements.txt pins this engine version's release, so the project upgrades
 the engine on its own schedule.
 """
@@ -12,6 +13,9 @@ import importlib.metadata
 import re
 import uuid
 from pathlib import Path
+
+from agentic_lakehouse import duckdb_client
+from agentic_lakehouse.config import load_platform
 
 RELEASES = "https://github.com/Jeff-VA/agentic-lakehouse/releases/download"
 TEMPLATE = Path(__file__).parent / "project_template"
@@ -57,5 +61,6 @@ def create_project(path: str | Path, *, engine: str | None = None) -> list[Path]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
         written.append(target)
+    written += duckdb_client.write(load_platform(path / "config"), path / "tools" / "duckdb")
     (path / "proposals").mkdir(exist_ok=True)  # the drift agent's patches, mounted into its container
     return written

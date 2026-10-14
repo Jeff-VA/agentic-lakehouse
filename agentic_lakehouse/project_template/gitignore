@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 proposals/
 .DS_Store
+*.duckdb
+*.duckdb.wal
