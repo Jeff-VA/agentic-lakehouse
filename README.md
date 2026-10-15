@@ -135,7 +135,7 @@ without asking Claude, add `--dry-run`.
 Install the engine and create a project in a folder of its own:
 
 ```bash
-pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.6.1"
+pip install "agentic-lakehouse @ git+https://github.com/Jeff-VA/agentic-lakehouse@v0.6.2"
 agentic-lakehouse init my-project
 cd my-project
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest

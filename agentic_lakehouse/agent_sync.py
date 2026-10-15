@@ -47,6 +47,7 @@ from agentic_lakehouse.dashboards import check_dashboards
 from agentic_lakehouse.drift import review
 from agentic_lakehouse.drift.patch import add_ingestion_columns, apply_macros, apply_ontology, config_diff
 from agentic_lakehouse.drift.proposal import (  # noqa: F401
+    Answer,
     DefinitionChange,
     MacroChange,
     Proposal,
@@ -187,7 +188,7 @@ def propose_changes(
     for attempt in range(1, max_attempts + 1):
         log(f"drift: asking {MODEL} for a proposal (attempt {attempt} of {max_attempts})")
         response = _ask(client, messages, log)
-        proposal = response.parsed_output
+        proposal = response.parsed_output.to_proposal()
         patched = dict(base)
         findings: dict[str, list[str]] = {}
         try:
@@ -235,7 +236,7 @@ def _ask(client: anthropic.Anthropic, messages: list[dict], log: Log):
             max_tokens=16000,
             system=SYSTEM_PROMPT,
             messages=messages,
-            output_format=Proposal,
+            output_format=Answer,  # Proposal's schema, with nothing nullable: see drift/proposal.py
             # Changes can rewrite history, so this is where thinking pays.
             thinking={"type": "adaptive"},
             output_config={"effort": "high"},  # Claude Opus 5.5 defaults to medium

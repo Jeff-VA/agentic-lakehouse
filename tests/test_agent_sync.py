@@ -11,7 +11,10 @@ from test_flush import NOW, FakeConsumer, event
 
 from agentic_lakehouse.agent_sync import (
     MODEL,
+    Answer,
+    DefinitionChange,
     DriftAgentError,
+    MacroChange,
     Proposal,
     ProposedDimension,
     ProposedMetric,
@@ -122,8 +125,8 @@ def claude(*replies, requests: list | None = None) -> anthropic.Anthropic:
         if requests is not None:
             requests.append({"headers": dict(request.headers), "body": json.loads(request.content)})
         reply = next(replies)
-        if isinstance(reply, Proposal):
-            reply = {"stop_reason": "end_turn", "content": [{"type": "text", "text": reply.model_dump_json()}]}
+        if isinstance(reply, Proposal):  # as Claude gives it: in the answer's schema
+            reply = {"stop_reason": "end_turn", "content": [{"type": "text", "text": Answer.from_proposal(reply).model_dump_json()}]}
         return httpx2.Response(
             200,
             json={
@@ -203,6 +206,47 @@ def test_claude_is_asked_for_structured_output_with_fallback(table, repo):
     assert "server-side-fallback-2026-07-01" in request["headers"]["anthropic-beta"]
     prompt = body["messages"][0]["content"]
     assert '"name": "dropped_frames"' in prompt and "<ontology_yaml>" in prompt
+
+
+def test_the_answer_schema_has_nothing_nullable_or_optional(table, repo):
+    """Structured outputs compile the schema into a grammar. Each nullable field (an anyOf, or a
+    type list) makes it exponentially larger: the API allows 16 in a request, and refused 17."""
+    requests = []
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    propose_changes(report, samples, "config", claude(proposal(), requests=requests), log=lambda m: None)
+    unions, optional = [], []
+
+    def walk(node, path: str) -> None:
+        if isinstance(node, dict):
+            if "anyOf" in node or "oneOf" in node or isinstance(node.get("type"), list):
+                unions.append(path)
+            if node.get("type") == "object":
+                optional.extend(f"{path}.{p}" for p in node.get("properties", {}) if p not in node.get("required", []))
+            for key, value in node.items():
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                walk(value, f"{path}[{i}]")
+
+    schema = requests[0]["body"]["output_config"]["format"]["schema"]
+    walk(schema, "$")
+    assert (unions, optional) == ([], [])
+    assert len(json.dumps(schema)) > 1000  # it is the answer's schema, not an empty one
+
+
+def test_an_answer_and_a_proposal_carry_the_same_thing():
+    full = proposal(metrics=[metric(), metric(name="p95_frames", agg="percentile", percentile=0.95, label="p95", format="number")])
+    full.changes = [
+        DefinitionChange(signals=["S2"], model=MODEL_NAME, kind="metric", name="rebuffer_event_count", description=None,
+                         sql=None, filters=[], reason="Filters dropped."),
+        DefinitionChange(signals=["S2"], model=MODEL_NAME, kind="dimension", name="isp_provider", description="Who.",
+                         sql=None, filters=None, reason="Clearer."),
+    ]  # fmt: skip
+    full.macros = [
+        MacroChange(signals=["S1"], name="pop", args=["c"], description="A PoP.", sql="lower({{ c }})", pinot=None,
+                    trino="upper({{ c }})", duckdb=None, reason="Why not."),
+    ]  # fmt: skip
+    assert Answer.from_proposal(full).to_proposal() == full
 
 
 @pytest.mark.parametrize(
