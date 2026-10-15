@@ -295,6 +295,14 @@ API, and WS4 merges them.
   style, and new entries follow the blank lines between existing ones.
 - **A macro change has one description**, so a macro's engine-specific
   versions get the same comment as its default one.
+- **The answer's schema can have nothing nullable.** Structured outputs compile the
+  schema into a grammar. Every nullable field makes that grammar exponentially larger, and the
+  API allows 16 in a request. The first live call was refused, with no tokens spent: "the compiled
+  grammar is too large", for 17. So Claude answers in a schema where an empty string, `none`,
+  `default` or 0 means none, converted to the same `Proposal` (v0.6.2). A test walks the schema
+  that's sent and fails on any union.
+- **Mocked tests can't see API limits.** The answer's schema only meets the grammar compiler
+  live, so the schema test above stands in for it.
 - **On a wiki-pulse-sized table** (600k rows in 150 files), detection takes
   about 0.5 s: 0.16 s of file metrics, 0.15 s of value reads, 0.23 s of
   samples.
@@ -307,4 +315,10 @@ API, and WS4 merges them.
 - [x] WS3: request, validation, review header, ledger, CLI, tests
 - [x] WS4: merge, end-to-end, docs, v0.6.0 release
 - [x] WS4: wiki-pulse changes and a live dry run (2026-10-15): on v0.6.0 the dry run read both datasets in about 3 s and found no drift; trends had too few events (313 in 24 hours) to judge fading
-- [ ] WS4: the live proposal (after the user approves the spend)
+- [x] WS4: the live proposal (2026-10-15), after the user approved the spend. The test field was
+  wiki-pulse's new `is_temporary`. It succeeded on the first attempt: 25 s, 9,448 input tokens
+  (cached for retries) and 1,768 output tokens. Claude named one rule as a macro,
+  `temporary_account_edit()`, which reads `coalesce(is_temporary, editor LIKE '~%')` and so is
+  right for all of history. A new dimension and a new metric call it. It left `editor_type` alone,
+  since temporary accounts are already anonymous. Pinot runs the expression in projections and
+  CASE.
