@@ -1,6 +1,6 @@
 # Design: a drift agent that keeps macros and ontology current
 
-Status: designed 2026-10-14; building for v0.6.0.
+Status: shipped in v0.6.0, 2026-10-15.
 Tracking: the checklist at the end; update it as work lands.
 
 ## The problem
