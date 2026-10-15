@@ -301,6 +301,10 @@ API, and WS4 merges them.
   grammar is too large", for 17. So Claude answers in a schema where an empty string, `none`,
   `default` or 0 means none, converted to the same `Proposal` (v0.6.2). A test walks the schema
   that's sent and fails on any union.
+- **Pinot's multi-stage engine can't COALESCE booleans.** Grouping by one fails ("String
+  cannot be cast to Number"), and in a filter it silently counts nothing (Pinot 1.5). The
+  agent's natural `coalesce(new, old)` hit both. Validation only parses Pinot's SQL, so it
+  couldn't see this. Since v0.6.3, the Pinot dialect writes COALESCE as the CASE it means.
 - **Mocked tests can't see API limits.** The answer's schema only meets the grammar compiler
   live, so the schema test above stands in for it.
 - **On a wiki-pulse-sized table** (600k rows in 150 files), detection takes
@@ -320,5 +324,7 @@ API, and WS4 merges them.
   (cached for retries) and 1,768 output tokens. Claude named one rule as a macro,
   `temporary_account_edit()`, which reads `coalesce(is_temporary, editor LIKE '~%')` and so is
   right for all of history. A new dimension and a new metric call it. It left `editor_type` alone,
-  since temporary accounts are already anonymous. Pinot runs the expression in projections and
-  CASE.
+  since temporary accounts are already anonymous. Applied, it failed on Pinot: see the next
+  finding. With v0.6.3 it was verified in both tiers. Over the last 6 hours, Pinot answered
+  alone. Over 3 days by day, Trino and Pinot answered together, and the results merged. On every
+  day, temporary-account edits equal anonymous ones.
