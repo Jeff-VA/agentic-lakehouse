@@ -7,7 +7,7 @@ engine in `agentic_lakehouse/` knows nothing about any one project.
 
 ## End to end
 
-![Producers and live feeds send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups and pipeline steps read Iceberg and write quality-gated gold tables back; the drift agent proposes config patches for new columns. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.](images/architecture/overview.svg)
+![Producers and live feeds send events to Kafka. Pinot ingests them live and keeps 7 days; the flush appends them to Iceberg every 5 minutes, exactly once. Rollups and pipeline steps read Iceberg and write quality-gated gold tables back; the drift agent proposes changes to the ontology and macros when the data drifts. The gateway reads the config, answers recent ranges from Pinot and history from Iceberg through Trino, and serves dashboards over SSE, AI agents over MCP and apps over REST.](images/architecture/overview.svg)
 
 Events land in two tiers. **Pinot** ingests each event within seconds of its
 arrival on Kafka and keeps the last 7 days. **Iceberg**, on MinIO and read
@@ -27,7 +27,7 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
 
 ## Data in
 
-![Events reach Kafka from your producers, or from live feeds that ingest reads. Processors read one dataset's topic and publish another dataset. Pinot ingests every topic live; a flush appends events to Iceberg every 5 minutes, exactly once, and records how far Iceberg is complete by event time. From Iceberg, rollups build gold tables and steps write tables in SQL or Python, both behind quality gates; the drift agent proposes config patches for new columns.](images/architecture/data-in.svg)
+![Events reach Kafka from your producers, or from live feeds that ingest reads. Processors read one dataset's topic and publish another dataset. Pinot ingests every topic live; a flush appends events to Iceberg every 5 minutes, exactly once, and records how far Iceberg is complete by event time. From Iceberg, rollups build gold tables and steps write tables in SQL or Python, both behind quality gates; the drift agent proposes changes to the ontology and macros when the data drifts.](images/architecture/data-in.svg)
 
 - **Kafka** gets one JSON message per event, on a topic per dataset
   (`ingestion.yaml`). Pinot consumes the topic directly.
