@@ -151,22 +151,24 @@ def effect(before: Platform, after: Platform, dataset: str, samples: DriftSample
     windows = [(label, rows) for label, rows in (("recent", samples.recent), ("earlier", samples.earlier)) if rows.num_rows]
     computed = [(label, _Sample(before, dataset, rows), _Sample(after, dataset, rows)) for label, rows in windows]
     sources = {m.name: m.source for m in after.ontology.models}
+    percent = {(m.name, metric.name) for m in after.ontology.models for metric in m.metrics if metric.format == "percent"}
     lines = []
     for target in targets:
         lines.append(f"{target} ({target.why})")
         if sources.get(target.model) != dataset:
             lines.append(f"  not sampled: model {target.model} reads dataset {sources.get(target.model)}")
             continue
+        number = _share if (target.model, target.name) in percent else _number  # as the ontology says to show it
         for label, old, new in computed:
-            lines.append(f"  {label}: {_compare(old.value(target), new.value(target), history=label == 'earlier')}")
+            lines.append(f"  {label}: {_compare(old.value(target), new.value(target), number, history=label == 'earlier')}")
     return lines
 
 
-def _compare(then, now, *, history: bool) -> str:
+def _compare(then, now, number, *, history: bool) -> str:
     if isinstance(now, str) or isinstance(then, str):
         return now if isinstance(now, str) else then
     if then is None:
-        return "new: " + (_shares(now) if isinstance(now, dict) else _number(now))
+        return "new: " + (_shares(now) if isinstance(now, dict) else number(now))
     if isinstance(now, dict):
         keys = list(dict.fromkeys([*now, *then]))
         moved = [k for k in keys if abs(now.get(k, 0) - then.get(k, 0)) >= 0.0005]
@@ -174,9 +176,9 @@ def _compare(then, now, *, history: bool) -> str:
             return "unchanged"
         text = ", ".join(f"{_value(k)} {_share(then.get(k))} → {_share(now.get(k))}" for k in moved)
     elif then == now or (then is not None and now is not None and abs(then - now) <= 1e-9 * max(abs(then), abs(now), 1)):
-        return f"unchanged ({_number(now)})"
+        return f"unchanged ({number(now)})"
     else:
-        text = f"{_number(then)} → {_number(now)}"
+        text = f"{number(then)} → {number(now)}"
     return text + ("  ← rewrites history" if history else "")
 
 
@@ -193,7 +195,7 @@ def _value(value) -> str:
 
 
 def _share(share: float | None) -> str:
-    return "—" if not share else f"{share:.1%}"
+    return "—" if share is None else f"{share:.1%}"
 
 
 def _number(value) -> str:

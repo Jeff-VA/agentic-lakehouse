@@ -284,6 +284,17 @@ API, and WS4 merges them.
 - **A column with more than 200 different recent values isn't watched.** For
   example, an identifier compared with one literal would otherwise raise up
   to 20 new-value signals with fresh keys every run.
+- **Only problems a proposal makes count.** A dashboard that was already
+  broken, such as one still being built, would otherwise send every proposal
+  back until the agent gave up.
+- **A proposal's problems go back to Claude together**, in one message, to
+  save retries. A change that restates a definition's current values is one
+  of them: a signal that needs no change belongs in `unchanged`.
+- **Edits keep the YAML's layout.** Replaced values keep their end-of-line
+  comments. A flow-style entry that grows past 100 characters becomes block
+  style, and new entries follow the blank lines between existing ones.
+- **A macro change has one description**, so a macro's engine-specific
+  versions get the same comment as its default one.
 - **On a wiki-pulse-sized table** (600k rows in 150 files), detection takes
   about 0.5 s: 0.16 s of file metrics, 0.15 s of value reads, 0.23 s of
   samples.
@@ -292,7 +303,7 @@ API, and WS4 merges them.
 
 - [x] WS0: the `drift/` package, `Signal`, `DriftSamples`, the new `Proposal`; existing tests pass
 - [x] WS1: signals, lineage, samples, tests
-- [ ] WS2: patchers, tests
-- [ ] WS3: request, validation, review header, ledger, CLI, tests
+- [x] WS2: patchers, tests
+- [x] WS3: request, validation, review header, ledger, CLI, tests
 - [ ] WS4: merge, end-to-end, docs, v0.6.0 release
 - [ ] WS4: wiki-pulse changes, live dry run, live proposal (after the user approves the spend)

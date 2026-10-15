@@ -407,7 +407,7 @@ def render_patch(result: DriftProposal, config_dir: str | Path) -> str:
             for label, reason in why:
                 lines += _comment(f"{label}: {reason}", indent=2)
     sections = [
-        ("effect", "Effect on sampled rows, before → after (recent: the window the drift was found in; earlier: the one before)"),
+        ("effect", "Effect on sampled rows, before → after (recent: the drift's window; earlier: the one before)"),
         ("engines", "Engines: where a definition goes through a macro with an engine's own version"),
         ("impact", "Affects"),
     ]
