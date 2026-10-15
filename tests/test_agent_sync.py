@@ -151,7 +151,8 @@ def test_detect_drift_profiles_the_new_columns(table):
     assert (profiles["cdn_pop"].type, profiles["cdn_pop"].top_values) == ("string", [("den-1", 4), ("sea-2", 4)])
     assert (profiles["dropped_frames"].type, profiles["dropped_frames"].minimum, profiles["dropped_frames"].maximum) == ("double", 2, 9)
     assert profiles["is_live"].top_values == [(False, 4), (True, 4)]  # ties in value order
-    assert samples.recent.num_rows == 8  # only rows where a new column is set
+    new_rows = {row["session_id"] for row in samples.recent.to_pylist() if row["cdn_pop"] is not None}
+    assert new_rows == {f"s{minute}" for minute in range(2, 10)}  # includes the 8 rows where a new column is set
     assert [s.key for s in report.signals] == [f"telemetry:new_column:{name}" for name in profiles]
 
 
