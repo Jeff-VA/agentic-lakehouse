@@ -14,8 +14,11 @@ Signal, with a key that stays the same from run to run:
   belongs to the window that holds the middle of its time range.
 - New value: a value of an enumerated column (text that a definition compares
   with string literals, also inside a macro) seen in the recent window but not
-  the earlier one. Only those columns are read, up to a cap per window, and a
-  candidate the cap may have hidden is confirmed with a targeted scan.
+  the earlier one, unless every definition that compares the column already
+  names it. Only those columns are read, up to a cap per window, and a
+  candidate the cap may have hidden is confirmed with a targeted scan. A column
+  with more than 200 different recent values isn't a set of categories, and is
+  left out.
 
 Fading columns and new values list the definitions that read the column. The
 samples hold rows of both windows and rows for each signal, to check a
@@ -64,6 +67,7 @@ _MIN_EXPECTED = 50  # a column is fading only if the earlier share predicts at l
 _FADED = 0.25  # ... and fewer than this share of them arrived
 _RENAME_GAP = timedelta(hours=2)  # how close a new column's first values must be to a fading column's last
 _MAX_NEW_VALUES = 20  # per column, the most frequent first
+_MAX_DISTINCT = 200  # a column with more different recent values isn't a set of categories: not watched
 _MAX_CHECKED = 50  # targeted scans per column, when the earlier window was read only up to the cap
 _VALUE_ROWS = 100  # sampled rows with each new value
 _FADING_ROWS = 200  # sampled earlier rows that set each fading column
@@ -471,17 +475,29 @@ def _read_by(reads: list[_Read], column: str) -> list[str]:
     return [definition + (", via " + ", ".join(f"{m}()" for m in macros) if macros else "") for definition, macros in via.items()]
 
 
-def _enumerated(reads: list[_Read], columns: list[str]) -> dict[str, tuple[list[str], list[str]]]:
-    """Which of `columns` (text) definitions compare with string literals: each with the literals and
-    the definitions that compare it, in the order of `columns`."""
-    found: dict[str, tuple[list[str], list[str]]] = {}
+@dataclass
+class _Enumerated:
+    """A text column that definitions compare with string literals."""
+
+    literals: list[str]  # every literal it's compared with
+    definitions: list[str]  # the definitions that compare it
+    named_by_all: set[str]  # the literals every one of those definitions names: values they expect
+
+
+def _enumerated(reads: list[_Read], columns: list[str]) -> dict[str, _Enumerated]:
+    """Which of `columns` (text) definitions compare with string literals, in the order of `columns`."""
+    named: dict[str, dict[str, set[str]]] = {}  # column -> definition -> the literals it names
+    found: dict[str, _Enumerated] = {}
     for read in reads:
         for column, literals in read.literals.items():
             if column in columns:
-                known, definitions = found.setdefault(column, ([], []))
-                known += [literal for literal in literals if literal not in known]
-                if read.definition not in definitions:
-                    definitions.append(read.definition)
+                enumerated = found.setdefault(column, _Enumerated([], [], set()))
+                enumerated.literals += [literal for literal in literals if literal not in enumerated.literals]
+                if read.definition not in enumerated.definitions:
+                    enumerated.definitions.append(read.definition)
+                named.setdefault(column, {}).setdefault(read.definition, set()).update(literals)
+    for column, enumerated in found.items():
+        enumerated.named_by_all = set.intersection(*named[column].values())
     return {column: found[column] for column in columns if column in found}
 
 
@@ -491,24 +507,37 @@ def _enumerated(reads: list[_Read], columns: list[str]) -> dict[str, tuple[list[
 def _new_values(
     table: Table,
     dataset: str,
-    enumerated: dict[str, tuple[list[str], list[str]]],
+    enumerated: dict[str, _Enumerated],
     recent: _Window,
     earlier: _Window,
     min_value_rows: int,
     limit: int,
     report: DriftReport,
 ) -> list[Signal]:
-    """Values with at least `min_value_rows` recent rows that the earlier window doesn't have: up to
-    20 per column, by column, then by rows, most first."""
+    """Values with at least `min_value_rows` recent rows that the earlier window doesn't have, and
+    that not every definition comparing the column names already: up to 20 per column, by column,
+    then by rows, most first."""
     if not enumerated:
         return []
     counts, read, capped = _count_values(table, list(enumerated), recent.rows, limit)
     if capped:
         report.notes.append(f"new values counted in the first {read:,} events of the last {recent.length}")
+    for column in list(enumerated):
+        if len(counts[column]) > _MAX_DISTINCT:  # e.g. a title compared with one literal: not categories
+            report.notes.append(
+                f"new values not watched in {column}: {len(counts[column]):,} different values in the last {recent.length}"
+            )
+            del enumerated[column]
     candidates = {
         column: values
         for column in enumerated
-        if (values := {value: rows for value, rows in counts[column].items() if rows >= min_value_rows})
+        if (
+            values := {
+                value: rows
+                for value, rows in counts[column].items()
+                if rows >= min_value_rows and value not in enumerated[column].named_by_all
+            }
+        )
     }
     if not candidates:
         return []
@@ -518,7 +547,7 @@ def _new_values(
         return []
     signals = []
     for column, values in missing.items():
-        literals, definitions = enumerated[column]
+        literals, definitions = enumerated[column].literals, enumerated[column].definitions
         compared = ", ".join(f"'{literal}'" for literal in literals[:10]) + (", ..." if len(literals) > 10 else "")
         new = []
         for value in sorted(values, key=lambda value: (-candidates[column][value], value))[:_MAX_CHECKED]:

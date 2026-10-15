@@ -40,10 +40,12 @@ scores every burst. The results show in three live dashboards.
   dataset as it streams; SQL or Python steps build tables in dependency order,
   behind quality checks. Models live in the lakehouse as tables, so training,
   real-time scoring and dashboards share one source of truth.
-- **An agent for schema drift.** When new fields appear, Claude proposes
-  dimensions and metrics. A proposal has to pass the platform's own validation
-  and run on real data before it is written as a git patch for a person to
-  review.
+- **An agent that keeps definitions current.** When producers add a field,
+  stop sending one, or send a value the definitions don't expect, Claude
+  proposes what should change: dimensions, metrics, and the project's macros.
+  A proposal has to pass the platform's own validation and run on real data
+  before it is written as a git patch for a person to review, headed by its
+  effect on sampled rows.
 - **Views in plain SQL.** Dashboards read named, parameterized views from
   `config/views/*.sql`. A view over an ontology model selects metrics by name
   and is routed across both tiers, so it is live to the second; a view over
@@ -125,7 +127,8 @@ docker compose -f docker/docker-compose.yml run --rm stream stream --add-field c
 Within one flush the fields become Iceberg columns. The next drift check, or
 `docker compose -f docker/docker-compose.yml exec drift agentic-lakehouse drift`,
 writes a proposal that the dashboard lists. Apply it with
-`git apply proposals/<file> && agentic-lakehouse setup`.
+`git apply proposals/<file> && agentic-lakehouse setup`. To see the drift
+without asking Claude, add `--dry-run`.
 
 ## Start your own project
 
@@ -954,15 +957,50 @@ SELECT isp_provider, max(p99_ttfb) FROM lake.gold.hourly_isp_quality GROUP BY is
 
 ### The drift agent
 
-[`agentic_lakehouse/agent_sync.py`](agentic_lakehouse/agent_sync.py) compares the live Iceberg schema
-with `ingestion.yaml` and profiles any new columns from sampled rows. It adds
-the columns to `ingestion.yaml` itself, then asks Claude (Opus 5.5, structured
-output) which columns deserve dimensions or metrics. The patched config must
-pass the platform's validation, and every proposed dimension and metric must
-compile and run on DuckDB over the sampled rows. Failures go back to Claude,
-up to three attempts. The result is a patch in `proposals/` that keeps the
-YAML's comments and formatting. Config is never edited in place, and a drift
-that already has a pending patch isn't proposed (or paid for) again.
+[`agentic_lakehouse/agent_sync.py`](agentic_lakehouse/agent_sync.py) keeps the ontology and the
+project's macros in step with the data. Every hour it compares each dataset's
+last 24 hours with the 7 days before, and with the config, and reports
+**signals** ([`drift/signals.py`](agentic_lakehouse/drift/signals.py)):
+
+- a **new column**: a field producers started sending;
+- a **fading column**: a configured field that's set far less often, or not
+  at all. This comes from Iceberg's file metrics, without reading any data;
+- a **new value** in a column that definitions compare with text, such as
+  `kind = 'new'`, including comparisons inside macros.
+
+Claude (Opus 5.5, structured output, adaptive thinking) answers every signal.
+An answer can be:
+
+- new dimensions and metrics;
+- changes to an existing definition's description, SQL or filters;
+- new macros, or new versions of the project's own;
+- a reason to change nothing.
+
+Names never change and nothing is removed. The agent adds new columns to
+`ingestion.yaml` itself.
+
+A proposal goes back to Claude, for up to three attempts, until:
+
+- the patched config loads, with every snippet rendered for every engine;
+- every dashboard still checks;
+- every definition it touches runs on DuckDB over sampled rows.
+
+The patch in `proposals/` keeps the YAML's comments, and its header shows what
+the patch would do:
+
+- each definition before and after on sampled rows, flagged where it rewrites
+  history;
+- whether the engines' versions of a changed macro agree;
+- the views, dashboards and steps it affects.
+
+Config is never edited in place.
+
+`proposals/ledger.json` records every signal Claude was asked about, so none
+is asked about, or paid for, twice. That holds while its patch is pending,
+after the patch is applied or deleted, and after a failure.
+`agentic-lakehouse drift --dry-run` shows the drift without asking, `--again`
+asks about every current signal anew, and each call logs its tokens. Design:
+[`docs/design/drift-agent.md`](docs/design/drift-agent.md).
 
 ## Configuration
 

@@ -191,6 +191,26 @@ def test_comparisons_that_enumerate_a_column(relabeled, tmp_path, metric, compar
     assert report.signals[0].detail.endswith(f"compared with {compared} in metric playback_telemetry.watched")
 
 
+def test_a_value_every_comparing_definition_names_already_is_expected(stream, tmp_path):
+    stream.publish([at(1 + i, client_device="android") for i in range(100)])  # a week of Android only
+    stream.publish([at(170 + i / 10, client_device="ios") for i in range(10)])  # then iOS
+    report, _ = detect_drift("telemetry", PLATFORM, stream.table, now=NOW)
+    assert report.signals == []  # is_mobile_device, the only definition comparing client_device, names 'ios'
+
+    platform = with_metric(tmp_path, {"filters": ["client_device = 'android'"]})  # one that doesn't
+    report, _ = detect_drift("telemetry", platform, stream.table, now=NOW)
+    assert [s.key for s in report.signals] == ["telemetry:new_value:client_device=ios"]
+
+
+def test_a_column_with_too_many_values_to_be_categories_is_not_watched(stream, tmp_path):
+    platform = with_metric(tmp_path, {"filters": ["session_id <> 'test'"]})  # compares an identifier with text
+    stream.publish([at(1 + i, session_id=f"old-{i}") for i in range(100)])
+    stream.publish([at(170 + i / 100, session_id=f"new-{i % 201}") for i in range(1005)])  # 201 values, 5 events each
+    report, _ = detect_drift("telemetry", platform, stream.table, now=NOW)
+    assert report.signals == []
+    assert "new values not watched in session_id: 201 different values in the last 24 hours" in report.notes
+
+
 def test_a_candidate_the_capped_read_missed_is_confirmed_by_a_targeted_scan(stream, monkeypatch):
     stream.publish([at(73 + i / 10, client_device="tv" if i >= 25 else "ios") for i in range(30)])  # tv after 25 ios
     stream.publish([at(170 + i / 10, client_device=device) for i, device in enumerate(["ios"] * 5 + ["tv"] * 5 + ["car"] * 5)])

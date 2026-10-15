@@ -40,6 +40,17 @@ needs different SQL, put its version in that engine's file, such as
 `trino.sql`. `agentic-lakehouse check` renders every use for each engine and
 names any that fails.
 
+## Drift proposals
+
+The drift agent (`agentic-lakehouse drift`, hourly in the stack) writes a patch
+to `proposals/` when the data drifts from the config: a field producers start
+sending, one they stop sending, or a new value in a column that definitions
+compare with text. The patch's header lists the drift, what answers each part
+of it, and the effect on sampled rows. Review it, then `git apply` it and run
+`agentic-lakehouse setup`. `proposals/ledger.json` records what Claude was
+asked; `agentic-lakehouse drift --dry-run` shows the current drift without
+asking.
+
 ## Building a dashboard
 
 Start the stack (`docker compose -f docker/docker-compose.yml up -d --build`).

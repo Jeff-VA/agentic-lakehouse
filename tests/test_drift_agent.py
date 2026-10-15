@@ -61,17 +61,17 @@ def test_the_header_shows_each_definitions_effect_and_where_engines_disagree(tab
 
     assert result.review["effect"] == [
         "dimension playback_telemetry.cdn_pop (new)",
-        "  recent: new: 'den-1' 50.0%, 'sea-2' 50.0%",
+        "  recent: new: 'den-1' 40.0%, 'sea-2' 40.0%, null 20.0%",  # the window's 10 events; 2 predate cdn_pop
         "metric playback_telemetry.avg_dropped_frames (new)",
         "  recent: new: 5.50",  # dropped_frames 2 to 9
     ]
     [engines] = result.review["engines"]
-    assert engines.startswith("dimension playback_telemetry.cdn_pop sql: trino differs on 8 of 8 sampled rows, e.g. duckdb ")
-    assert engines.endswith("; pinot agrees on all 8 sampled rows")  # Pinot has no version of its own
+    assert engines.startswith("dimension playback_telemetry.cdn_pop sql: trino differs on 8 of 10 sampled rows, e.g. duckdb ")
+    assert engines.endswith("; pinot agrees on all 10 sampled rows")  # Pinot has no version of its own
     assert result.review["impact"] == []  # new definitions: nothing uses them yet
     patch = render_patch(result, "config")
     assert "# Effect on sampled rows, before → after" in patch and "# Engines: where a definition goes through" in patch
-    assert "#   dimension playback_telemetry.cdn_pop (new)\n#     recent: new: 'den-1' 50.0%, 'sea-2' 50.0%\n" in patch
+    assert "#   dimension playback_telemetry.cdn_pop (new)\n#     recent: new: 'den-1' 40.0%, 'sea-2' 40.0%, null 20.0%\n" in patch
 
 
 def test_a_proposal_that_changes_nothing_says_so(table, repo):

@@ -270,10 +270,28 @@ API, and WS4 merges them.
 - **Big tables:** watched columns are read up to a cap per window, and
   candidate values are confirmed with targeted scans.
 
+## What implementation found
+
+- **Scans of one table don't always share a schema.** A column some files
+  predate comes back as `string` from one scan and `large_string` from
+  another, so samples are concatenated with permissive type promotion.
+- **Samples hold each row once.** A signal's rows are often in its window's
+  sample already. Repeating them would skew the before and after numbers.
+- **Rename hints treat all number types as one.** The flush makes every new
+  numeric field a double, so a renamed int column arrives as a double.
+- **A value every comparing definition names already isn't new.** If
+  `is_mobile_device` lists `'ios'`, the first iOS events need no change.
+- **A column with more than 200 different recent values isn't watched.** For
+  example, an identifier compared with one literal would otherwise raise up
+  to 20 new-value signals with fresh keys every run.
+- **On a wiki-pulse-sized table** (600k rows in 150 files), detection takes
+  about 0.5 s: 0.16 s of file metrics, 0.15 s of value reads, 0.23 s of
+  samples.
+
 ## Checklist
 
 - [x] WS0: the `drift/` package, `Signal`, `DriftSamples`, the new `Proposal`; existing tests pass
-- [ ] WS1: signals, lineage, samples, tests
+- [x] WS1: signals, lineage, samples, tests
 - [ ] WS2: patchers, tests
 - [ ] WS3: request, validation, review header, ledger, CLI, tests
 - [ ] WS4: merge, end-to-end, docs, v0.6.0 release

@@ -16,8 +16,9 @@ through **Trino**, keeps all of history; a flush appends new events to it every
 reads itself, or from **processors** that compute one dataset from another as
 it streams. Background jobs work from Iceberg: **rollups** and **pipeline
 steps** turn history into gold tables (including models) that must pass
-quality checks before they're published, and the **drift agent** turns new
-event fields into config patches for a person to review.
+quality checks before they're published, and the **drift agent** turns drift
+in the data (new fields, fading fields, new values) into patches to the
+ontology and macros, for a person to review.
 
 Every question, from a dashboard, an app or an AI agent, goes through one
 **gateway**. It compiles the question from the definitions in the config,
@@ -56,11 +57,20 @@ answer covers. The [README](../README.md#endpoints) documents each endpoint.
   `pipelines.yaml` write tables with SQL (run on Trino) or Python (handed SQL
   over the lakehouse), in the order their reads require, behind the same
   quality checks. A step waits while a table it reads doesn't exist yet.
-- **The drift agent** ([`agentic_lakehouse/agent_sync.py`](../agentic_lakehouse/agent_sync.py)) compares
-  the Iceberg schema with the config, profiles new columns, and asks Claude
-  which deserve dimensions or metrics. The proposal must pass the platform's
-  validation and run on sampled rows before it's written to `proposals/` as a
-  git patch.
+- **The drift agent** ([`agentic_lakehouse/agent_sync.py`](../agentic_lakehouse/agent_sync.py),
+  [`drift/`](../agentic_lakehouse/drift/)) compares each dataset's recent data
+  with the week before, and with the config. It looks for three kinds of
+  drift:
+  - new columns;
+  - columns that are fading, from Iceberg's file metrics;
+  - new values in columns that definitions compare with text.
+
+  Claude answers each signal with new or changed dimensions, metrics and
+  macros, or a reason to change nothing. Before the proposal is written to
+  `proposals/` as a git patch, it must pass the platform's validation, keep
+  every dashboard checking, and run on sampled rows. The patch's header shows
+  its effect on those rows, and a ledger keeps the agent from asking about the
+  same drift twice.
 
 ## Pipelines and models
 
@@ -178,7 +188,7 @@ the same numbers as a dashboard. The design is in
 | Router | `router.py` |
 | Flush | `flush.py` |
 | Rollups and quality gates | `rollups.py`, `quality.py` |
-| Drift agent | `agent_sync.py` |
+| Drift agent | `agent_sync.py`, `drift/` |
 | Gateway: REST, MCP, dashboards | `api_gateway.py` |
 | Views | `views.py` |
 | Live push | `live.py` |
