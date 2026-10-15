@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple, Self
 
 from pydantic import Field, field_validator, model_validator
-from sqlglot import exp
+from sqlglot import exp, generator
 from sqlglot.dialects.dialect import Dialect
 
 from agentic_lakehouse.macros import Adapter, templated
@@ -38,14 +38,29 @@ Engine = Literal["duckdb", "trino", "pinot"]
 Grain = Literal["minute", "hour", "day", "week", "month"]
 Scalar = str | bool | int | float
 
+def _coalesce_as_case(self: generator.Generator, expression: exp.Coalesce) -> str:
+    """COALESCE(a, b) as CASE WHEN a IS NULL THEN b ELSE a END, nested for more arguments."""
+    args = [expression.this, *expression.expressions]
+    case = args[-1].copy()
+    for arg in reversed(args[:-1]):
+        case = exp.Case(ifs=[exp.If(this=exp.Is(this=arg.copy(), expression=exp.Null()), true=case)], default=arg.copy())
+    return self.sql(case)
+
+
 class Pinot(Dialect):
     """sqlglot dialect for Apache Pinot, which sqlglot doesn't ship.
 
     Pinot's Calcite-based SQL accepts sqlglot's generic output for the scalar
-    expressions ontology fragments contain. That output doesn't know Pinot's
-    reserved words (a column named "timestamp" or "value"), so every
-    identifier is quoted.
+    expressions ontology fragments contain, with two exceptions:
+    - That output doesn't know Pinot's reserved words (a column named
+      "timestamp" or "value"), so every identifier is quoted.
+    - Pinot's multi-stage engine can't COALESCE booleans: grouping by one
+      fails ("String cannot be cast to Number"), and in a filter it silently
+      counts nothing (Pinot 1.5). So COALESCE is written as the CASE it means.
     """
+
+    class Generator(generator.Generator):
+        TRANSFORMS = {**generator.Generator.TRANSFORMS, exp.Coalesce: _coalesce_as_case}
 
     def generate(self, expression: exp.Expression, copy: bool = True, **opts) -> str:
         return super().generate(expression, copy=copy, **{"identify": True, **opts})

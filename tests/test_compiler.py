@@ -265,3 +265,15 @@ def test_pinot_quotes_every_identifier():
     query = MetricQuery.model_validate({"metrics": ["n"], "dimensions": ["value"], "start": START, "end": END})
     sql = SqlCompiler(ontology).compile(query, engine="pinot", table="events")
     assert '"value" AS "value"' in sql and '"timestamp" >= ' in sql and "WHERE \"value\" <> 'x'" in sql
+
+
+def test_pinot_gets_coalesce_as_the_case_it_means():
+    """Pinot's multi-stage engine can't COALESCE booleans: grouping by one fails, and in a filter it
+    silently counts nothing. The drift agent proposes coalesce(new, old) for fields that change."""
+    import sqlglot
+
+    from agentic_lakehouse.compiler import Pinot
+
+    tree = sqlglot.parse_one("coalesce(is_temporary, editor LIKE '~%')", read="duckdb")
+    assert tree.sql(dialect=Pinot) == """CASE WHEN "is_temporary" IS NULL THEN "editor" LIKE '~%' ELSE "is_temporary" END"""
+    assert tree.sql(dialect="trino") == "COALESCE(is_temporary, editor LIKE '~%')"  # the other engines keep it
