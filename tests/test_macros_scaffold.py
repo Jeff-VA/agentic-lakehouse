@@ -123,18 +123,15 @@ def test_the_drift_agent_offers_claude_the_projects_macros_and_validates_with_th
     result = propose_changes(*drift, config, claude(proposal(LARGE_APP_EVENTS), requests=requests), max_attempts=1, log=lambda m: None)
 
     prompt = requests[0]["body"]["messages"][0]["content"]
-    assert "can call them with Jinja" in prompt
-    listed = prompt.split("<project_macros>\n")[1].split("\n</project_macros>")[0]
-    assert listed.splitlines() == [
-        "- large_event(): A large event: an amount of 500 or more.",
-        "- url_host(column): The host of a URL, e.g. en.wikipedia.org.",
-        "  Engine-specific versions: trino.",
-    ]
+    assert '<macro_file name="default.sql">\n' + DEFAULT + "</macro_file>" in prompt  # whole files: Claude can change them
+    assert '<macro_file name="trino.sql">\n' + TRINO + "</macro_file>" in prompt
+    built_ins = prompt.split("whose names a project macro can't take: ")[1].split(".")[0].split(", ")
+    assert "percentile" in built_ins and "large_event" not in built_ins
     assert "large_app_events" in result.patched["ontology.yaml"] and "{{ large_event() }}" in result.patched["ontology.yaml"]
 
 
 @pytest.mark.parametrize("files", [None, {"trino.sql": TRINO.split("\n\n")[1]}], ids=["no folder", "only an override"])
-def test_the_drift_agent_says_nothing_of_macros_when_the_project_has_none_of_its_own(config, drift, files):
+def test_the_drift_agent_shows_the_macro_files_a_project_has(config, drift, files):
     shutil.rmtree(config / "macros")
     ontology = yaml.safe_load((config / "ontology.yaml").read_text())
     for model in ontology["models"]:  # the starter's metric that calls large_event() goes too
@@ -146,4 +143,8 @@ def test_the_drift_agent_says_nothing_of_macros_when_the_project_has_none_of_its
             (config / "macros" / name).write_text(text)
     requests = []
     propose_changes(*drift, config, claude(proposal(), requests=requests), log=lambda m: None)
-    assert "macro" not in requests[0]["body"]["messages"][0]["content"]
+    prompt = requests[0]["body"]["messages"][0]["content"]
+    if files is None:
+        assert "The project has no macros of its own yet" in prompt and "<macro_file" not in prompt
+    else:
+        assert '<macro_file name="trino.sql">' in prompt and '<macro_file name="default.sql">' not in prompt

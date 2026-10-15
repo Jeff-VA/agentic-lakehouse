@@ -14,7 +14,7 @@ simulator, from there too.
     flush [--serve]          move new events from Kafka into Iceberg (once, or on schedule)
     rollups [--serve]        refresh the gold rollup tables, behind their quality gates
     steps [--serve]          run the steps in pipelines.yaml that are due, in order
-    drift [--serve]          find new event fields; Claude proposes config patches (proposals/)
+    drift [--serve]          find drift in the data; Claude proposes config patches (proposals/)
     reset --yes              delete all topics, tables and data, then run setup
     serve                    REST API, dashboards and MCP (HTTP) on http://127.0.0.1:8000;
                              open pages reload when a view or dashboard file changes
@@ -138,8 +138,10 @@ def main() -> None:
     rollups.add_argument("--serve", action="store_true", help="keep running on the configured schedule")
     steps = commands.add_parser("steps", help="run the steps in pipelines.yaml that are due, in order")
     steps.add_argument("--serve", action="store_true", help="keep running on the steps' schedules")
-    drift = commands.add_parser("drift", help="find new event fields and have Claude propose config patches")
+    drift = commands.add_parser("drift", help="find drift in the data and have Claude propose config patches")
     drift.add_argument("--serve", action="store_true", help="keep running, checking every hour")
+    drift.add_argument("--dry-run", action="store_true", help="show the drift and what would be asked, without asking Claude")
+    drift.add_argument("--again", action="store_true", help="ask about every current signal, even ones asked about before")
     serve = commands.add_parser("serve", help="run the REST API, with MCP at /mcp")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -263,13 +265,20 @@ def main() -> None:
         else:
             run_steps(config_dir=args.config)
     elif args.command == "drift":
+        if args.serve and (args.dry_run or args.again):
+            parser.error("--dry-run and --again are for one run; leave out --serve")
+        if args.dry_run:  # no Prefect: nothing runs that needs tracking
+            from agentic_lakehouse.agent_sync import check_drift
+
+            check_drift(platform, args.config, "proposals", dry_run=True)
+            return
         os.environ.setdefault("PREFECT_API_URL", platform.deployment.prefect.api_url)
         from agentic_lakehouse.pipelines.drift import drift_check  # after PREFECT_API_URL is set
 
         if args.serve:
             run_then_serve(drift_check, "drift", timedelta(hours=1), args.config)
         else:
-            drift_check(config_dir=args.config)
+            drift_check(config_dir=args.config, again=args.again)
     elif args.command == "serve":
         import uvicorn
 

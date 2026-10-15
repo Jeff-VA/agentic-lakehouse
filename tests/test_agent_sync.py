@@ -198,6 +198,7 @@ def test_claude_is_asked_for_structured_output_with_fallback(table, repo):
     assert body["output_config"]["effort"] == "high"
     assert body["output_config"]["format"]["type"] == "json_schema"
     assert body["fallbacks"] == "default"
+    assert body["thinking"] == {"type": "adaptive"}
     assert "server-side-fallback-2026-07-01" in request["headers"]["anthropic-beta"]
     prompt = body["messages"][0]["content"]
     assert '"name": "dropped_frames"' in prompt and "<ontology_yaml>" in prompt
