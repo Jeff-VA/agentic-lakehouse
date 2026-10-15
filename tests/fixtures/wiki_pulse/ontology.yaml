@@ -1,0 +1,217 @@
+# What the data means: the dimensions to slice by and the metrics to ask for.
+# Views, dashboards and AI agents (through MCP) all read these definitions.
+version: "1.0.0"
+
+models:
+  - name: edits
+    description: >
+      Edits to Wikipedia articles in every language, live: one row per edit,
+      bots included. Use it for how much editing is happening, where, and by whom.
+    source: edits
+    time_dimension: event_ts
+    dimensions:
+      - {name: event_ts, type: timestamp, label: Time}
+      - name: wiki
+        type: string
+        label: Wiki
+        description: The Wikipedia, by database name, e.g. enwiki (English) or dewiki (German).
+      - name: language
+        type: string
+        label: Language
+        description: The Wikipedia's language code, e.g. en, de, ja.
+      - {name: title, type: string, label: Title}
+      - {name: url, type: string, label: Article, description: The article's address.}
+      - name: kind
+        type: string
+        label: Kind
+        description: edit, or new for an article's first edit.
+      - name: editor_type
+        type: string
+        label: Editor
+        description: Who made the edit, broadly; bot, anonymous (an IP address or temporary account) or registered.
+        sql: "{{ editor_type() }}"  # config/macros/default.sql
+      - name: site
+        type: string
+        label: Site
+        description: The site the article is on, e.g. en.wikipedia.org.
+        sql: "{{ url_host('url') }}"  # Trino has its own version, in config/macros/trino.sql
+    metrics:
+      - name: edit_count
+        description: Number of edits.
+        agg: count
+        label: Edits
+      - name: editors
+        description: Number of different editors (accounts, IP addresses and temporary accounts).
+        agg: count_distinct
+        sql: editor
+        label: Editors
+      - name: articles
+        description: Number of different articles edited.
+        agg: count_distinct
+        sql: url
+        label: Articles
+      - name: new_articles
+        description: Number of articles created.
+        agg: count
+        filters: ["kind = 'new'"]
+        label: New articles
+      - name: bot_edits
+        description: Edits by bots.
+        agg: count
+        filters: ["is_bot = true"]
+        label: Bot edits
+      - name: human_edits
+        description: Edits by people with an account; not bots, not anonymous.
+        agg: count
+        filters: ["{{ human_edit() }}"]
+        label: Human edits
+      - name: anonymous_edits
+        description: Edits by editors without an account (an IP address or a temporary account).
+        agg: count
+        filters: ["is_anonymous = true"]
+        label: Anonymous edits
+      - name: revert_edits
+        description: Edits whose summary says they undo another edit, in English conventions (so a lower bound outside English).
+        agg: count
+        filters: ["is_revert = true"]
+        label: Reverts
+      - name: net_bytes
+        description: Net change in the articles' size, in bytes; text added minus text removed.
+        agg: sum
+        sql: bytes_delta
+        label: Net bytes added
+        format: integer
+      - name: bot_share
+        description: Share of edits made by bots.
+        type: ratio
+        numerator: bot_edits
+        denominator: edit_count
+        label: Bot share
+        format: percent
+      - name: human_share
+        description: Share of edits made by people with an account.
+        type: ratio
+        numerator: human_edits
+        denominator: edit_count
+        label: Human share
+        format: percent
+      - name: anonymous_share
+        description: Share of edits made without an account.
+        type: ratio
+        numerator: anonymous_edits
+        denominator: edit_count
+        label: Anonymous share
+        format: percent
+      - name: revert_share
+        description: Share of edits that undo another edit. High means disputes or vandalism being cleaned up.
+        type: ratio
+        numerator: revert_edits
+        denominator: edit_count
+        label: Revert share
+        format: percent
+        better: lower
+
+  - name: trends
+    description: >
+      Bursts: articles getting far more edits than usual, flagged by the burst
+      detector as they happen. One row per burst, with its numbers, the news
+      classifier's probability that a story is breaking, and Claude's read.
+    source: trends
+    time_dimension: event_ts
+    dimensions:
+      - {name: event_ts, type: timestamp, label: Time}
+      - {name: wiki, type: string, label: Wiki}
+      - {name: language, type: string, label: Language}
+      - {name: title, type: string, label: Title}
+      - {name: url, type: string, label: Article}
+      - name: reading
+        type: string
+        label: Claude's read
+        description: >
+          Claude's label for the burst: news (a real-world event), edit war,
+          routine or unclear; "not read" when Claude didn't read it (no API key,
+          or its hourly budget was spent).
+        sql: "coalesce(claude_label, 'not read')"
+      - {name: explanation, type: string, label: What's happening, description: Claude's one sentence about the burst.}
+      - name: classifier_says
+        type: string
+        label: Classifier's call
+        description: news when the classifier gives a probability of 0.5 or more, otherwise other; untrained until it has enough labels.
+        sql: "CASE WHEN p_news IS NULL THEN 'untrained' WHEN p_news >= 0.5 THEN 'news' ELSE 'other' END"
+    metrics:
+      - name: bursts
+        description: Number of bursts flagged.
+        agg: count
+        label: Bursts
+      - name: burst_articles
+        description: Number of different articles that burst.
+        agg: count_distinct
+        sql: url
+        label: Articles
+      - name: read_bursts
+        description: Bursts Claude read and labeled.
+        agg: count
+        filters: ["claude_label IS NOT NULL"]
+        label: Read by Claude
+      - name: news_bursts
+        description: Bursts Claude labeled news.
+        agg: count
+        filters: ["claude_label = 'news'"]
+        label: News bursts
+      - name: news_share
+        description: Share of the bursts Claude read that it labeled news.
+        type: ratio
+        numerator: news_bursts
+        denominator: read_bursts
+        label: News share
+        format: percent
+      - name: peak_edits
+        description: Most edits a burst had in its 30 minutes.
+        agg: max
+        sql: edits_30m
+        label: Edits in 30 min
+        format: integer
+      - name: peak_editors
+        description: Most different editors a burst had in its 30 minutes.
+        agg: max
+        sql: editors_30m
+        label: Editors
+        format: integer
+      - name: peak_surprise
+        description: >
+          How far above usual a burst's edits were, in standard deviations
+          (usual: for an article being edited on that wiki at that hour of the day).
+        agg: max
+        sql: surprise
+        label: Surprise
+        unit: σ
+      - name: news_probability
+        description: The news classifier's probability that a burst is a story breaking (averaged over bursts).
+        agg: avg
+        sql: p_news
+        label: News probability
+        format: percent
+      - name: judged_bursts
+        description: Bursts both the classifier and Claude judged (leaving out those Claude found unclear).
+        agg: count
+        filters: ["p_news IS NOT NULL", "claude_label IN ('news', 'edit war', 'routine')"]
+        label: Judged by both
+      - name: agreed_bursts
+        description: Bursts where the classifier's call (news at a probability of 0.5 or more) matched Claude's label.
+        agg: count
+        filters:
+          - "p_news IS NOT NULL"
+          - "claude_label IN ('news', 'edit war', 'routine')"
+          - "(p_news >= 0.5 AND claude_label = 'news') OR (p_news < 0.5 AND claude_label <> 'news')"
+        label: Agreed
+      - name: agreement
+        description: >
+          How often the news classifier agrees with Claude, on bursts both judged.
+          The detector scores each burst with the model trained before it, so this
+          is the classifier's accuracy on bursts it hadn't seen.
+        type: ratio
+        numerator: agreed_bursts
+        denominator: judged_bursts
+        label: Agreement with Claude
+        format: percent
+        better: higher
