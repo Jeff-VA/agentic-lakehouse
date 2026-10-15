@@ -305,5 +305,6 @@ API, and WS4 merges them.
 - [x] WS1: signals, lineage, samples, tests
 - [x] WS2: patchers, tests
 - [x] WS3: request, validation, review header, ledger, CLI, tests
-- [ ] WS4: merge, end-to-end, docs, v0.6.0 release
-- [ ] WS4: wiki-pulse changes, live dry run, live proposal (after the user approves the spend)
+- [x] WS4: merge, end-to-end, docs, v0.6.0 release
+- [x] WS4: wiki-pulse changes and a live dry run (2026-10-15): on v0.6.0 the dry run read both datasets in about 3 s and found no drift; trends had too few events (313 in 24 hours) to judge fading
+- [ ] WS4: the live proposal (after the user approves the spend)
