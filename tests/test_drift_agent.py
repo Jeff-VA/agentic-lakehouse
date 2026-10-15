@@ -74,6 +74,14 @@ def test_the_header_shows_each_definitions_effect_and_where_engines_disagree(tab
     assert "#   dimension playback_telemetry.cdn_pop (new)\n#     recent: new: 'den-1' 40.0%, 'sea-2' 40.0%, null 20.0%\n" in patch
 
 
+def test_a_dashboard_that_was_already_broken_doesnt_fail_proposals(table, repo):
+    (repo / "config" / "dashboards" / "draft.html").write_text(
+        '<script type="module" src="/al.js"></script>\n<al-kpi view="no_such_view" value="x"></al-kpi>\n'
+    )
+    report, samples = detect_drift("telemetry", PLATFORM, table)
+    assert propose_changes(report, samples, "config", claude(proposal()), max_attempts=1, log=quiet).attempts == 1
+
+
 def test_a_proposal_that_changes_nothing_says_so(table, repo):
     _, samples = detect_drift("telemetry", PLATFORM, table)
     fading = Signal(

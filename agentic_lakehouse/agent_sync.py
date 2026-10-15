@@ -326,8 +326,8 @@ def validate(
     config_dir: Path, patched: dict[str, str], dataset_name: str, samples: DriftSamples, proposal: Proposal, before: Platform
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Problems with the patched config, and when there are none, what the reviewer reads about
-    it. The patched config must load, with the project's macros; every dashboard must check
-    against its views; and every definition the proposal touches must run on DuckDB over the
+    it. The patched config must load, with the project's macros; no dashboard may have a problem
+    it didn't have before; and every definition the proposal touches must run on DuckDB over the
     sampled rows."""
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "config"
@@ -340,7 +340,9 @@ def validate(
         except (ValidationError, ConfigError) as e:
             return [str(e)], {}
         datasets = [d.name for d in after.ingestion.datasets]
-        errors = [str(problem) for problem in check_dashboards(copy / "dashboards", after.views, datasets)]
+        # Only problems the proposal makes: a dashboard someone is still building isn't Claude's to fix.
+        known = {str(problem) for problem in check_dashboards(config_dir / "dashboards", before.views, datasets)}
+        errors = [str(problem) for problem in check_dashboards(copy / "dashboards", after.views, datasets) if str(problem) not in known]
         targets = review.targets(proposal, after)
         errors += _run(after, dataset_name, samples, targets)
         if errors:
