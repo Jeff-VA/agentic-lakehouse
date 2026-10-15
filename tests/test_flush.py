@@ -7,7 +7,7 @@ import pytest
 from pyiceberg.catalog.sql import SqlCatalog
 
 from agentic_lakehouse.config import load_platform
-from agentic_lakehouse.flush import NEWEST, OFFSETS, FlushError, flush
+from agentic_lakehouse.flush import NEWEST, OFFSETS, FlushError, flush, kafka_consumer
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
 from agentic_lakehouse.schema_compiler import iceberg_partition_spec, iceberg_schema
 
@@ -229,3 +229,13 @@ def test_offsets_past_the_end_of_the_topic_are_reported(table):
     run_flush(table, {0: [event(i) for i in range(5)]})  # next to read: offset 5
     with pytest.raises(FlushError, match=r"offset 5 is past the end of the topic \(2\); was it recreated"):
         run_flush(table, {0: [event(i) for i in range(2)]})  # the topic was deleted and recreated
+
+
+def test_the_kafka_client_prefetches_about_one_batch_not_64_mib(monkeypatch):
+    """After a laptop sleeps, the client's default prefetch filled with the backlog and the flush
+    was killed for memory before it read its first batch."""
+    configs = []
+    monkeypatch.setattr("agentic_lakehouse.flush.Consumer", configs.append)
+    kafka_consumer("kafka:9092")
+    [config] = configs
+    assert config["queued.max.messages.kbytes"] * 2**10 == config["fetch.max.bytes"] == 8 * 2**20

@@ -51,6 +51,7 @@ from agentic_lakehouse.config import ColumnType, Dataset, Platform, load_platfor
 from agentic_lakehouse.simulate import LiveSource, add_fields, generate_events
 from agentic_lakehouse.orchestrator import EventPublisher, last_header, publish_events, setup, teardown, topic_is_empty
 from agentic_lakehouse.engines import TrinoEngine
+from agentic_lakehouse.flush import PREFETCH_LIMITS
 from agentic_lakehouse.processors import ProcessorContext, consumer_group, run_processor
 from agentic_lakehouse.sources import EVENT_ID_HEADER, ingest
 from agentic_lakehouse.views import qualify_tables
@@ -226,6 +227,7 @@ def main() -> None:
                 "bootstrap.servers": platform.deployment.kafka.bootstrap_servers,
                 "group.id": consumer_group(dataset),
                 "enable.auto.commit": False,
+                **PREFETCH_LIMITS,  # a processor replays backlogs too
             }
         )
         try:

@@ -214,6 +214,14 @@ def _to_arrow(events: list[dict], schema: pa.Schema) -> pa.Table:
     return pa.table(columns, schema=schema)
 
 
+# The Kafka client fetches ahead of what's consumed, by default up to 64 MiB, and a backlog (after a
+# laptop sleeps, say) fills that at once. Reading 600 events of one took 100 MiB of memory with the
+# defaults, and 18 MiB with these limits: about one of flush()'s batches.
+PREFETCH_LIMITS = {"queued.max.messages.kbytes": 8 * 1024, "fetch.max.bytes": 8 * 2**20}
+
+
 def kafka_consumer(bootstrap_servers: str) -> Consumer:
     """A consumer for flush(): offsets come from Iceberg, so the group never commits any."""
-    return Consumer({"bootstrap.servers": bootstrap_servers, "group.id": "agentic-lakehouse-flush", "enable.auto.commit": False})
+    return Consumer(
+        {"bootstrap.servers": bootstrap_servers, "group.id": "agentic-lakehouse-flush", "enable.auto.commit": False, **PREFETCH_LIMITS}
+    )
