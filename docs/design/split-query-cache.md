@@ -1,6 +1,6 @@
 # Design: reuse the historical half of split queries
 
-Status: designed 2026-10-15; building for v0.7.0.
+Status: shipped in v0.7.0, 2026-10-16.
 Tracking: the checklist at the end.
 
 ## The problem
