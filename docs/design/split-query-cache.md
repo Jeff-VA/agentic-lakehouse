@@ -94,5 +94,16 @@ flush and a 10-second refresh, that's about 30 times less Trino work.
 
 - [x] Router: the cache, the edge and body split, the snapshot from the same table load
 - [x] Tests: 16 in tests/test_router_cache.py; the router's own 15 pass unchanged
-- [ ] Docs (README, architecture), v0.7.0
-- [ ] wiki-pulse on v0.7.0, verified live
+- [x] Docs (README, architecture), v0.7.0
+- [x] wiki-pulse on v0.7.0, verified live (2026-10-16), with a live `edits_daily` feed (the last
+  30 days by day):
+  - **Before:** Trino ran its history every 11 seconds, 6 times a minute, about 0.8 s each.
+  - **After:** once, on the first refresh. Every refresh since reports "reused: Iceberg snapshot
+    … hasn't changed since this ran", until the next flush commits, about every 5 minutes.
+  - The daily numbers matched the uncached answers exactly.
+
+## What implementation found
+
+- **Trino's query log is how to see the effect.** `system.runtime.queries` lists every query
+  with its text and timing. A query that counts its own kind there matches itself, so leave
+  the counting query out of what it counts.
