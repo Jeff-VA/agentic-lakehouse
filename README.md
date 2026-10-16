@@ -893,8 +893,16 @@ time it changes, and an `error` event if a refresh fails (the last result
 still stands). Everyone watching a view with the same parameters shares one
 feed, which runs only while someone watches. A view over a model reruns every
 10 seconds (or its header's `refresh_seconds`), since the real-time tier never
-stops changing; a view over tables reruns when a flush or rollup commits to
-one of its tables. Either way, a result is pushed only if it changed. A
+stops changing. A view over tables reruns when a flush or rollup commits to
+one of its tables. Either way, a result is pushed only if it changed.
+
+When a view's range reaches past the real-time tier, Trino's half of the
+answer is kept until the next flush commits. The router keys it by its SQL and
+the Iceberg snapshot it read. A rolling window ("the last 30 days") starts a
+little later on each refresh. So the router reruns only the slice from the
+window's start to the next hour or bucket, and reuses the rest. Each refresh
+then costs a small Trino query, a Pinot query and a DuckDB merge, and the
+answer stays exact. A
 dashboard watches all its views over one connection,
 `GET /live?view=isp_now&view=isp_hourly%3Fhours%3D24`, since browsers allow
 only about six open connections to a server.

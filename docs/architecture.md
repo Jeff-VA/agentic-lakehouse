@@ -109,6 +109,14 @@ and dashboards read the same versioned tables. The diagram shows
   watermark.
 - **DuckDB** merges a split: buckets from each tier, or partial aggregates (an
   average travels as a sum and a count).
+- **The historical half is reused until the next commit.** It is kept by its
+  SQL and the Iceberg snapshot it read. A live view refreshes every 10
+  seconds, but Iceberg changes only when the flush commits.
+  - A rolling window starts a little later each time, so in a split the
+    router cuts the historical half at the first bucket or hour after the
+    start.
+  - The edge before that boundary runs each time, and the body after it is
+    reused ([design/split-query-cache.md](design/split-query-cache.md)).
 - Every answer carries the time range it actually covers and notes on anything
   it left out, so neither a person nor an agent mistakes a partial answer for a
   complete one.
