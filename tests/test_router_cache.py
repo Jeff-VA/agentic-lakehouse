@@ -105,7 +105,9 @@ def test_a_rolling_window_of_metrics_that_cant_merge_isnt_reused():
     stack = Stack()
     for refresh in range(3):
         q = query(T0 + timedelta(minutes=7, seconds=10 * refresh), NOW, metrics=["viewers"])
-        assert stack.router.run(q).sql.keys() == {"historical"}
+        result = stack.router.run(q)
+        assert "historical" in result.sql and "--" not in result.sql["historical"]  # neither cut nor reused
+        assert_matches_all_events(result, q)
     assert len(stack.trino.ran) == 3
 
 

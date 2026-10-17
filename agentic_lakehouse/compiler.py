@@ -206,7 +206,25 @@ class SqlCompiler:
         metrics = {m.name: m for m in self.model_for(query).metrics}
         return [name for name in query.metrics if any(m.agg not in _MERGE and m.agg != "avg" for m in _parts(metrics[name], metrics))]
 
-    def compile(self, query: MetricQuery, *, engine: Engine, table: str, partial: bool = False) -> str:
+    def distinct_parts(self, query: MetricQuery) -> list[AggregateMetric]:
+        """The count_distinct aggregates `query`'s metrics are computed from, each once."""
+        metrics = {m.name: m for m in self.model_for(query).metrics}
+        parts = {p.name: p for name in query.metrics for p in _parts(metrics[name], metrics) if p.agg == "count_distinct"}
+        return list(parts.values())
+
+    def combinable_with_overlap(self, query: MetricQuery) -> bool:
+        """Whether two tiers' partial aggregates for `query` combine once the router knows the values
+        one tier saw (compile's `overlap`): every metric is mergeable or a distinct count, and there's
+        at least one distinct count. Percentiles still can't be combined."""
+        metrics = {m.name: m for m in self.model_for(query).metrics}
+        parts = [p for name in query.metrics for p in _parts(metrics[name], metrics)]
+        return any(p.agg == "count_distinct" for p in parts) and all(
+            p.agg in _MERGE or p.agg in ("avg", "count_distinct") for p in parts
+        )
+
+    def compile(
+        self, query: MetricQuery, *, engine: Engine, table: str, partial: bool = False, overlap: dict[str, list[tuple]] | None = None
+    ) -> str:
         """Render `query` as SQL for `engine`, reading from `table`.
 
         `table` comes from trusted storage config and is inserted verbatim, so
@@ -216,6 +234,14 @@ class SqlCompiler:
         combine; ordering and limit are left to the merge.
         Raises QueryError if the query doesn't match the ontology, or if
         partial=True and a metric can't be combined across tiers.
+
+        `overlap`, with partial=True, is for the router's exact merge of distinct
+        counts: for each count_distinct metric it names, the values the other tier
+        saw, as tuples of the query's dimension values and then the value
+        (distinct_keys_sql's rows). count_distinct metrics then become partial
+        aggregates too (`_count_distinct__<metric>`), and each one named gets an
+        `_overlap__<metric>` column: how many of those values this tier saw as well.
+        An empty dict allows the distinct counts with no overlap columns.
         """
         model = self.model_for(query)
         dimensions = {d.name: d for d in model.dimensions}
@@ -233,13 +259,15 @@ class SqlCompiler:
         metrics = {m.name: m for m in model.metrics}
         aggregates: list[_Column] = []
         if partial:
-            if unmergeable := self.unmergeable_metrics(query):
+            if (unmergeable := self.unmergeable_metrics(query)) and (overlap is None or not self.combinable_with_overlap(query)):
                 raise QueryError(f"can't combine across tiers: {', '.join(unmergeable)}")
             columns = {}
             for name in query.metrics:
                 for part in _parts(metrics[name], metrics):
                     for column, piece in _partial_pieces(part):
                         columns[column] = self._aggregate_sql(piece, engine)
+                    if overlap is not None and part.name in overlap:
+                        columns[f"_overlap__{part.name}"] = self._overlap_sql(part, query.dimensions, dimensions, overlap[part.name], engine)
             aggregates = [_Column(column, sql) for column, sql in columns.items()]
         else:
             for name in query.metrics:
@@ -251,9 +279,38 @@ class SqlCompiler:
                     denominator = self._aggregate_sql(metrics[metric.denominator], engine)
                     aggregates.append(_Column(name, adapter.ratio(numerator, denominator)))
 
+        return self._render(
+            query, model, dimensions, engine, table, grouped + aggregates,
+            group_by=[c.sql for c in grouped],
+            order_by=[] if partial else self._order_by(query, model, grouped + aggregates),
+            limit=None if partial else query.limit,
+        )  # fmt: skip
+
+    def distinct_keys_sql(self, query: MetricQuery, metric: AggregateMetric, *, engine: Engine, table: str) -> str:
+        """SQL listing, for each group of `query`, the distinct values of count_distinct `metric`'s
+        expression where its filters hold (column `_key`; NULL where they don't): the values the
+        router asks the other tier about to merge distinct counts exactly (compile's `overlap`).
+        `query` has no time grain."""
+        model = self.model_for(query)
+        dimensions = {d.name: d for d in model.dimensions}
+        self._check_dimensions(query, model, dimensions)
+        dialect = SQLGLOT_DIALECTS[engine]
+        grouped = [_Column(name, self._dimension_tree(dimensions[name], engine).sql(dialect=dialect)) for name in query.dimensions]
+        key = self._fragment(metric.sql, engine)
+        if metric.filters:
+            key = exp.Case(ifs=[exp.If(this=exp.and_(*(self._fragment(f, engine) for f in metric.filters)), true=key)])
+        key_sql = key.sql(dialect=dialect)
+        return self._render(
+            query, model, dimensions, engine, table, [*grouped, _Column("_key", key_sql)],
+            group_by=[c.sql for c in grouped] + [key_sql], order_by=[], limit=None,
+        )  # fmt: skip
+
+    def _render(self, query, model, dimensions, engine, table, columns, *, group_by, order_by, limit) -> str:
+        adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
+        time_tree = self._dimension_tree(dimensions[model.time_dimension], engine)
         return self._env.get_template("engine/query.sql").render(
             adapter=adapter,
-            columns=grouped + aggregates,
+            columns=columns,
             table=table,
             time_expr=_operand(time_tree).sql(dialect=dialect),
             start=query.start,
@@ -261,9 +318,9 @@ class SqlCompiler:
             filters=[
                 _filter_tree(f, self._dimension_tree(dimensions[f.dimension], engine)).sql(dialect=dialect) for f in query.filters
             ],
-            group_by=[c.sql for c in grouped],
-            order_by=[] if partial else self._order_by(query, model, grouped + aggregates),
-            limit=None if partial else query.limit,
+            group_by=group_by,
+            order_by=order_by,
+            limit=limit,
         ).strip()
 
     def merge_sql(self, query: MetricQuery, relation: str, *, partial: bool) -> str:
@@ -325,6 +382,28 @@ class SqlCompiler:
             aggregate = adapter.filtered(aggregate, predicate.sql(dialect=dialect))
         return aggregate
 
+    def _overlap_sql(self, metric: AggregateMetric, names: list[str], dimensions: dict, keys: list[tuple], engine: Engine) -> str:
+        """count_distinct `metric`, counting only values seen in the same group as in `keys` (tuples
+        of the dimension values named by `names`, then the value): how many of the other tier's
+        values this tier saw too. The values become SQL literals, so names with quotes are safe."""
+        if not keys:
+            return "0"
+        adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
+        columns = [self._dimension_tree(dimensions[name], engine) for name in names] + [self._fragment(metric.sql, engine)]
+
+        def row(values: tuple) -> exp.Expression:
+            return exp.convert(values[0]) if len(columns) == 1 else exp.Tuple(expressions=[exp.convert(v) for v in values])
+
+        conditions = []
+        if plain := [k for k in keys if None not in k]:
+            this = columns[0].copy() if len(columns) == 1 else exp.Tuple(expressions=[c.copy() for c in columns])
+            conditions.append(exp.In(this=this, expressions=[row(k) for k in plain]))
+        for k in keys:  # IN never matches NULL, so a group whose dimension is NULL is matched with IS NULL
+            if None in k:
+                conditions.append(exp.and_(*(c.copy().is_(exp.null()) if v is None else c.copy().eq(exp.convert(v)) for c, v in zip(columns, k))))
+        predicate = exp.and_(*(self._fragment(f, engine) for f in metric.filters), exp.or_(*conditions))
+        return adapter.filtered(adapter.count_distinct(columns[-1].sql(dialect=dialect)), predicate.sql(dialect=dialect))
+
     def _dimension_tree(self, dimension: Dimension, engine: Engine) -> exp.Expression:
         # exp.column quotes names that are keywords in the target dialect.
         return self._fragment(dimension.sql, engine) if dimension.sql else exp.column(dimension.name)
@@ -366,4 +445,7 @@ def _final_sql(metric: Metric, metrics: dict, adapter: Adapter) -> str:
         )
     if metric.agg == "avg":
         return adapter.ratio(adapter.sum(quote(f"_sum__{metric.name}")), adapter.sum(quote(f"_count__{metric.name}")))
+    if metric.agg == "count_distinct":  # each tier's count, less the values both saw (compile's `overlap`)
+        overlap = adapter.sum(quote(f"_overlap__{metric.name}"))
+        return f"({adapter.sum(quote(f'_count_distinct__{metric.name}'))} - COALESCE({overlap}, 0))"
     return getattr(adapter, _MERGE[metric.agg])(quote(f"_{metric.agg}__{metric.name}"))

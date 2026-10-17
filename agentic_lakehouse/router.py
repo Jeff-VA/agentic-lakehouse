@@ -109,11 +109,15 @@ class Router:
         placements: dict[str, Placement],
         clock: Callable[[], datetime] | None = None,
         cache: ResultCache | None = None,
+        max_realtime_values: int = 5000,
     ):
         self.compiler = compiler
         self.placements = placements  # by dataset name, i.e. a model's `source`
         self.clock = clock or (lambda: datetime.now(UTC))
         self.cache = cache if cache is not None else ResultCache()
+        # How many values the real-time tier may have seen since the flush for distinct counts to be
+        # merged exactly; past it (a flush long stalled), they're answered from history, as before.
+        self.max_realtime_values = max_realtime_values
 
     @classmethod
     def from_platform(cls, platform: Platform) -> "Router":
@@ -152,11 +156,18 @@ class Router:
             return self._split(query, placement, boundary, partial=False)
         if not (unmergeable := self.compiler.unmergeable_metrics(query)):
             return self._split(query, placement, flushed, partial=True)
+        why = f"{', '.join(unmergeable)} can't be combined across the real-time and historical tiers"
+        if not query.grain and self.compiler.combinable_with_overlap(query):
+            if (result := self._split_distinct(query, placement, flushed)) is not None:
+                return result
+            why = (
+                f"{', '.join(unmergeable)}: the real-time tier saw more than {self.max_realtime_values} distinct "
+                "values since the last flush, too many to combine exactly"
+            )
         result = self._single(query.model_copy(update={"end": flushed}), placement.historical, "historical", placement.snapshot())
         result.notes.append(
-            f"{', '.join(unmergeable)} can't be combined across the real-time and historical tiers, so the "
-            f"answer covers historical data up to {flushed:%Y-%m-%d %H:%M} UTC. Add a time grain or start "
-            f"after {realtime_from:%Y-%m-%d %H:%M} UTC to include the latest data."
+            f"{why}, so the answer covers historical data up to {flushed:%Y-%m-%d %H:%M} UTC. Add a time "
+            f"grain or start after {realtime_from:%Y-%m-%d %H:%M} UTC to include the latest data."
         )
         return result
 
@@ -188,6 +199,33 @@ class Router:
         con.register("realtime", placement.realtime.engine.execute(sql["realtime"]))
         relation = "(SELECT * FROM historical UNION ALL BY NAME SELECT * FROM realtime)"
         sql["merge"] = self.compiler.merge_sql(query, relation, partial=partial)
+        return QueryResult(plain_types(con.execute(sql["merge"]).to_arrow_table()), query.start, query.end, sql)
+
+    def _split_distinct(self, query: MetricQuery, placement: Placement, boundary: datetime) -> QueryResult | None:
+        """A split whose distinct counts are merged exactly: |A ∪ B| = |A| + |B| − |A ∩ B|. The
+        real-time half covers only the minutes since the flush, so it lists its few distinct values
+        (B); the historical half counts its own (A) and how many of B it saw too, and the merge
+        subtracts them. None if B is longer than max_realtime_values. The historical half isn't reused
+        from the cache: its SQL names the newest values, which change with every query."""
+        realtime_tier, historical_tier = placement.realtime, placement.historical
+        realtime = query.model_copy(update={"start": boundary, "order_by": [], "limit": None})
+        sql, keys = {}, {}
+        for part in self.compiler.distinct_parts(query):
+            keys_sql = self.compiler.distinct_keys_sql(realtime, part, engine=realtime_tier.engine.name, table=realtime_tier.table)
+            sql["realtime_keys"] = f"{sql['realtime_keys']};\n{keys_sql}" if "realtime_keys" in sql else keys_sql
+            rows = realtime_tier.engine.execute(keys_sql).to_pylist()
+            keys[part.name] = [tuple(r[name] for name in query.dimensions) + (r["_key"],) for r in rows if r["_key"] is not None]
+        if sum(map(len, keys.values())) > self.max_realtime_values:
+            return None
+
+        con = duckdb.connect()
+        historical = query.model_copy(update={"end": boundary, "order_by": [], "limit": None})
+        sql["historical"] = self.compiler.compile(historical, engine=historical_tier.engine.name, table=historical_tier.table, partial=True, overlap=keys)
+        con.register("historical", historical_tier.engine.execute(sql["historical"]))
+        sql["realtime"] = self.compiler.compile(realtime, engine=realtime_tier.engine.name, table=realtime_tier.table, partial=True, overlap={})
+        con.register("realtime", realtime_tier.engine.execute(sql["realtime"]))
+        relation = "(SELECT * FROM historical UNION ALL BY NAME SELECT * FROM realtime)"
+        sql["merge"] = self.compiler.merge_sql(query, relation, partial=True)
         return QueryResult(plain_types(con.execute(sql["merge"]).to_arrow_table()), query.start, query.end, sql)
 
     def _historical_half(self, part: MetricQuery, tier: Tier, snapshot: int | None, *, partial: bool) -> tuple[str, pa.Table]:

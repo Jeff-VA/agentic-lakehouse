@@ -7,6 +7,7 @@ import pyarrow as pa
 
 from agentic_lakehouse.compiler import MetricQuery, QueryError, SqlCompiler
 from agentic_lakehouse.engines import DuckDBEngine
+from agentic_lakehouse.ontology import Ontology
 from agentic_lakehouse.router import Placement, Router, Tier
 from test_compiler import ONTOLOGY
 
@@ -34,14 +35,14 @@ def duckdb_with(rows) -> DuckDBEngine:
 EVERYTHING = duckdb_with(ROWS)
 
 
-def router(flushed=FLUSHED) -> Router:
+def router(flushed=FLUSHED, rows=ROWS, compiler=COMPILER, **options) -> Router:
     placement = Placement(
-        realtime=Tier(duckdb_with([r for r in ROWS if r[0] >= REALTIME_FROM]), "playback"),
-        historical=Tier(duckdb_with([r for r in ROWS if r[0] < FLUSHED]), "playback"),
+        realtime=Tier(duckdb_with([r for r in rows if r[0] >= REALTIME_FROM]), "playback"),
+        historical=Tier(duckdb_with([r for r in rows if r[0] < FLUSHED]), "playback"),
         retention=RETENTION,
         flushed_through=lambda: flushed,
     )
-    return Router(COMPILER, {"playback": placement}, clock=lambda: NOW)
+    return Router(compiler, {"playback": placement}, clock=lambda: NOW, **options)
 
 
 def query(start_hour, end_hour, **fields) -> MetricQuery:
@@ -50,10 +51,10 @@ def query(start_hour, end_hour, **fields) -> MetricQuery:
     )
 
 
-def assert_matches_all_events(result, q):
+def assert_matches_all_events(result, q, everything=EVERYTHING):
     """The routed result equals a single query over every event in the range the result covers."""
     covered = q.model_copy(update={"start": result.start, "end": result.end})
-    expected = EVERYTHING.execute(COMPILER.compile(covered, engine="duckdb", table="playback")).to_pylist()
+    expected = everything.execute(COMPILER.compile(covered, engine="duckdb", table="playback")).to_pylist()
     actual = result.table.to_pylist()
     assert len(actual) == len(expected)
     for actual_row, expected_row in zip(actual, expected):
@@ -110,6 +111,76 @@ def test_unmergeable_metrics_fall_back_to_history_up_to_the_flush(fields):
     assert result.sql.keys() == {"historical"}
     assert (result.start, result.end) == (q.start, FLUSHED.replace(tzinfo=UTC))
     assert "median_latency_ms, viewers can't be combined" in result.notes[0]
+    assert_matches_all_events(result, q)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"dimensions": ["isp"]},
+        {  # every group has all 7 viewers, so the order needs its tie-breaks
+            "dimensions": ["isp", "is_mobile"],
+            "order_by": [{"field": "viewers", "descending": True}, {"field": "isp"}, {"field": "is_mobile"}],
+            "limit": 2,
+        },
+        {"filters": [{"dimension": "isp", "op": "=", "value": "comcast"}]},
+        {"filters": [{"dimension": "isp", "op": "=", "value": "nobody"}]},  # no viewers on either side
+    ],
+)
+def test_distinct_counts_are_combined_across_tiers_exactly(fields):
+    """A viewer seen both before and after the flush counts once. The real-time tier holds only
+    the minutes since the flush, so it lists its few viewers; the historical tier counts how many
+    of them it has seen already, and the merge subtracts that overlap."""
+    q = query(0, 6, metrics=["plays", "viewers", "avg_latency_ms"], **fields)
+    result = router().run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_keys", "merge"}
+    assert not result.notes
+    assert_matches_all_events(result, q)
+
+
+def test_values_with_quotes_and_null_dimensions_are_matched_exactly():
+    rows = [
+        (T0 + timedelta(minutes=20 * i), None if i % 2 else "comcast", "ios", ["o'brien", 'say "hi"', "u3"][i % 3], 100)
+        for i in range(18)
+    ]  # every viewer, and the NULL isp, on both sides of the flush
+    q = query(0, 6, metrics=["viewers"], dimensions=["isp"])
+    result = router(rows=rows).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_keys", "merge"}
+    assert_matches_all_events(result, q, everything=duckdb_with(rows))
+
+
+def test_a_filtered_distinct_count_and_a_ratio_of_one_are_combined_exactly():
+    """Only values where the metric's filters hold are listed and checked, so a viewer with slow and
+    fast plays on both sides of the flush counts once among slow viewers."""
+    spec = ONTOLOGY.model_dump(exclude_defaults=True)
+    spec["models"][0]["metrics"] += [
+        {"name": "slow_viewers", "description": "d", "agg": "count_distinct", "sql": "user_id", "filters": ["latency_ms > 100"]},
+        {"name": "slow_viewer_share", "type": "ratio", "description": "d", "numerator": "slow_viewers", "denominator": "viewers"},
+    ]
+    compiler = SqlCompiler(Ontology.model_validate(spec))
+    q = query(0, 6, metrics=["slow_viewers", "slow_viewer_share", "plays"], dimensions=["isp"])
+    result = router(compiler=compiler).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_keys", "merge"}
+    covered = q.model_copy(update={"start": result.start, "end": result.end})
+    expected = EVERYTHING.execute(compiler.compile(covered, engine="duckdb", table="playback")).to_pylist()
+    assert result.table.to_pylist() == [{k: pytest.approx(v) if isinstance(v, float) else v for k, v in row.items()} for row in expected]
+
+
+def test_more_new_values_than_the_router_checks_fall_back_to_history_up_to_the_flush():
+    q = query(0, 6, metrics=["plays", "viewers"], dimensions=["isp"])
+    result = router(max_realtime_values=2).run(q)
+    assert result.sql.keys() == {"historical"}
+    assert (result.start, result.end) == (q.start, FLUSHED.replace(tzinfo=UTC))
+    assert "viewers: the real-time tier saw more than 2" in result.notes[0]
+    assert_matches_all_events(result, q)
+
+
+def test_grained_distinct_counts_with_no_bucket_boundary_in_retention_still_fall_back():
+    q = query(0, 6, metrics=["plays", "viewers"], grain="month")
+    result = router().run(q)
+    assert result.sql.keys() == {"historical"}
+    assert "viewers can't be combined" in result.notes[0]
     assert_matches_all_events(result, q)
 
 
