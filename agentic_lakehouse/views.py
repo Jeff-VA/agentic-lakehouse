@@ -266,6 +266,7 @@ class ModelSource:
     conditions: tuple[Condition, ...]
     order_by: tuple[OrderBy, ...]
     limit: exp.Expression | None
+    models: tuple[str, ...] = ()  # FROM metrics: the models its metrics come from
 
     def query(self, values: Mapping[str, Any], now: datetime) -> MetricQuery:
         """The MetricQuery this view asks with parameter `values` at time `now`. Raises ViewError."""
@@ -358,7 +359,7 @@ class View:
         """The models and tables the view reads."""
         names = []
         for source in self._sources():
-            names += [source.model] if isinstance(source, ModelSource) else list(source.tables)
+            names += list(source.models or [source.model]) if isinstance(source, ModelSource) else list(source.tables)
         return list(dict.fromkeys(names))
 
     @property
@@ -441,6 +442,7 @@ def parse_view(name: str, text: str, ontology: Ontology, tables: TableSchemas, *
     _check_parameters(tree, header.params)
 
     models = {model.name: model for model in ontology.models}
+    models.setdefault(EVERY_MODEL, _every_model(ontology))  # FROM metrics, unless a model has that name
     if _composed(tree, models):
         source, columns = _composed_source(tree, header.params, ontology, tables, models)
     elif (model := _model_read(tree, models)) is not None:
@@ -489,6 +491,31 @@ def _check_parameters(tree: exp.Query, params: Mapping[str, ViewParam]) -> None:
         raise ViewError(f"declared parameters the SQL never uses: {', '.join(unused)}")
 
 
+EVERY_MODEL = "metrics"  # FROM metrics reads the whole semantic layer: any model's metrics, across datasets
+_EVERY_DATASET = "every_dataset"  # its source, which no model's is, so it has no lenses
+
+
+def _every_model(ontology: Ontology) -> SemanticModel:
+    """FROM metrics: every model's metrics, and each dimension by its first model's definition (a
+    query of several datasets is checked against each one's own, SqlCompiler.drill_across). Time is
+    the first model's time dimension."""
+    metrics = [m for model in ontology.models for m in model.metrics]
+    dimensions = {}
+    for model in ontology.models:
+        for dimension in model.dimensions:
+            if dimension.name not in {m.name for m in metrics}:
+                dimensions.setdefault(dimension.name, dimension)
+    first = ontology.models[0]
+    return SemanticModel(
+        name=EVERY_MODEL,
+        description="Every model's metrics; a query of several datasets' metrics is a drill-across.",
+        source=_EVERY_DATASET,
+        time_dimension=first.time_dimension,
+        dimensions=list(dimensions.values()),
+        metrics=metrics,
+    )
+
+
 def _model_read(tree: exp.Query, models: Mapping[str, SemanticModel]) -> SemanticModel | None:
     """The model a SELECT reads, if it reads one directly (FROM <model>)."""
     from_ = tree.args.get("from_") if isinstance(tree, exp.Select) else None
@@ -513,7 +540,7 @@ _FILTER_TYPES = {"string": ("string",), "number": ("int", "float"), "boolean": (
 def _model_source(
     select: exp.Select, model: SemanticModel, params: Mapping[str, ViewParam], ontology: Ontology
 ) -> tuple[ModelSource, list[ViewColumn]]:
-    over = f"a view over model '{model.name}'"
+    over = "a view over metrics" if model.source == _EVERY_DATASET else f"a view over model '{model.name}'"
     if extra := sorted(key for key, value in select.args.items() if value and key not in _CLAUSES):
         raise ViewError(
             f"{over} can only SELECT, WHERE, GROUP BY, ORDER BY and LIMIT (it has {', '.join(extra)}). "
@@ -652,10 +679,17 @@ def _model_source(
     ):
         raise ViewError("LIMIT takes a whole number or an int :parameter")
 
-    source = ModelSource(model.name, tuple(outputs), grain, start, end, tuple(conditions), order_by, limit)
+    read = ()
+    if model.source == _EVERY_DATASET:  # FROM metrics: which models answer it
+        owners = {m.name: owner.name for owner in ontology.models for m in owner.metrics}
+        read = tuple(dict.fromkeys(owners[o.field] for o in outputs if o.role == "metric"))
+    source = ModelSource(model.name, tuple(outputs), grain, start, end, tuple(conditions), order_by, limit, read)
     try:  # compile once, as every request will, so a mismatch with the ontology fails now
         query = source.query_between(sample, _EPOCH, _EPOCH + timedelta(hours=1))
-        SqlCompiler(ontology).compile(query, engine="duckdb", table="t")
+        compiler = SqlCompiler(ontology)
+        drill_across = len(compiler.datasets_of(query)) > 1
+        for part in [part for part, _ in compiler.drill_across(query).values()] if drill_across else [query]:
+            compiler.compile(part, engine="duckdb", table="t")
     except (QueryError, ValueError) as e:
         raise ViewError(str(e)) from None
 
@@ -961,7 +995,8 @@ def _analyze(
     if forbidden := tree.find(*_FORBIDDEN):
         raise ViewError(f"{kind} only read data; remove {forbidden.key.upper()}")
     ctes = {cte.alias_or_name for cte in tree.find_all(exp.CTE)}
-    known = f"Models: {', '.join(models) or 'none'}. Tables: {', '.join(sorted(tables)) or 'none'}"
+    named = [name for name, model in models.items() if model.source != _EVERY_DATASET]  # FROM metrics isn't a model
+    known = f"Models: {', '.join(named) or 'none'}. Tables: {', '.join(sorted(tables)) or 'none'}"
     read = []
     for table in tree.find_all(exp.Table):
         if not isinstance(table.this, exp.Identifier):

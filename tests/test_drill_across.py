@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import duckdb
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from agentic_lakehouse.api_gateway import Gateway, create_app
@@ -13,6 +14,7 @@ from agentic_lakehouse.compiler import QueryError, SqlCompiler
 from agentic_lakehouse.engines import DuckDBEngine
 from agentic_lakehouse.ontology import Ontology
 from agentic_lakehouse.router import Placement, Router, Tier
+from agentic_lakehouse.views import ViewError, parse_view
 from test_compiler import ONTOLOGY
 from test_router import EVERYTHING, FLUSHED, NOW, REALTIME_FROM, RETENTION, ROWS, T0, duckdb_with, query
 
@@ -160,3 +162,57 @@ def test_the_api_answers_a_drill_across_with_its_time_column():
         ).json()
     assert [(c["name"], c["role"]) for c in body["columns"]] == [("ts", "time"), ("isp", "dimension"), ("plays", "metric"), ("tickets", "metric")]
     assert len(body["rows"]) == len(joined(query(0, 6, metrics=["plays", "tickets"], dimensions=["isp"], grain="hour")))
+
+
+# ---------------------------------------------------------------- FROM metrics: SQL across datasets
+
+TABLES = {"raw.playback": {"ts": "TIMESTAMP", "isp": "VARCHAR", "device": "VARCHAR", "user_id": "VARCHAR", "latency_ms": "INTEGER"}}
+
+
+def sql_view(sql: str, ontology=COMPILER.ontology):
+    header = yaml.safe_dump({"description": "A test view.", "params": {"hours": {"type": "int", "default": 6}}})
+    return parse_view("test", f"/*\n{header}*/\n{sql}", ontology, TABLES)
+
+
+def test_a_view_from_metrics_asks_for_the_metrics_of_every_dataset():
+    """FROM metrics names no model: it's the whole semantic layer, so the view's metrics may come from
+    any dataset, and its reads say which models answer."""
+    v = sql_view("SELECT isp, plays, viewers, tickets FROM metrics WHERE ts >= now() - INTERVAL :hours HOUR ORDER BY tickets DESC, isp")
+    assert v.reads == ["playback", "support"]
+    assert [(c.name, c.role) for c in v.columns] == [("isp", "dimension"), ("plays", "metric"), ("viewers", "metric"), ("tickets", "metric")]
+    q = v.source.query({"hours": 6}, NOW)
+    assert_same(router().run(q).table.to_pylist(), joined(q))
+
+
+def test_a_view_from_metrics_buckets_every_dataset_by_time():
+    v = sql_view("SELECT date_trunc('hour', ts) AS hour, plays, tickets FROM metrics WHERE ts >= now() - INTERVAL :hours HOUR")
+    q = v.source.query({"hours": 6}, NOW)
+    assert (q.grain, [(c.name, c.role) for c in v.columns][0]) == ("hour", ("hour", "time"))
+    assert len(router().run(q).table) == len(joined(q))
+
+
+def test_a_view_from_metrics_of_one_dataset_reads_it_like_a_view_from_its_model():
+    from_metrics = sql_view("SELECT isp, plays, slow_rate FROM metrics WHERE ts >= now() - INTERVAL :hours HOUR")
+    from_model = sql_view("SELECT isp, plays, slow_rate FROM playback WHERE ts >= now() - INTERVAL :hours HOUR")
+    assert from_metrics.reads == ["playback"]
+    assert from_metrics.source.query({"hours": 6}, NOW) == from_model.source.query({"hours": 6}, NOW)
+
+
+def test_a_view_from_metrics_refuses_a_dimension_the_datasets_dont_share():
+    with pytest.raises(ViewError, match=r"'queue' isn't a dimension of every dataset's models: playback hasn't one"):
+        sql_view("SELECT queue, plays, tickets FROM metrics WHERE ts >= now() - INTERVAL :hours HOUR")
+
+
+def test_a_model_named_metrics_is_still_read_by_from_metrics():
+    """Additive: a project with a model called metrics keeps reading it."""
+    spec = ONTOLOGY.model_dump(exclude_defaults=True)
+    spec["models"][0]["name"] = "metrics"
+    v = sql_view("SELECT isp, plays FROM metrics WHERE ts >= now() - INTERVAL :hours HOUR", Ontology.model_validate(spec))
+    assert v.reads == ["metrics"]
+
+
+def test_sql_from_metrics_runs_through_the_gateway():
+    with TestClient(create_app(Gateway(router(), tables=TABLES))) as client:
+        body = client.get("/sql", params={"q": "SELECT isp, plays, tickets FROM metrics WHERE ts >= now() - INTERVAL '6' HOUR"}).json()
+    assert "error" not in body, body
+    assert {r["isp"] for r in body["rows"]} == {"att", "comcast", "tmobile", "verizon"}
