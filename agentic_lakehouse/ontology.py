@@ -101,6 +101,7 @@ class Dimension(StrictModel):
     description: str = ""
     sql: SqlExpression | None = None  # defaults to the column of the same name
     label: str = ""  # how people say it, e.g. "ISP"; empty means the name in words
+    lookup: Identifier | None = None  # set on a lookup's attribute, which the ontology adds (Lookup)
 
     @property
     def expr(self) -> str:
@@ -250,11 +251,85 @@ class CrossModelMetric(StrictModel):
     better: Better | None = None
 
 
+LOOKUP_MAX_ROWS = 10_000  # a lookup compiles into every query that uses it, so it stays small
+_SQL_TYPES = {"string": "VARCHAR", "number": "DOUBLE", "boolean": "BOOLEAN"}
+
+
+class LookupAttribute(StrictModel):
+    name: Identifier
+    type: Literal["string", "number", "boolean"]
+    description: str = ""
+    label: str = ""
+    missing: str | float | bool | None = None  # for a key the rows don't list; empty without it
+
+
+class Lookup(StrictModel):
+    """A small table keyed by a dimension, whose attributes become dimensions of every model with
+    that dimension: each wiki's size tier, say. An attribute compiles into the query as a CASE over
+    the key, built from the lookup's rows, so it's exact on every tier and for every aggregation.
+    The rows are inline (`rows`), or read from `table` (lookups.read_lookups) every
+    `refresh_minutes`; until then its attributes are empty. They describe the present, applied to
+    all of history: a wiki that grew is counted in its new tier throughout."""
+
+    name: Identifier
+    description: str = ""
+    key: Identifier  # the dimension it's keyed by
+    rows: list[dict[str, Any]] | None = None  # inline, or the table's rows last read; each has the key and attributes
+    table: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")] | None = None  # <namespace>.<table>
+    refresh_minutes: float = Field(default=60, gt=0)
+    attributes: list[LookupAttribute] = Field(min_length=1)
+
+
 class Ontology(StrictModel):
     version: str
     models: list[SemanticModel] = Field(min_length=1)
     metrics: list[CrossModelMetric] = []  # metrics across models; optional
+    lookups: list[Lookup] = []  # dimension tables, whose attributes the models gain; optional
     _macros: Any = PrivateAttr(default=None)  # set by load_platform from config/macros/
+
+    @model_validator(mode="before")
+    @classmethod
+    def _add_lookup_attributes(cls, data: Any) -> Any:
+        """Each lookup's attributes, as dimensions of every model with its key, compiled from its
+        rows. They're made again each time, so a dumped and reloaded ontology doesn't hold them twice."""
+        if not isinstance(data, dict) or not data.get("lookups"):
+            return data
+        lookups = [Lookup.model_validate(lookup) for lookup in data["lookups"]]
+        models = [dict(model) for model in data.get("models") or []]
+        for model in models:  # a reloaded ontology's attributes come back as the lookups say
+            model["dimensions"] = [d for d in model.get("dimensions") or [] if not _field(d, "lookup")]
+        metric_names = {_field(m, "name") for model in models for m in model.get("metrics") or []}
+        metric_names |= {_field(m, "name") for m in data.get("metrics") or []}
+        for lookup in lookups:
+            _check_lookup(lookup, models, metric_names)
+            for model in models:
+                key = next((d for d in model["dimensions"] if _field(d, "name") == lookup.key), None)
+                if key is None:
+                    continue
+                key_sql = _field(key, "sql") or lookup.key
+                model["dimensions"] = [
+                    *model["dimensions"],
+                    *(
+                        {
+                            "name": a.name, "type": a.type, "label": a.label, "lookup": lookup.name,
+                            "description": a.description or lookup.description,
+                            "sql": _attribute_sql(key_sql, lookup, a),
+                        }
+                        for a in lookup.attributes
+                    ),
+                ]  # fmt: skip
+        return {**data, "models": models}
+
+    def with_lookup_rows(self, rows: dict[str, list[dict]]) -> "Ontology":
+        """This ontology with the named lookups' rows replaced (a table's, read again), and every
+        attribute compiled from them. Raises ValidationError if the rows don't pass its checks."""
+        spec = self.model_dump()
+        for lookup in spec["lookups"]:
+            if lookup["name"] in rows:
+                lookup["rows"] = rows[lookup["name"]]
+        ontology = Ontology.model_validate(spec)
+        ontology._macros = self._macros
+        return ontology
 
     @property
     def macros(self) -> "ProjectMacros":
@@ -288,6 +363,59 @@ class Ontology(StrictModel):
                 if part not in owner:
                     raise ValueError(f"metric '{metric.name}' divides '{part}', which no model has")
         return self
+
+
+def _field(item: Any, name: str) -> Any:
+    """A field of a dimension or metric, given as a dict (YAML) or a model."""
+    return item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+
+
+def _check_lookup(lookup: Lookup, models: list[dict], metric_names: set[str]) -> None:
+    if lookup.rows is None and lookup.table is None:
+        raise ValueError(f"lookup {lookup.name} has neither rows nor a table to read them from")
+    keyed = [m for m in models if any(_field(d, "name") == lookup.key for d in m["dimensions"])]
+    if not keyed:
+        raise ValueError(f"lookup {lookup.name} is keyed by '{lookup.key}', which no model has as a dimension")
+    rows = lookup.rows or []
+    if len(rows) > LOOKUP_MAX_ROWS:
+        raise ValueError(f"lookup {lookup.name} has {len(rows)} rows; at most {LOOKUP_MAX_ROWS}, as it compiles into every query using it")
+    seen = set()
+    for row in rows:
+        if (key := row.get(lookup.key)) is not None and key in seen:  # a row without a key is left out
+            raise ValueError(f"lookup {lookup.name} lists {key!r} twice")
+        seen.add(key)
+    for attribute in lookup.attributes:
+        if attribute.name in metric_names:
+            raise ValueError(f"attribute '{attribute.name}' of lookup {lookup.name} is a metric's name")
+        for model in keyed:
+            if any(_field(d, "name") == attribute.name for d in model["dimensions"]):
+                raise ValueError(f"attribute '{attribute.name}' of lookup {lookup.name} is already a dimension of model {model['name']}")
+
+
+def _attribute_sql(key_sql: str, lookup: Lookup, attribute: LookupAttribute) -> str:
+    """The attribute as SQL (DuckDB's dialect, as ontology fragments are): a CASE over the key's
+    SQL, with a WHEN for each row, and `missing` (or an empty value of its type) for other keys."""
+    empty = f"CAST(NULL AS {_SQL_TYPES[attribute.type]})"
+    otherwise = empty if attribute.missing is None else _literal(attribute.missing, attribute.type)
+    whens = [
+        f"WHEN {_literal(row[lookup.key])} THEN {_literal(row.get(attribute.name), attribute.type)}"
+        for row in lookup.rows or []
+        if row.get(lookup.key) is not None
+    ]
+    return f"CASE ({key_sql}) {' '.join(whens)} ELSE {otherwise} END" if whens else otherwise
+
+
+def _literal(value: Any, type: str | None = None) -> str:
+    """`value` as a SQL literal, quotes escaped; as `type` (an attribute's) when given."""
+    if value is None:
+        return f"CAST(NULL AS {_SQL_TYPES[type]})" if type else "NULL"
+    if type == "string":
+        value = str(value)
+    elif type == "number":
+        value = float(value)
+    elif type == "boolean":
+        value = bool(value)
+    return exp.convert(value).sql(dialect=FRAGMENT_DIALECT)
 
 
 def _time_key(model: SemanticModel) -> tuple:

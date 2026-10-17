@@ -30,7 +30,9 @@ from pyiceberg.transforms import DayTransform, MonthTransform
 from agentic_lakehouse.compiler import SqlCompiler, bucket_start
 from agentic_lakehouse.config import Platform, Rollup
 from agentic_lakehouse.engines import QueryEngine
+from agentic_lakehouse.lookups import read_lookups
 from agentic_lakehouse.quality import CheckResult, blocking, run_checks
+from agentic_lakehouse.views import qualify_tables
 
 ROLLUP_THROUGH = "agentic-lakehouse.rollup-through"  # the gold table is complete before this time (ISO, UTC)
 LAST_AUDIT = "agentic-lakehouse.last-audit"  # JSON: when the last run audited its rows, whether it published, the check results
@@ -97,7 +99,14 @@ def materialize(
     run.start, run.end = span
 
     model = platform.rollup_model(rollup)
-    sql = SqlCompiler(platform.ontology).compile(rollup.with_window(*span), engine=engine.name, table=source_table)
+    ontology = platform.ontology
+    if needed := _table_lookups(rollup, model, ontology):  # read them first: without rows, their attributes are empty
+        catalog_name = platform.deployment.trino.catalog if engine.name == "trino" else None
+        ontology, errors = read_lookups(ontology, lambda sql: engine.execute(qualify_tables(sql, catalog_name, dialect=engine.name)), needed)
+        if errors:
+            run.skipped = f"{'; '.join(errors)}: skipped rather than written with empty attributes"
+            return run
+    sql = SqlCompiler(ontology).compile(rollup.with_window(*span), engine=engine.name, table=source_table)
     rows = engine.execute(sql)
     run.rows = rows.num_rows
     if gold is None and not run.rows:  # a live feed that started mid-bucket: wait for a complete one
@@ -198,6 +207,13 @@ class RollupStore:
             return pa.table({name: pa.array([], pa.null()) for name in self.platform.rollup_columns(rollup)})
         rows = gold.scan(row_filter=GreaterThanOrEqual(time, since.isoformat())).to_arrow()
         return rows.sort_by([(time, "ascending"), *((d, "ascending") for d in rollup.query.dimensions)])
+
+
+def _table_lookups(rollup: Rollup, model, ontology) -> set[str]:
+    """The lookups read from tables whose attributes `rollup` groups or filters by."""
+    names = {*rollup.query.dimensions, *(f.dimension for f in rollup.query.filters)}
+    used = {d.lookup for d in model.dimensions if d.name in names and d.lookup}
+    return {lookup.name for lookup in ontology.lookups if lookup.name in used and lookup.table}
 
 
 def _load(catalog: Catalog, name: str) -> Table | None:

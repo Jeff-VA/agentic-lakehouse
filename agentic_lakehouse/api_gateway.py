@@ -54,19 +54,20 @@ from pyiceberg.exceptions import NoSuchTableError
 from agentic_lakehouse import compose
 from agentic_lakehouse.agent_sync import pending_proposals, unmodeled_columns
 from agentic_lakehouse.browser import BrowserError, Capture, capture, serving
-from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError
+from agentic_lakehouse.compiler import Filter, Grain, MetricQuery, OrderBy, QueryError, SqlCompiler
 from agentic_lakehouse.config import ConfigError, Platform, load_platform
 from agentic_lakehouse.dashboards import check_dashboards, dashboard_files, describe_dashboard
 from agentic_lakehouse.engines import EngineError, QueryEngine, TrinoEngine
 from agentic_lakehouse.formats import MEDIA_TYPES, error_table, render
 from agentic_lakehouse.live import LiveViews
+from agentic_lakehouse.lookups import read_lookups
 from agentic_lakehouse.macros import MacroInfo
 from agentic_lakehouse.ontology import AggregateMetric, Metric, SemanticModel, display_format, words
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
 from agentic_lakehouse.rollups import ROLLUP_THROUGH, RollupStore
 from agentic_lakehouse.router import QueryResult, Router
 from agentic_lakehouse.steps import IcebergStepStore
-from agentic_lakehouse.views import ComposedSource, ModelSource, TableSchemas, View, ViewColumn, ViewError, parse_view
+from agentic_lakehouse.views import ComposedSource, ModelSource, TableSchemas, View, ViewColumn, ViewError, parse_view, qualify_tables
 
 MAX_ROWS = 5000  # protects clients, and agents' context windows, from runaway results
 EXPORT_MAX_ROWS = 100_000  # CSV and Parquet results: files for SQL clients, not context windows
@@ -81,6 +82,7 @@ class DimensionInfo(BaseModel):
     type: str
     description: str
     label: str
+    lookup: str | None = None  # the lookup it's an attribute of: values as its rows say now, for all of history
 
 
 class MetricInfo(BaseModel):
@@ -471,7 +473,7 @@ class Gateway:
                     time_dimension=model.time_dimension,
                     grains=list(get_args(Grain)),
                     dimensions=[
-                        DimensionInfo(name=d.name, type=d.type, description=d.description, label=d.label or words(d.name))
+                        DimensionInfo(name=d.name, type=d.type, description=d.description, label=d.label or words(d.name), lookup=d.lookup)
                         for d in model.dimensions
                         if d.name != model.time_dimension
                     ],
@@ -536,6 +538,20 @@ class Gateway:
         if not text.lstrip().startswith("/*"):
             text = f"/*\ndescription: ad-hoc query\n*/\n{text}"
         return parse_view("sql", text, self.router.compiler.ontology, self.tables, macros=False)
+
+    def refresh_lookups(self) -> list[str]:
+        """Read every lookup's table again, through the warehouse, and answer every query from now on
+        with its rows (lookups.read_lookups). Returns what couldn't be read, for the log."""
+        ontology = self.router.compiler.ontology
+        if not any(lookup.table for lookup in ontology.lookups):
+            return []
+        if self.warehouse is None:
+            return ["lookups: no warehouse to read their tables through, so their attributes stay empty"]
+        engine, catalog = self.warehouse.engine, self.warehouse.catalog
+        loaded, errors = read_lookups(ontology, lambda sql: engine.execute(qualify_tables(sql, catalog, dialect=engine.name)))
+        if loaded is not ontology:
+            self.router.compiler = SqlCompiler(loaded)
+        return errors
 
     def view_catalog(self) -> ViewCatalog:
         return ViewCatalog(views=[_view_info(view) for view in self.views.values()])
@@ -961,6 +977,15 @@ def _add_project_tools(mcp: MCPServer, project: Project, read_only: ToolAnnotati
         return DASHBOARD_GUIDE.format(goal=goal, config_dir=project.config_dir, reference=_tag_reference())
 
 
+async def _read_lookups(gateway: Gateway) -> None:
+    """Read the lookups' tables again as often as the most frequent asks (the gateway read them
+    first as it started)."""
+    while (minutes := min((l.refresh_minutes for l in gateway.router.compiler.ontology.lookups if l.table), default=None)) is not None:
+        await asyncio.sleep(minutes * 60)
+        for error in await asyncio.to_thread(gateway.refresh_lookups):
+            log.warning(error)
+
+
 async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, interval: float = 1.0) -> None:
     """Reload the views when a view or macro file changes, and open pages when a view, macro or
     dashboard does. A macro edit also reaches every query the gateway compiles from then on. An
@@ -1048,11 +1073,17 @@ def create_app(
     async def lifespan(app: FastAPI):
         async with mcp.session_manager.run():  # mounted apps don't get their own lifespan run
             watcher = asyncio.create_task(_watch_project(project, gateway, live)) if project else None
+            reader = None
+            if any(l.table for l in gateway.router.compiler.ontology.lookups):  # before serving, so no query gets them empty
+                for error in await asyncio.to_thread(gateway.refresh_lookups):
+                    log.warning(error)
+                reader = asyncio.create_task(_read_lookups(gateway))
             try:
                 yield
             finally:
-                if watcher:
-                    watcher.cancel()
+                for task in (watcher, reader):
+                    if task:
+                        task.cancel()
                 live.close()
 
     app = FastAPI(
