@@ -131,7 +131,8 @@ and dashboards read the same versioned tables. The diagram shows
 | ends before the last flush | Trino over Iceberg |
 | spans both, with a time grain | split at a bucket boundary, so every bucket comes from one tier and every metric is exact |
 | spans both, counts, sums, averages or ratios only | partial aggregates from each tier, merged in DuckDB |
-| spans both, with percentiles or distinct counts | Trino up to the last flush, with a note that the newest data isn't included |
+| spans both, with percentiles or distinct counts | partial aggregates as above, and Pinot lists its values from the few minutes since the last flush: Trino counts how many of them it saw too, so distinct counts merge exactly, and gives its distribution as a grid of quantiles, which DuckDB reads percentiles off with those values |
+| spans both, with percentiles or distinct counts by week or month, or with more than 5,000 new values (a long-stalled flush) | Trino up to the last flush, with a note that the newest data isn't included |
 
 ## From a view to a live page
 

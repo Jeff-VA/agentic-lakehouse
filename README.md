@@ -293,7 +293,7 @@ curl -X POST http://127.0.0.1:8000/query -H 'Content-Type: application/json' -d 
 ```
 
 `coverage` can be narrower than the range you asked for, and `notes` say why:
-a percentile over both tiers, for example, stops at the last flush. A `400`
+a monthly percentile over both tiers, for example, stops at the last flush. A `400`
 names what doesn't exist and lists what does (`unknown metrics: p99.
 Available: ...`), a `422` is a malformed request (`start must be before end`),
 and a `502` means an engine failed.

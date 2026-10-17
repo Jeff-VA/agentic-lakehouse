@@ -1,3 +1,4 @@
+import random
 from datetime import UTC, datetime, timedelta
 
 import duckdb
@@ -33,6 +34,17 @@ def duckdb_with(rows) -> DuckDBEngine:
 
 
 EVERYTHING = duckdb_with(ROWS)
+
+# Percentiles need more events to be judged: one every 30 seconds, with log-normal latencies
+# (median about 150 ms) whose whole milliseconds repeat, and 50 viewers.
+_rng = random.Random(7)
+DENSE = [
+    (T0 + timedelta(seconds=30 * i), ["comcast", "verizon", "att"][i % 3], ["ios", "web"][i % 2], f"u{i % 50}", int(_rng.lognormvariate(5, 0.6)))
+    for i in range(720)
+]
+_spec = ONTOLOGY.model_dump(exclude_defaults=True)
+_spec["models"][0]["metrics"].append({"name": "p90_latency_ms", "description": "d", "agg": "percentile", "percentile": 0.9, "sql": "latency_ms"})
+PERCENTILES = SqlCompiler(Ontology.model_validate(_spec))  # the test ontology and a p90
 
 
 def router(flushed=FLUSHED, rows=ROWS, compiler=COMPILER, **options) -> Router:
@@ -104,7 +116,7 @@ def test_grained_query_splits_on_a_bucket_boundary_so_every_metric_is_exact():
     assert_matches_all_events(result, q)
 
 
-@pytest.mark.parametrize("fields", [{}, {"grain": "month"}])  # month: no bucket boundary inside Pinot's retention
+@pytest.mark.parametrize("fields", [{"grain": "month"}])  # month: no bucket boundary inside Pinot's retention
 def test_unmergeable_metrics_fall_back_to_history_up_to_the_flush(fields):
     q = query(0, 6, metrics=["plays", "median_latency_ms", "viewers"], dimensions=["isp"], **fields)
     result = router().run(q)
@@ -165,6 +177,89 @@ def test_a_filtered_distinct_count_and_a_ratio_of_one_are_combined_exactly():
     covered = q.model_copy(update={"start": result.start, "end": result.end})
     expected = EVERYTHING.execute(compiler.compile(covered, engine="duckdb", table="playback")).to_pylist()
     assert result.table.to_pylist() == [{k: pytest.approx(v) if isinstance(v, float) else v for k, v in row.items()} for row in expected]
+
+
+def assert_close_to_all_events(result, q, everything, compiler=PERCENTILES, rel=0.02):
+    """Like assert_matches_all_events, but percentiles to within `rel` of the exact answer: the
+    historical tier's are approximate on Trino, and its distribution reaches the merge as a grid."""
+    covered = q.model_copy(update={"start": result.start, "end": result.end})
+    expected = everything.execute(compiler.compile(covered, engine="duckdb", table="playback")).to_pylist()
+    actual = result.table.to_pylist()
+    assert len(actual) == len(expected)
+    for actual_row, expected_row in zip(actual, expected):
+        assert actual_row.keys() == expected_row.keys()
+        for column, value in expected_row.items():
+            close = pytest.approx(value, rel=rel if column in ("median_latency_ms", "p90_latency_ms") else 1e-9)
+            assert actual_row[column] == (close if isinstance(value, float) else value), column
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"dimensions": ["isp"]},
+        {
+            "dimensions": ["isp", "is_mobile"],
+            "order_by": [{"field": "plays", "descending": True}, {"field": "isp"}, {"field": "is_mobile"}],
+            "limit": 4,
+        },
+        {"filters": [{"dimension": "isp", "op": "=", "value": "comcast"}]},
+    ],
+)
+def test_percentiles_are_combined_across_tiers(fields):
+    """The historical tier sends its distribution as a grid of 1,001 quantiles and its count; the
+    real-time tier, holding only the minutes since the flush, sends its values. The merge reads the
+    percentile off the two together, weighted by their counts."""
+    q = query(0, 6, metrics=["plays", "median_latency_ms", "p90_latency_ms", "avg_latency_ms"], **fields)
+    result = router(rows=DENSE, compiler=PERCENTILES).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_values", "merge"}
+    assert not result.notes
+    assert_close_to_all_events(result, q, duckdb_with(DENSE))
+
+
+@pytest.mark.parametrize("dimensions", [[], ["isp"]])
+def test_percentiles_alone_are_combined_too(dimensions):
+    """Nothing else asked for: the real-time half's partial query has no aggregate of its own."""
+    q = query(0, 6, metrics=["median_latency_ms", "p90_latency_ms"], dimensions=dimensions)
+    result = router(rows=DENSE, compiler=PERCENTILES).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_values", "merge"}
+    assert_close_to_all_events(result, q, duckdb_with(DENSE))
+
+
+def test_a_group_on_one_side_of_the_flush_gets_that_sides_own_percentile():
+    """Nothing to mix: before the flush, the historical tier's percentile; after it, the exact
+    percentile of the real-time tier's values (interpolated, as quantile_cont is)."""
+    rows = []
+    for i in range(180):  # every 2 minutes: att only before the flush, tmobile only after, comcast on both sides
+        ts = T0 + timedelta(minutes=2 * i)
+        isp = "comcast" if i % 2 else ("att" if ts < FLUSHED else "tmobile")
+        rows.append((ts, isp, "ios", f"u{i % 9}", (i * 37) % 400 + 10))
+    q = query(0, 6, metrics=["median_latency_ms", "p90_latency_ms"], dimensions=["isp"])
+    result = router(rows=rows, compiler=PERCENTILES).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_values", "merge"}
+    merged = {r["isp"]: r for r in result.table.to_pylist()}
+    exact = {r["isp"]: r for r in duckdb_with(rows).execute(PERCENTILES.compile(q, engine="duckdb", table="playback")).to_pylist()}
+    for isp in ("att", "tmobile"):
+        for metric in ("median_latency_ms", "p90_latency_ms"):
+            assert merged[isp][metric] == pytest.approx(exact[isp][metric], rel=1e-9), (isp, metric)
+    assert merged["comcast"]["median_latency_ms"] == pytest.approx(exact["comcast"]["median_latency_ms"], rel=0.05)
+
+
+def test_distinct_counts_and_percentiles_are_combined_together():
+    q = query(0, 6, metrics=["plays", "median_latency_ms", "viewers"], dimensions=["isp"])
+    result = router(rows=DENSE, compiler=PERCENTILES).run(q)
+    assert result.sql.keys() == {"historical", "realtime", "realtime_keys", "realtime_values", "merge"}
+    assert not result.notes
+    assert_close_to_all_events(result, q, duckdb_with(DENSE))  # viewers exactly, the median to within 2%
+
+
+def test_more_new_values_for_a_percentile_than_the_router_takes_fall_back_to_history():
+    q = query(0, 6, metrics=["median_latency_ms"], dimensions=["isp"])
+    result = router(max_realtime_values=5).run(q)
+    assert result.sql.keys() == {"historical"}
+    assert (result.start, result.end) == (q.start, FLUSHED.replace(tzinfo=UTC))
+    assert "median_latency_ms: the real-time tier saw more than 5" in result.notes[0]
+    assert_matches_all_events(result, q)
 
 
 def test_more_new_values_than_the_router_checks_fall_back_to_history_up_to_the_flush():

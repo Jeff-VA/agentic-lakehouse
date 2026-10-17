@@ -70,7 +70,8 @@ def test_include_sql_shows_what_each_tier_ran(client):
 
 
 def test_partial_coverage_is_explained(client):
-    body = post_query(client, metrics=["median_latency_ms"]).json()
+    # Monthly: no bucket boundary inside the real-time tier, so the percentile isn't combined
+    body = post_query(client, metrics=["median_latency_ms"], grain="month").json()
     assert body["coverage"]["end"] == FLUSHED.isoformat() + "Z"
     assert "can't be combined across the real-time and historical tiers" in body["notes"][0]
 

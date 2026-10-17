@@ -4,7 +4,8 @@ DuckDB reading every seeded event.
 Both tiers hold the whole seeded batch, so the placement here pretends Pinot
 keeps only its second half and Iceberg was flushed 6 hours before the end. That
 makes every routing path run: one tier, bucket-aligned split, partial
-aggregate merge, and the fallback for metrics that can't be combined.
+aggregate merge, the merge of percentiles and distinct counts by the real-time
+tier's values, and the fallback past the router's limit on those values.
 """
 
 from dataclasses import replace
@@ -44,7 +45,16 @@ CASES = {
         {"historical", "realtime", "merge"},
         False,
     ),
-    "total percentile": ({"metrics": ["p99_ttfb", "event_count"], "dimensions": ["is_mobile_device"]}, {"historical"}, True),
+    "total percentile": (  # Pinot's half here is 6 hours, so the limit is lifted
+        {"metrics": ["p99_ttfb", "event_count"], "dimensions": ["is_mobile_device"], "max_realtime_values": 10**7},
+        {"historical", "realtime", "realtime_values", "merge"},
+        False,
+    ),
+    "total percentile, too many new values": (
+        {"metrics": ["p99_ttfb", "event_count"], "dimensions": ["is_mobile_device"], "max_realtime_values": 0},
+        {"historical"},
+        True,
+    ),
 }
 
 
@@ -55,9 +65,14 @@ def test_routed_answer_matches_all_events(setup, platform, engines, name):
     fields = dict(fields)
     if fields.pop("recent", False):
         start = end - timedelta(hours=3)
+    limit = fields.pop("max_realtime_values", router.max_realtime_values)
     q = MetricQuery.model_validate({**fields, "start": start, "end": end})
 
-    result = router.run(q)
+    default, router.max_realtime_values = router.max_realtime_values, limit
+    try:
+        result = router.run(q)
+    finally:
+        router.max_realtime_values = default
 
     assert result.sql.keys() == tiers
     assert result.end == (flushed if truncated else end)

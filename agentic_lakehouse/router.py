@@ -13,8 +13,14 @@ watermark. For a query over [start, end):
    b. Else, if every metric can be combined (counts, sums, min/max,
       averages, ratios), each tier returns partial aggregates split at the
       watermark and DuckDB merges them.
-   c. Else (percentiles, distinct counts): Trino answers up to the watermark,
-      and the result says the most recent data isn't covered.
+   c. Else, with no time grain, distinct counts and percentiles are merged
+      using the real-time tier's values: it covers only the minutes since the
+      flush, so it lists them. Distinct counts merge exactly (Trino counts how
+      many of those values it saw too); percentiles approximately (Trino gives
+      its distribution as a grid of quantiles, read off with the values).
+   d. Else (a week or month grain, or more real-time values than
+      max_realtime_values): Trino answers up to the watermark, and the result
+      says the most recent data isn't covered.
 
 Every result reports the time range it covers, the SQL each tier ran and any
 caveats, so clients (including AI agents) can tell what they got.
@@ -37,7 +43,7 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pyarrow as pa
 
-from agentic_lakehouse.compiler import Grain, MetricQuery, QueryError, SqlCompiler, bucket_start
+from agentic_lakehouse.compiler import Grain, MetricQuery, QueryError, SqlCompiler, bucket_start, merge_quantile
 from agentic_lakehouse.config import Platform
 from agentic_lakehouse.engines import PinotEngine, QueryEngine, TrinoEngine, plain_types
 from agentic_lakehouse.orchestrator import FLUSHED_THROUGH, iceberg_catalog
@@ -115,8 +121,9 @@ class Router:
         self.placements = placements  # by dataset name, i.e. a model's `source`
         self.clock = clock or (lambda: datetime.now(UTC))
         self.cache = cache if cache is not None else ResultCache()
-        # How many values the real-time tier may have seen since the flush for distinct counts to be
-        # merged exactly; past it (a flush long stalled), they're answered from history, as before.
+        # How many values the real-time tier may list, from the minutes since the flush, for distinct
+        # counts and percentiles to be merged; past it (a flush long stalled), they're answered from
+        # history, as before.
         self.max_realtime_values = max_realtime_values
 
     @classmethod
@@ -157,8 +164,8 @@ class Router:
         if not (unmergeable := self.compiler.unmergeable_metrics(query)):
             return self._split(query, placement, flushed, partial=True)
         why = f"{', '.join(unmergeable)} can't be combined across the real-time and historical tiers"
-        if not query.grain and self.compiler.combinable_with_overlap(query):
-            if (result := self._split_distinct(query, placement, flushed)) is not None:
+        if not query.grain and self.compiler.combinable_given_values(query):
+            if (result := self._split_by_values(query, placement, flushed)) is not None:
                 return result
             why = (
                 f"{', '.join(unmergeable)}: the real-time tier saw more than {self.max_realtime_values} distinct "
@@ -201,30 +208,46 @@ class Router:
         sql["merge"] = self.compiler.merge_sql(query, relation, partial=partial)
         return QueryResult(plain_types(con.execute(sql["merge"]).to_arrow_table()), query.start, query.end, sql)
 
-    def _split_distinct(self, query: MetricQuery, placement: Placement, boundary: datetime) -> QueryResult | None:
-        """A split whose distinct counts are merged exactly: |A ∪ B| = |A| + |B| − |A ∩ B|. The
-        real-time half covers only the minutes since the flush, so it lists its few distinct values
-        (B); the historical half counts its own (A) and how many of B it saw too, and the merge
-        subtracts them. None if B is longer than max_realtime_values. The historical half isn't reused
-        from the cache: its SQL names the newest values, which change with every query."""
+    def _split_by_values(self, query: MetricQuery, placement: Placement, boundary: datetime) -> QueryResult | None:
+        """A split whose distinct counts and percentiles are merged too, using the real-time half's
+        values: it covers only the minutes since the flush, so it can list them.
+        - Distinct counts, exactly: |A ∪ B| = |A| + |B| − |A ∩ B|. The historical half counts its own
+          values (A) and how many of the real-time half's (B) it saw too; the merge subtracts them.
+        - Percentiles: the historical half gives its distribution as a grid of quantiles, and the
+          merge reads the percentile off it and the real-time values together (merge_quantile).
+        None if the real-time half lists more than max_realtime_values. The historical half isn't
+        reused from the cache: its SQL names the newest values, which change with every query."""
         realtime_tier, historical_tier = placement.realtime, placement.historical
         realtime = query.model_copy(update={"start": boundary, "order_by": [], "limit": None})
-        sql, keys = {}, {}
-        for part in self.compiler.distinct_parts(query):
-            keys_sql = self.compiler.distinct_keys_sql(realtime, part, engine=realtime_tier.engine.name, table=realtime_tier.table)
-            sql["realtime_keys"] = f"{sql['realtime_keys']};\n{keys_sql}" if "realtime_keys" in sql else keys_sql
-            rows = realtime_tier.engine.execute(keys_sql).to_pylist()
-            keys[part.name] = [tuple(r[name] for name in query.dimensions) + (r["_key"],) for r in rows if r["_key"] is not None]
-        if sum(map(len, keys.values())) > self.max_realtime_values:
+        sql, keys, values = {}, {}, {}
+        for label, parts in (("realtime_keys", self.compiler.distinct_parts(query)), ("realtime_values", self.compiler.percentile_parts(query))):
+            for part in parts:
+                values_sql = self.compiler.values_sql(realtime, part, engine=realtime_tier.engine.name, table=realtime_tier.table)
+                sql[label] = f"{sql[label]};\n{values_sql}" if label in sql else values_sql
+                rows = realtime_tier.engine.execute(values_sql)
+                if label == "realtime_keys":
+                    keys[part.name] = [tuple(r[d] for d in query.dimensions) + (r["_value"],) for r in rows.to_pylist() if r["_value"] is not None]
+                else:
+                    values[part.name] = rows
+        if sum(map(len, keys.values())) + sum(t.num_rows for t in values.values()) > self.max_realtime_values:
             return None
 
         con = duckdb.connect()
         historical = query.model_copy(update={"end": boundary, "order_by": [], "limit": None})
-        sql["historical"] = self.compiler.compile(historical, engine=historical_tier.engine.name, table=historical_tier.table, partial=True, overlap=keys)
+        sql["historical"] = self.compiler.compile(
+            historical, engine=historical_tier.engine.name, table=historical_tier.table, partial=True, overlap=keys, grids=True
+        )
         con.register("historical", historical_tier.engine.execute(sql["historical"]))
         sql["realtime"] = self.compiler.compile(realtime, engine=realtime_tier.engine.name, table=realtime_tier.table, partial=True, overlap={})
         con.register("realtime", realtime_tier.engine.execute(sql["realtime"]))
-        relation = "(SELECT * FROM historical UNION ALL BY NAME SELECT * FROM realtime)"
+        parts = ["SELECT * FROM historical", "SELECT * FROM realtime"]
+        for part in self.compiler.percentile_parts(query):  # each group's percentile, from both halves
+            con.register(f"values__{part.name}", values[part.name])
+            inputs = con.execute(self.compiler.percentile_inputs_sql(query, part, "historical", f'"values__{part.name}"')).to_arrow_table()
+            merged = [merge_quantile(**row, fraction=part.percentile) for row in inputs.drop_columns(query.dimensions).to_pylist()]
+            con.register(f"merged__{part.name}", inputs.select(query.dimensions).append_column(f"_merged__{part.name}", pa.array(merged, pa.float64())))
+            parts.append(f'SELECT * FROM "merged__{part.name}"')
+        relation = f"({' UNION ALL BY NAME '.join(parts)})"
         sql["merge"] = self.compiler.merge_sql(query, relation, partial=True)
         return QueryResult(plain_types(con.execute(sql["merge"]).to_arrow_table()), query.start, query.end, sql)
 

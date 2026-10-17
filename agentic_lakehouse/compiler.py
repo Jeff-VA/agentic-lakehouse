@@ -14,6 +14,7 @@ time range. SqlCompiler turns it into SQL for DuckDB, Trino or Pinot:
   syntax, correctly quoted.
 """
 
+from bisect import bisect_right
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, NamedTuple, Self
@@ -167,8 +168,13 @@ def _filter_tree(query_filter: Filter, column: exp.Expression) -> exp.Expression
 
 
 # How each aggregation's partial results from several tiers combine. Averages
-# split into a sum and a count; count_distinct and percentile can't be combined.
+# split into a sum and a count; count_distinct and percentile can't be combined
+# as partial aggregates alone, but can once the router has one tier's values (_BY_VALUES).
 _MERGE = {"count": "sum", "sum": "sum", "min": "min", "max": "max"}
+_BY_VALUES = ("count_distinct", "percentile")
+# The quantiles the historical tier gives a percentile's distribution at, for the merge with the
+# real-time tier's values: 0, 0.001, ..., 1. Every percentile to 0.1% is one of them.
+GRID = [i / 1000 for i in range(1001)]
 
 
 class SqlCompiler:
@@ -208,22 +214,33 @@ class SqlCompiler:
 
     def distinct_parts(self, query: MetricQuery) -> list[AggregateMetric]:
         """The count_distinct aggregates `query`'s metrics are computed from, each once."""
-        metrics = {m.name: m for m in self.model_for(query).metrics}
-        parts = {p.name: p for name in query.metrics for p in _parts(metrics[name], metrics) if p.agg == "count_distinct"}
-        return list(parts.values())
+        return self._parts_with(query, "count_distinct")
 
-    def combinable_with_overlap(self, query: MetricQuery) -> bool:
-        """Whether two tiers' partial aggregates for `query` combine once the router knows the values
-        one tier saw (compile's `overlap`): every metric is mergeable or a distinct count, and there's
-        at least one distinct count. Percentiles still can't be combined."""
+    def percentile_parts(self, query: MetricQuery) -> list[AggregateMetric]:
+        """The percentile aggregates `query`'s metrics are computed from, each once."""
+        return self._parts_with(query, "percentile")
+
+    def combinable_given_values(self, query: MetricQuery) -> bool:
+        """Whether two tiers' results for `query` combine once the router has one tier's values for its
+        distinct counts and percentiles (values_sql): `query` has some, and the rest merge as
+        partial aggregates."""
         metrics = {m.name: m for m in self.model_for(query).metrics}
         parts = [p for name in query.metrics for p in _parts(metrics[name], metrics)]
-        return any(p.agg == "count_distinct" for p in parts) and all(
-            p.agg in _MERGE or p.agg in ("avg", "count_distinct") for p in parts
-        )
+        return any(p.agg in _BY_VALUES for p in parts) and all(p.agg in _MERGE or p.agg == "avg" or p.agg in _BY_VALUES for p in parts)
+
+    def _parts_with(self, query: MetricQuery, agg: str) -> list[AggregateMetric]:
+        metrics = {m.name: m for m in self.model_for(query).metrics}
+        return list({p.name: p for name in query.metrics for p in _parts(metrics[name], metrics) if p.agg == agg}.values())
 
     def compile(
-        self, query: MetricQuery, *, engine: Engine, table: str, partial: bool = False, overlap: dict[str, list[tuple]] | None = None
+        self,
+        query: MetricQuery,
+        *,
+        engine: Engine,
+        table: str,
+        partial: bool = False,
+        overlap: dict[str, list[tuple]] | None = None,
+        grids: bool = False,
     ) -> str:
         """Render `query` as SQL for `engine`, reading from `table`.
 
@@ -235,13 +252,18 @@ class SqlCompiler:
         Raises QueryError if the query doesn't match the ontology, or if
         partial=True and a metric can't be combined across tiers.
 
-        `overlap`, with partial=True, is for the router's exact merge of distinct
-        counts: for each count_distinct metric it names, the values the other tier
-        saw, as tuples of the query's dimension values and then the value
-        (distinct_keys_sql's rows). count_distinct metrics then become partial
-        aggregates too (`_count_distinct__<metric>`), and each one named gets an
-        `_overlap__<metric>` column: how many of those values this tier saw as well.
-        An empty dict allows the distinct counts with no overlap columns.
+        `overlap` and `grids`, with partial=True, are for the router's merge of
+        distinct counts and percentiles, once it has the other tier's values
+        (values_sql). Given `overlap`:
+        - count_distinct metrics become partial aggregates too
+          (`_count_distinct__<metric>`), and each one `overlap` names gets an
+          `_overlap__<metric>` column: how many of the values it lists (tuples of
+          the query's dimension values, then the value) this tier saw as well.
+          An empty dict gives the distinct counts and no overlap columns.
+        - percentile metrics, with grids=True, become this tier's distribution:
+          its quantiles at each of GRID (`_grid__<metric>`) and its count of values
+          (`_n__<metric>`). With grids=False they're left out; their values come
+          from values_sql.
         """
         model = self.model_for(query)
         dimensions = {d.name: d for d in model.dimensions}
@@ -259,15 +281,22 @@ class SqlCompiler:
         metrics = {m.name: m for m in model.metrics}
         aggregates: list[_Column] = []
         if partial:
-            if (unmergeable := self.unmergeable_metrics(query)) and (overlap is None or not self.combinable_with_overlap(query)):
+            if (unmergeable := self.unmergeable_metrics(query)) and (overlap is None or not self.combinable_given_values(query)):
                 raise QueryError(f"can't combine across tiers: {', '.join(unmergeable)}")
             columns = {}
             for name in query.metrics:
                 for part in _parts(metrics[name], metrics):
+                    if part.agg == "percentile":
+                        if grids:
+                            columns[f"_grid__{part.name}"] = self._grid_sql(part, engine)
+                            columns[f"_n__{part.name}"] = self._aggregate_sql(part.model_copy(update={"agg": "count", "percentile": None}), engine)
+                        continue
                     for column, piece in _partial_pieces(part):
                         columns[column] = self._aggregate_sql(piece, engine)
                     if overlap is not None and part.name in overlap:
                         columns[f"_overlap__{part.name}"] = self._overlap_sql(part, query.dimensions, dimensions, overlap[part.name], engine)
+            if not columns and not grouped:  # only percentiles, whose values come from values_sql: a SELECT needs a column
+                columns["_rows"] = adapter.count(None)
             aggregates = [_Column(column, sql) for column, sql in columns.items()]
         else:
             for name in query.metrics:
@@ -286,24 +315,45 @@ class SqlCompiler:
             limit=None if partial else query.limit,
         )  # fmt: skip
 
-    def distinct_keys_sql(self, query: MetricQuery, metric: AggregateMetric, *, engine: Engine, table: str) -> str:
-        """SQL listing, for each group of `query`, the distinct values of count_distinct `metric`'s
-        expression where its filters hold (column `_key`; NULL where they don't): the values the
-        router asks the other tier about to merge distinct counts exactly (compile's `overlap`).
-        `query` has no time grain."""
+    def values_sql(self, query: MetricQuery, metric: AggregateMetric, *, engine: Engine, table: str) -> str:
+        """SQL listing, for each group of `query`, the distinct values of `metric`'s expression
+        (a count_distinct or percentile metric) where its filters hold, as `_value` (NULL where they
+        don't), and how many rows had each, as `_n`. The router asks the other tier how many of the
+        values it saw too (compile's `overlap`), or merges them with its distribution
+        (merge_quantile). `query` has no time grain."""
         model = self.model_for(query)
         dimensions = {d.name: d for d in model.dimensions}
         self._check_dimensions(query, model, dimensions)
-        dialect = SQLGLOT_DIALECTS[engine]
+        adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
         grouped = [_Column(name, self._dimension_tree(dimensions[name], engine).sql(dialect=dialect)) for name in query.dimensions]
-        key = self._fragment(metric.sql, engine)
+        value = self._fragment(metric.sql, engine)
         if metric.filters:
-            key = exp.Case(ifs=[exp.If(this=exp.and_(*(self._fragment(f, engine) for f in metric.filters)), true=key)])
-        key_sql = key.sql(dialect=dialect)
+            value = exp.Case(ifs=[exp.If(this=exp.and_(*(self._fragment(f, engine) for f in metric.filters)), true=value)])
+        value_sql = value.sql(dialect=dialect)
         return self._render(
-            query, model, dimensions, engine, table, [*grouped, _Column("_key", key_sql)],
-            group_by=[c.sql for c in grouped] + [key_sql], order_by=[], limit=None,
+            query, model, dimensions, engine, table, [*grouped, _Column("_value", value_sql), _Column("_n", adapter.count(None))],
+            group_by=[c.sql for c in grouped] + [value_sql], order_by=[], limit=None,
         )  # fmt: skip
+
+    def percentile_inputs_sql(self, query: MetricQuery, metric: AggregateMetric, historical: str, values: str) -> str:
+        """DuckDB SQL giving, for each group, what merge_quantile() needs for percentile `metric`:
+        the historical tier's grid and count of values (`grid`, `grid_count`, from compile(grids=True)
+        rows in `historical`) and the real-time tier's values ascending with their counts (`values`,
+        `counts`, from values_sql rows in `values`). The router puts the result back in the merge
+        as `_merged__<metric>`."""
+        quote = self._adapter("duckdb").quote
+        groups = [quote(name) for name in query.dimensions]
+        select = "".join(f"{g}, " for g in groups)
+        group_by = f" GROUP BY {', '.join(groups)}" if groups else ""
+        grid, count = quote(f"_grid__{metric.name}"), quote(f"_n__{metric.name}")
+        return (
+            f"SELECT {select}CAST(ANY_VALUE(grid) AS DOUBLE[]) AS grid, CAST(SUM(grid_count) AS BIGINT) AS grid_count, "
+            f"ANY_VALUE(\"values\") AS \"values\", ANY_VALUE(counts) AS counts FROM ("
+            f"SELECT {select}{grid} AS grid, {count} AS grid_count FROM {historical} UNION ALL BY NAME "
+            f"SELECT {select}list(CAST(\"_value\" AS DOUBLE) ORDER BY \"_value\") AS \"values\", "
+            f"list(CAST(\"_n\" AS BIGINT) ORDER BY \"_value\") AS counts FROM {values} WHERE \"_value\" IS NOT NULL{group_by}"
+            f"){group_by}"
+        )
 
     def _render(self, query, model, dimensions, engine, table, columns, *, group_by, order_by, limit) -> str:
         adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
@@ -382,6 +432,14 @@ class SqlCompiler:
             aggregate = adapter.filtered(aggregate, predicate.sql(dialect=dialect))
         return aggregate
 
+    def _grid_sql(self, metric: AggregateMetric, engine: Engine) -> str:
+        """Percentile `metric`'s quantiles at each of GRID, as one array, where its filters hold."""
+        adapter, dialect = self._adapter(engine), SQLGLOT_DIALECTS[engine]
+        grid = adapter.quantile_grid(self._fragment(metric.sql, engine).sql(dialect=dialect), GRID)
+        if metric.filters:
+            grid = adapter.filtered(grid, exp.and_(*(self._fragment(f, engine) for f in metric.filters)).sql(dialect=dialect))
+        return grid
+
     def _overlap_sql(self, metric: AggregateMetric, names: list[str], dimensions: dict, keys: list[tuple], engine: Engine) -> str:
         """count_distinct `metric`, counting only values seen in the same group as in `keys` (tuples
         of the dimension values named by `names`, then the value): how many of the other tier's
@@ -448,4 +506,54 @@ def _final_sql(metric: Metric, metrics: dict, adapter: Adapter) -> str:
     if metric.agg == "count_distinct":  # each tier's count, less the values both saw (compile's `overlap`)
         overlap = adapter.sum(quote(f"_overlap__{metric.name}"))
         return f"({adapter.sum(quote(f'_count_distinct__{metric.name}'))} - COALESCE({overlap}, 0))"
+    if metric.agg == "percentile":  # merged by the router for each group (merge_quantile), one row per group
+        return f"ANY_VALUE({quote(f'_merged__{metric.name}')})"
     return getattr(adapter, _MERGE[metric.agg])(quote(f"_{metric.agg}__{metric.name}"))
+
+
+def merge_quantile(grid: list | None, grid_count: int | None, values: list | None, counts: list | None, fraction: float) -> float | None:
+    """The `fraction` quantile of two tiers' values together: one tier's distribution, as its
+    quantiles at each of GRID over `grid_count` values, and the other tier's `values`, ascending,
+    with their `counts`. Each side is read as a piecewise-linear distribution through its
+    quantiles (between ordered values, as quantile_cont interpolates), and the two are weighted by
+    their counts, so a group seen on one side only gets that side's own quantile. None without
+    values. The router calls it for each group, with percentile_inputs_sql's rows."""
+    sides = []  # (how many values, the quantiles' values ascending, their fractions)
+    if grid and grid_count:
+        sides.append((grid_count, list(grid), [i / (len(grid) - 1) for i in range(len(grid))]))
+    if values:
+        n, xs, qs, rank = sum(counts), [], [], 0
+        for value, count in zip(values, counts):  # a value repeated `count` times spans ranks rank .. rank + count - 1
+            xs += [value, value]
+            qs += [rank / max(n - 1, 1), (rank + count - 1) / max(n - 1, 1)]
+            rank += count
+        if n == 1:
+            qs = [0.0, 1.0]
+        sides.append((n, xs, qs))
+    if not sides:
+        return None
+
+    total = sum(n for n, _, _ in sides)
+
+    def share_at_or_below(x: float) -> float:
+        return sum(n * _cdf(xs, qs, x) for n, xs, qs in sides) / total
+
+    lo, hi = min(xs[0] for _, xs, _ in sides), max(xs[-1] for _, xs, _ in sides)
+    if fraction <= 0:
+        return lo
+    while (mid := (lo + hi) / 2) not in (lo, hi):  # the least x with share_at_or_below(x) >= fraction
+        if share_at_or_below(mid) >= fraction:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def _cdf(xs: list, qs: list, x: float) -> float:
+    """The share of a piecewise-linear distribution through (xs[i], qs[i]) at or below `x`."""
+    if x < xs[0]:
+        return 0.0
+    if x >= xs[-1]:
+        return 1.0
+    i = bisect_right(xs, x)  # xs[i - 1] <= x < xs[i]
+    return qs[i - 1] + (x - xs[i - 1]) / (xs[i] - xs[i - 1]) * (qs[i] - qs[i - 1])

@@ -34,6 +34,9 @@
 
 {% macro percentile(expr, fraction) %}PERCENTILE_CONT({{ fraction }}) WITHIN GROUP (ORDER BY {{ expr }}){% endmacro %}
 
+{# The quantiles at each of fractions, as one array: the shape of a distribution, which the router merges with another tier's values. #}
+{% macro quantile_grid(expr, fractions) %}PERCENTILE_CONT(ARRAY[{{ fractions | join(', ') }}]) WITHIN GROUP (ORDER BY {{ expr }}){% endmacro %}
+
 {# The aggregate over only the rows that match predicate. #}
 {% macro filtered(aggregate, predicate) %}{{ aggregate }} FILTER (WHERE {{ predicate }}){% endmacro %}
 
