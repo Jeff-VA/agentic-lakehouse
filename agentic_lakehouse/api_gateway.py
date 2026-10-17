@@ -107,6 +107,9 @@ class ModelInfo(BaseModel):
 class Catalog(BaseModel):
     now: datetime  # server time, for choosing time ranges
     models: list[ModelInfo]
+    # Ratios of two metrics of any models, over different datasets even (the ontology's top-level
+    # `metrics`). Ask for them with any dimension their parts' models all have.
+    metrics_across_models: list[MetricInfo] = []
     # The SQL macros views can call, {{ name(...) }}: the project's own (config/macros/) first, then
     # the engine's. `files` says where each is defined, e.g. project/trino.sql for Trino's own version.
     macros: list[MacroInfo]
@@ -488,7 +491,23 @@ class Gateway:
                     historical_through=_utc(flushed) if flushed else None,
                 )
             )
-        return Catalog(now=datetime.now(UTC), models=models, macros=self.router.compiler.ontology.macros.catalog())
+        ontology = self.router.compiler.ontology
+        owner = {metric.name: model for model in ontology.models for metric in model.metrics}
+        across = [
+            MetricInfo(
+                name=m.name,
+                description=m.description,
+                calculation=f"ratio across models: {'' if m.scale == 1 else f'{m.scale:g} × '}{m.numerator} "
+                f"({owner[m.numerator].name}) / {m.denominator} ({owner[m.denominator].name})",
+                label=m.label or words(m.name),
+                format=display_format(m),
+                unit=m.unit,
+                better=m.better,
+            )
+            for m in ontology.metrics
+            if all(owner[part].source in self.router.placements for part in (m.numerator, m.denominator))
+        ]
+        return Catalog(now=datetime.now(UTC), models=models, metrics_across_models=across, macros=ontology.macros.catalog())
 
     def query(self, query: MetricQuery, include_sql: bool = False) -> QueryResponse:
         """Run `query`. Raises QueryError if it doesn't fit the ontology, EngineError if an engine fails."""

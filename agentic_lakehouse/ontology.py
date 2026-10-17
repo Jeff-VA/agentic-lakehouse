@@ -233,9 +233,27 @@ class SemanticModel(StrictModel):
         return self
 
 
+class CrossModelMetric(StrictModel):
+    """A metric across models: numerator / denominator, times `scale`, where the two are metrics of
+    any models, over different datasets even (bursts per 10,000 edits). The router asks for both,
+    drilling across datasets when they're in different ones, and divides once it has them."""
+
+    name: Identifier
+    type: Literal["ratio"]
+    description: str = Field(min_length=1)
+    numerator: Identifier
+    denominator: Identifier
+    scale: float = Field(default=1, gt=0)  # e.g. 10000 for a rate per 10,000
+    label: str = ""
+    format: Format | None = None  # defaults to number
+    unit: str = ""
+    better: Better | None = None
+
+
 class Ontology(StrictModel):
     version: str
     models: list[SemanticModel] = Field(min_length=1)
+    metrics: list[CrossModelMetric] = []  # metrics across models; optional
     _macros: Any = PrivateAttr(default=None)  # set by load_platform from config/macros/
 
     @property
@@ -260,6 +278,15 @@ class Ontology(StrictModel):
                         f"metric '{metric.name}' is defined in both '{owner[metric.name]}' and '{model.name}'"
                     )
                 owner[metric.name] = model.name
+        across = set()
+        for metric in self.metrics:
+            if metric.name in owner or metric.name in across:
+                where = f"'{owner[metric.name]}'" if metric.name in owner else "the metrics across models"
+                raise ValueError(f"metric '{metric.name}' is defined in both {where} and the metrics across models")
+            across.add(metric.name)
+            for part in (metric.numerator, metric.denominator):
+                if part not in owner:
+                    raise ValueError(f"metric '{metric.name}' divides '{part}', which no model has")
         return self
 
 

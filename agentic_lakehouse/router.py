@@ -143,6 +143,8 @@ class Router:
         return cls(SqlCompiler(platform.ontology), placements)
 
     def run(self, query: MetricQuery) -> QueryResult:
+        if self.compiler.across_metrics(query):
+            return self._across_models(query)
         if len(self.compiler.datasets_of(query)) > 1:
             return self._drill_across(query)
         model = self.compiler.model_for(query)
@@ -179,6 +181,18 @@ class Router:
             f"grain or start after {realtime_from:%Y-%m-%d %H:%M} UTC to include the latest data."
         )
         return result
+
+    def _across_models(self, query: MetricQuery) -> QueryResult:
+        """A query asking for metrics across models (the ontology's `metrics`): its parts are asked
+        for like any metrics, drilling across datasets when they're in different ones, and divided
+        once they're in, then ordered and limited (SqlCompiler.across_sql)."""
+        parts = self.compiler.expand(query)
+        result = self.run(parts)
+        con = duckdb.connect()
+        con.register("parts", result.table)
+        sql = dict(result.sql)
+        sql["across models"] = self.compiler.across_sql(query, "parts", self.compiler.time_dimension_for(parts))
+        return QueryResult(plain_types(con.execute(sql["across models"]).to_arrow_table()), result.start, result.end, sql, result.notes)
 
     def _drill_across(self, query: MetricQuery) -> QueryResult:
         """A query whose metrics come from models over different datasets: each dataset's part is

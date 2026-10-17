@@ -554,6 +554,8 @@ def _model_source(
     lenses = models_together([model], lenses)[0] if (lenses := ontology.lenses_of(model)) else model
     dimensions = {d.name: d for d in lenses.dimensions}
     metrics = {m.name: m for m in lenses.metrics}
+    if model.source == _EVERY_DATASET:  # FROM metrics: the metrics across models too
+        metrics |= {m.name: m for m in ontology.metrics}
     time = model.time_dimension
     choices = (
         f"Metrics: {', '.join(metrics)}. Dimensions: {', '.join(d for d in dimensions if d != time)}; "
@@ -680,13 +682,14 @@ def _model_source(
         raise ViewError("LIMIT takes a whole number or an int :parameter")
 
     read = ()
-    if model.source == _EVERY_DATASET:  # FROM metrics: which models answer it
-        owners = {m.name: owner.name for owner in ontology.models for m in owner.metrics}
-        read = tuple(dict.fromkeys(owners[o.field] for o in outputs if o.role == "metric"))
+    if model.source == _EVERY_DATASET:  # FROM metrics: which models answer it (a metric across models', its parts')
+        owners = {m.name: (owner.name,) for owner in ontology.models for m in owner.metrics}
+        owners |= {m.name: owners[m.numerator] + owners[m.denominator] for m in ontology.metrics}
+        read = tuple(dict.fromkeys(name for o in outputs if o.role == "metric" for name in owners[o.field]))
     source = ModelSource(model.name, tuple(outputs), grain, start, end, tuple(conditions), order_by, limit, read)
     try:  # compile once, as every request will, so a mismatch with the ontology fails now
-        query = source.query_between(sample, _EPOCH, _EPOCH + timedelta(hours=1))
         compiler = SqlCompiler(ontology)
+        query = compiler.expand(source.query_between(sample, _EPOCH, _EPOCH + timedelta(hours=1)))
         drill_across = len(compiler.datasets_of(query)) > 1
         for part in [part for part, _ in compiler.drill_across(query).values()] if drill_across else [query]:
             compiler.compile(part, engine="duckdb", table="t")

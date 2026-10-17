@@ -189,6 +189,7 @@ class SqlCompiler:
     def __init__(self, ontology: Ontology):
         self.ontology = ontology
         self._model_of = {metric.name: model for model in ontology.models for metric in model.metrics}
+        self._across = {metric.name: metric for metric in ontology.metrics}  # metrics across models
         self._together: dict[tuple[str, ...], tuple[SemanticModel, dict]] = {}  # by the models' names
 
     @property
@@ -230,14 +231,51 @@ class SqlCompiler:
         return together
 
     def datasets_of(self, query: MetricQuery) -> dict[str, list[str]]:
-        """`query`'s metrics by the dataset their models read, in the order they're asked for. More
-        than one dataset makes the query a drill-across (the router's)."""
-        if unknown := [name for name in query.metrics if name not in self._model_of]:
-            raise QueryError(f"unknown metrics: {', '.join(unknown)}. Available: {', '.join(sorted(self._model_of))}")
+        """`query`'s metrics by the dataset their models read, in the order they're asked for (a
+        metric across models by its parts'). More than one dataset makes the query a drill-across."""
+        if unknown := [name for name in query.metrics if name not in self._model_of and name not in self._across]:
+            available = sorted([*self._model_of, *self._across])
+            raise QueryError(f"unknown metrics: {', '.join(unknown)}. Available: {', '.join(available)}")
         datasets: dict[str, list[str]] = {}
-        for name in query.metrics:
+        for name in self.expand(query).metrics:
             datasets.setdefault(self._model_of[name].source, []).append(name)
         return datasets
+
+    def across_metrics(self, query: MetricQuery) -> list:
+        """The metrics across models (ontology `metrics`) `query` asks for."""
+        return [self._across[name] for name in query.metrics if name in self._across]
+
+    def expand(self, query: MetricQuery) -> MetricQuery:
+        """`query` with each metric across models replaced by its two parts, and without ordering or
+        a limit, which come once they're divided (across_sql). `query` itself if it has none."""
+        if not self.across_metrics(query):
+            return query
+        parts = [part for name in query.metrics for part in ([self._across[name].numerator, self._across[name].denominator] if name in self._across else [name])]
+        return query.model_copy(update={"metrics": list(dict.fromkeys(parts)), "order_by": [], "limit": None})
+
+    def across_sql(self, query: MetricQuery, relation: str, time_dimension: str) -> str:
+        """DuckDB SQL computing `query`'s metrics across models from `relation`, the answer to
+        expand(query): numerator / denominator × scale, empty when the denominator is 0. Then the
+        query's ordering and limit."""
+        quote = self._adapter("duckdb").quote
+        keys = ([time_dimension] if query.grain else []) + query.dimensions
+        columns = [quote(k) for k in keys]
+        for name in query.metrics:
+            if (metric := self._across.get(name)) is not None:
+                ratio = f"CAST({quote(metric.numerator)} AS DOUBLE) / NULLIF({quote(metric.denominator)}, 0)"
+                columns.append(f"{ratio if metric.scale == 1 else f'{metric.scale!r} * {ratio}'} AS {quote(name)}")
+            else:
+                columns.append(quote(name))
+        selected = keys + list(query.metrics)
+        for key in query.order_by:
+            if key.field not in selected:
+                raise QueryError(f"cannot order by '{key.field}': it is not a selected column ({', '.join(selected)})")
+        order = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''}" for k in query.order_by or [OrderBy(field=k) for k in keys])
+        return (
+            f"SELECT {', '.join(columns)} FROM {relation}"
+            + (f" ORDER BY {order}" if order else "")
+            + (f" LIMIT {int(query.limit)}" if query.limit else "")
+        )
 
     def drill_across(self, query: MetricQuery) -> dict[str, tuple[MetricQuery, SemanticModel]]:
         """`query` as one query per dataset, with that dataset's metrics and all of `query`'s
@@ -306,6 +344,7 @@ class SqlCompiler:
 
     def time_dimension_for(self, query: MetricQuery) -> str:
         """The name of the time dimension `query`'s rows are bucketed by, a drill-across's included."""
+        query = self.expand(query)
         if len(self.datasets_of(query)) > 1:
             return next(iter(self.drill_across(query).values()))[1].time_dimension
         return self.model_for(query).time_dimension

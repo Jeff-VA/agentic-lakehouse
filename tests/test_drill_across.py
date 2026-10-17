@@ -56,7 +56,7 @@ def tickets_with(rows) -> DuckDBEngine:
 ALL_TICKETS = tickets_with(TICKETS)
 
 
-def router(flushed=FLUSHED) -> Router:
+def router(flushed=FLUSHED, compiler=COMPILER) -> Router:
     def placement(rows, engine_with, table):
         return Placement(
             realtime=Tier(engine_with([r for r in rows if r[0] >= REALTIME_FROM]), table),
@@ -66,7 +66,7 @@ def router(flushed=FLUSHED) -> Router:
         )
 
     placements = {"playback": placement(ROWS, duckdb_with, "playback"), "tickets": placement(TICKETS, tickets_with, "tickets")}
-    return Router(COMPILER, placements, clock=lambda: NOW)
+    return Router(compiler, placements, clock=lambda: NOW)
 
 
 def joined(q, start=None, end=None) -> list[dict]:
