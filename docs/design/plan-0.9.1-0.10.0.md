@@ -1,6 +1,6 @@
 # Plan: v0.9.1 (NULL ordering) and v0.10.0 (dimension links)
 
-Status: v0.9.1 shipped 2026-10-17; v0.10.0 next.
+Status: v0.9.1 shipped 2026-10-17; v0.10.0 built and verified live, awaiting review before release.
 Tracking: the checklists in each section.
 
 ## Where things stand
@@ -104,8 +104,8 @@ lookups:
   wiki's tier: large is 100,000 edits a week or more, medium 10,000 or more, small the rest. The
   lookup `wikis` adds `size_tier`. The first use: revert share and bursts per 10k edits by size tier.
 
-- [ ] Branch `feat/dimension-links`
-- [ ] Failing tests, shown before implementing:
+- [x] Branch `feat/dimension-links`
+- [x] Failing tests, shown before implementing:
   - inline lookup: the CASE per engine; exact answers split across tiers (counts, a distinct
     count, a percentile); keys and values with quotes; a missing key, with and without `missing:`
   - table lookup: rows read through a stand-in query function; a refresh swaps them; NULL before
@@ -114,10 +114,11 @@ lookups:
   - additive: an ontology without lookups compiles the same SQL as before
   - views, `FROM metrics` and drill-across can use attributes; the catalog lists them as
     dimensions, saying which lookup they come from
-- [ ] Implement: ontology (`Lookup`, `LookupAttribute`, `Ontology.lookups`, the compiled
+- [x] Implement: ontology (`Lookup`, `LookupAttribute`, `Ontology.lookups`, the compiled
   dimensions), loading and refresh (gateway), catalog
-- [ ] Verify live on wiki-pulse with the `wiki_sizes` step and the `wikis` lookup
-- [ ] Docs (README, architecture), then show the user, then release v0.10.0 and pin wiki-pulse
+- [x] Verify live on wiki-pulse with the `wiki_sizes` step and the `wikis` lookup
+- [x] Docs (README)
+- [ ] Show the user, then release v0.10.0, pin wiki-pulse, and add the `wikis` lookup to its ontology
 
 ## After these
 
@@ -129,3 +130,13 @@ lookups:
 - **Dashboards, then the github.io paper,** which the user writes and Claude helps with.
 - **A proposed separate session:** an `event_id` key on wiki-pulse's edits, plus a check for
   duplicate rows.
+
+## What v0.10.0's live check found (2026-10-17)
+
+- `gold.wiki_sizes` (the new wiki-pulse step): 327 wikis, 2 large, 23 medium, 302 small, over the
+  5 days of data so far. The lookup reads it in 0.1 s; its CASE has 327 branches and runs on Pinot
+  and Trino alike.
+- Edits by size tier over 30 hours, split across the tiers (distinct editors included), equal Pinot
+  answering alone, for every tier.
+- Bursts per 10,000 edits fall with wiki size: large 11.8, medium 6.9, small 3.7; news bursts are
+  almost all on the two large wikis (13 of 14).

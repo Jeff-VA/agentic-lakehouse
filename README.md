@@ -778,6 +778,38 @@ query can ask for the metrics of several models at once:
 In SQL, `FROM <model>` reads that model's dataset (with the other models over
 it), and `FROM metrics` reads them all, metrics across models included.
 
+### Lookups: dimension tables
+
+A lookup is a small table keyed by a dimension, listed in the ontology's
+optional top-level `lookups`. Every model with that dimension gains the
+lookup's attributes as dimensions, so they slice metrics like any other:
+
+```yaml
+lookups:
+  - name: wikis
+    description: Each Wikipedia's size, by its edits over the last 7 days.
+    key: wiki
+    table: gold.wiki_sizes      # a pipeline step's output; or `rows:` inline
+    refresh_minutes: 60
+    attributes:
+      - {name: size_tier, type: string, label: Wiki size, missing: unknown}
+```
+
+- **No joins.** An attribute compiles into the query as a `CASE` over the
+  key, built from the lookup's rows, so it's exact on both tiers and for every
+  aggregation, distinct counts and percentiles included.
+- **Rows** are inline, or read from a table: the gateway reads them before it
+  serves and every `refresh_minutes`, and a rollup reads the lookups it groups
+  or filters by before each run (skipping it, rather than writing empty
+  attributes, if it can't). A key the rows don't list gets `missing`, or an
+  empty value.
+- **The present, for all of history.** The rows describe today, so a wiki
+  that grew is counted in its new tier throughout (a type 1 slowly changing
+  dimension).
+- **Checked when the config loads:** at most 10,000 rows, unique keys, a key
+  some model has, and attribute names that aren't already a dimension or a
+  metric. `/catalog` marks each attribute with its lookup.
+
 ### Ingestion: exactly once, schema-tolerant
 
 [`agentic_lakehouse/flush.py`](agentic_lakehouse/flush.py) reads every message published before it
@@ -1117,8 +1149,8 @@ tests/              unit tests; tests/integration/ runs against the stack
   or month, or with more than 5,000 values since the last flush, are answered
   up to the last flush.
 - Models combine on dimensions they share (one dataset's models read together,
-  or a drill-across), not by joining rows: there are no lookup (dimension)
-  tables yet.
+  or a drill-across), not by joining rows. Lookups add attributes of up to
+  10,000 keys, as they are now; there's no history of past values (type 2).
 - The stack is set up for local use: the credentials are placeholders, and the
   API has no authentication.
 
