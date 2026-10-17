@@ -1,6 +1,6 @@
 [project]
 name = "agentic-lakehouse"
-version = "0.9.1"
+version = "0.10.0"
 description = "An AI-first lakehouse: metrics defined once over Kafka, Pinot and Iceberg, served live to dashboards and AI agents."
 readme = "README.md"
 license = "LicenseRef-All-Rights-Reserved"  # see LICENSE: public to read, no rights granted
