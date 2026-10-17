@@ -6,7 +6,10 @@ events to Iceberg and, in the same Iceberg commit, records:
 - the Kafka offsets read up to (table property agentic-lakehouse.kafka-offsets). The next
   flush resumes exactly there. Keeping offsets in Iceberg rather than in a
   Kafka consumer group means a crash between writing rows and saving offsets
-  can't load a batch twice: both happen in one commit, or neither does.
+  can't load a batch twice: both happen in one commit, or neither does. Two
+  flushes that start together (Prefect starts every run it missed when a
+  sleeping laptop wakes) both read the same offsets; the first to commit
+  wins, and the other finds the offsets moved on and stops (_commit_ours).
 - the flush watermark (agentic-lakehouse.flushed-through): Iceberg now holds every event
   older than this, the newest event flushed so far (or the flush's start, if
   earlier) minus the allowed lateness. It follows event time, not the clock,
@@ -27,6 +30,7 @@ from datetime import datetime, timedelta
 
 import pyarrow as pa
 from confluent_kafka import Consumer, KafkaException, TopicPartition
+from pyiceberg.exceptions import CommitFailedException
 from pyiceberg.table import Table
 from pyiceberg.types import BooleanType, DoubleType, IcebergType, StringType
 
@@ -35,6 +39,9 @@ from agentic_lakehouse.orchestrator import FLUSHED_THROUGH
 
 OFFSETS = "agentic-lakehouse.kafka-offsets"  # JSON {partition: next offset to read}
 NEWEST = "agentic-lakehouse.newest-event"  # the newest event time flushed so far (ISO, naive UTC)
+# pyiceberg (from 0.12) re-applies an append that lost a race on top of the winner's commit, which
+# would load the same events twice. The flush settles races itself (_commit_ours), so it sets this to 0.
+LIBRARY_RETRIES = "commit.retry.num-retries"
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -48,6 +55,11 @@ class FlushResult:
     events: int
     watermark: datetime | None  # None until the first event is flushed
     new_columns: dict[str, str] = field(default_factory=dict)  # name -> Iceberg type
+    overtaken: bool = False  # another flush committed these events first, so this one stopped
+
+
+class _Overtaken(Exception):
+    """Another flush moved the table's offsets on from the ones this flush started from."""
 
 
 def flush(
@@ -67,9 +79,11 @@ def flush(
     consumer-group offsets). Events are committed in batches of `batch_size`
     events or about `batch_bytes` of JSON, whichever comes first, so a large
     backlog of wide events fits in memory; the watermark only moves with the
-    last batch. `now` is naive UTC.
+    last batch. `now` is naive UTC. If another flush commits these events first, this one stops
+    without writing them, and says so (`overtaken`).
     """
     topic = dataset.topic
+    _no_library_retries(table)
     start = json.loads(table.properties.get(OFFSETS, "{}"))
     partitions = sorted(consumer.list_topics(topic, timeout=timeout).topics[topic].partitions)
     ends, positions = {}, {}
@@ -86,9 +100,9 @@ def flush(
         ends[partition], positions[partition] = high, position
     consumer.assign([TopicPartition(topic, p, positions[p]) for p in partitions])
 
-    previous = table.properties.get(FLUSHED_THROUGH)
-    result = FlushResult(events=0, watermark=datetime.fromisoformat(previous) if previous else None)
+    result = FlushResult(events=0, watermark=_flushed_through(table))
     newest = datetime.fromisoformat(table.properties[NEWEST]) if NEWEST in table.properties else None
+    committed = start  # the offsets Iceberg holds, as far as this flush knows
     while True:
         events = _read(consumer, positions, ends, batch_size, batch_bytes, timeout)
         done = all(positions[p] >= ends[p] for p in partitions)
@@ -97,20 +111,57 @@ def flush(
             properties = {OFFSETS: json.dumps({str(p): o for p, o in positions.items()})}
             if newest is not None:
                 properties[NEWEST] = newest.isoformat()
+            watermark = None
             if done and newest is not None:
                 # Never ahead of the clock (a producer's skewed clock), never back from the last flush
-                result.watermark = _watermark(table, min(now, newest) - lateness)
-                properties[FLUSHED_THROUGH] = result.watermark.isoformat()
-            new_columns = _commit(table, events, properties)
+                watermark = _watermark(table, min(now, newest) - lateness)
+                properties[FLUSHED_THROUGH] = watermark.isoformat()
+            try:
+                new_columns = _commit_ours(table, events, properties, committed)
+            except _Overtaken:
+                # These events are in Iceberg already; the next flush goes on from where the other stopped.
+                result.watermark, result.overtaken = _flushed_through(table), True
+                return result
+            committed = json.loads(properties[OFFSETS])
+            result.watermark = watermark or result.watermark
             result.events += len(events)
             result.new_columns.update(new_columns)
         if done:
             return result
 
 
-def _watermark(table: Table, candidate: datetime) -> datetime:
+def _flushed_through(table: Table) -> datetime | None:
     previous = table.properties.get(FLUSHED_THROUGH)
-    return max(candidate, datetime.fromisoformat(previous)) if previous else candidate
+    return datetime.fromisoformat(previous) if previous else None
+
+
+def _watermark(table: Table, candidate: datetime) -> datetime:
+    previous = _flushed_through(table)
+    return max(candidate, previous) if previous else candidate
+
+
+def _no_library_retries(table: Table) -> None:
+    """Have a commit that loses a race fail, for _commit_ours to settle, rather than pyiceberg
+    re-applying it on top of the winner's. It's a table property, where pyiceberg (and Java
+    Iceberg) read it, so it's set once."""
+    if table.properties.get(LIBRARY_RETRIES) != "0":
+        with table.transaction() as transaction:
+            transaction.set_properties({LIBRARY_RETRIES: "0"})
+
+
+def _commit_ours(table: Table, events: list[dict], properties: dict[str, str], expected: dict) -> dict[str, str]:
+    """_commit(), as long as the table's offsets are still `expected`: the ones this flush started
+    from, or last committed. When a commit loses a race: if another flush won it, the offsets
+    have moved on and this raises _Overtaken; if something else did (a clean-up deleting rows,
+    say), it commits again on top."""
+    for _ in range(3):
+        try:
+            return _commit(table, events, properties)
+        except CommitFailedException:
+            table.refresh()
+            if json.loads(table.properties.get(OFFSETS, "{}")) != expected:
+                raise _Overtaken from None
+    raise FlushError("the table changed under three commits in a row; nothing was committed")
 
 
 def _newest(events: list[dict], time_column: str) -> datetime | None:

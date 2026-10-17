@@ -141,6 +141,41 @@ def test_later_flushes_pick_up_where_the_last_stopped(table):
     assert [r["session_id"] for r in rows(table)] == ["s0", "s1", "s2"]
 
 
+def test_flushes_started_together_load_each_event_once(table):
+    """A laptop that sleeps wakes for a few seconds every quarter hour, and Prefect then starts
+    every flush it missed at once. Each loads the table before any has committed, so all of them
+    start from the same offsets: only one may append those events."""
+    run_flush(table, {0: [event(0)]})  # a table the flush has been keeping current
+    published = {0: [event(0), event(1), event(2)]}
+    started = [table.catalog.load_table("raw.telemetry") for _ in range(3)]  # all at the same snapshot
+    results = [run_flush(each, published) for each in started]
+
+    assert [r["session_id"] for r in rows(table)] == ["s0", "s1", "s2"]
+    assert json.loads(table.properties[OFFSETS]) == {"0": 3}
+    assert [(r.events, r.overtaken) for r in results] == [(2, False), (0, True), (0, True)]
+
+
+def test_a_flush_that_was_overtaken_leaves_newer_events_for_the_next(table):
+    run_flush(table, {0: [event(0)]})
+    late = table.catalog.load_table("raw.telemetry")
+    run_flush(table, {0: [event(0), event(1)]})
+    assert run_flush(late, {0: [event(0), event(1), event(2)]}).overtaken  # writes nothing, s2 included
+    run_flush(table, {0: [event(0), event(1), event(2)]})
+    assert [r["session_id"] for r in rows(table)] == ["s0", "s1", "s2"]
+
+
+def test_a_commit_that_lost_a_race_to_another_writer_is_made_again_on_top(table):
+    """Something other than a flush (a clean-up deleting rows, say) also makes the flush's commit
+    fail; the offsets are still the ones it started from, so it commits again."""
+    run_flush(table, {0: [event(0)]})
+    flushing = table.catalog.load_table("raw.telemetry")
+    table.delete("session_id = 's0'")
+    result = run_flush(flushing, {0: [event(0), event(1), event(2)]})
+
+    assert (result.events, result.overtaken) == (2, False)
+    assert [r["session_id"] for r in rows(table)] == ["s1", "s2"]
+
+
 def test_events_published_during_a_flush_wait_for_the_next(table):
     result = run_flush(table, {0: [event(0)]}, late={0: [event(1)]})
     assert result.events == 1

@@ -39,6 +39,8 @@ def flush_dataset(config_dir: str, dataset_name: str) -> dict:
         dataset_name, result.events, settings.table,
         f"{result.watermark:%Y-%m-%d %H:%M:%S}" if result.watermark else "nothing yet",
     )
+    if result.overtaken:
+        logger.warning("%s: another flush committed these events first, so this one stopped", dataset_name)
     if result.new_columns:
         logger.warning("%s: new event fields added as Iceberg columns: %s", dataset_name, result.new_columns)
     return asdict(result)
