@@ -882,7 +882,14 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
 
     @mcp.tool(annotations=read_only)
     def query_metrics(
-        metrics: Annotated[list[str], Field(description="Metric names from list_metrics, all from the same model")],
+        metrics: Annotated[
+            list[str],
+            Field(
+                description="Metric names from list_metrics, of any models: models over one dataset are read "
+                "together; metrics of different datasets are joined on the dimensions they all have; and "
+                "metrics_across_models are computed from their parts"
+            ),
+        ],
         start: Annotated[datetime, Field(description="Start of the time range, inclusive. ISO 8601; UTC if no offset")],
         end: Annotated[datetime, Field(description="End of the time range, exclusive")],
         dimensions: Annotated[list[str] | None, Field(description="Dimensions to group by")] = None,

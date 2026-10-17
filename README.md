@@ -253,7 +253,7 @@ or both, and reports what the answer covers.
 
 | Field | |
 |---|---|
-| `metrics` | required: metric names from `/catalog`, all from one model |
+| `metrics` | required: metric names from `/catalog`, of any models (see [Queries across models](#queries-across-models)) |
 | `start`, `end` | required: the range `[start, end)` in ISO 8601; no offset means UTC |
 | `dimensions` | group by these |
 | `grain` | also group by time: `minute`, `hour`, `day`, `week` or `month` |
@@ -434,7 +434,8 @@ source.addEventListener("reload", () => location.reload());
 
 SQL without a view file. It runs the way a view does (see [Views](#views)),
 with the same checks and the same result: read a model by name to get its
-metrics live across both tiers, or tables as `namespace.table` with any Trino
+metrics live across both tiers, `FROM metrics` for any model's (across
+datasets), or tables as `namespace.table` with any Trino
 SELECT. `GET` takes the SQL URL-encoded in `q`, for clients that can only
 `GET`, such as DuckDB. `POST` takes it in a JSON body.
 
@@ -741,10 +742,41 @@ Pinot keeps the last 7 days. Iceberg holds everything up to the flush
 | ends before the watermark | Trino over Iceberg |
 | spans both, with a time grain | split at a bucket boundary: each bucket comes from one tier, so every metric is exact |
 | spans both, only counts / sums / averages / ratios | each tier returns partial aggregates (an average becomes a sum and a count), merged in DuckDB |
-| spans both, with percentiles or distinct counts | Trino up to the watermark, with a note in the result that the newest data isn't included |
+| spans both, with percentiles or distinct counts | partial aggregates as above, and Pinot lists its values from the minutes since the flush: Trino counts how many of them it saw too (distinct counts, exact), and gives its distribution as a grid of quantiles to read percentiles off with them (approximate, as Trino's are) |
+| spans both, with percentiles or distinct counts by week or month, or more than 5,000 new values | Trino up to the watermark, with a note in the result that the newest data isn't included |
 
 Results always carry the range they cover, the SQL each tier ran, and notes,
 so neither a person nor an agent mistakes a partial answer for a complete one.
+
+### Queries across models
+
+Several models can read one dataset, each a lens on the same rows, and a
+query can ask for the metrics of several models at once:
+
+- **Models over one dataset** are read as one: their metrics side by side,
+  and any of their dimensions slicing any of their metrics. A dimension two
+  of them define differently is refused when a query mixing them asks for it.
+- **Models over different datasets** are drilled across: each dataset's
+  metrics are routed on their own, then joined on the dimensions every
+  dataset has (and the time buckets), keeping every group. Counts a dataset
+  lacks a group for are 0, its other metrics empty; every part answers for
+  the same range.
+- **Metrics across models** are ratios of any two models' metrics, listed in
+  the ontology's optional top-level `metrics`, and in `/catalog` under
+  `metrics_across_models`:
+
+  ```yaml
+  metrics:
+    - name: bursts_per_10k_edits
+      type: ratio
+      description: Bursts flagged per 10,000 edits.
+      numerator: bursts        # a model over trends
+      denominator: edit_count  # a model over edits
+      scale: 10000
+  ```
+
+In SQL, `FROM <model>` reads that model's dataset (with the other models over
+it), and `FROM metrics` reads them all, metrics across models included.
 
 ### Ingestion: exactly once, schema-tolerant
 
@@ -1081,10 +1113,12 @@ tests/              unit tests; tests/integration/ runs against the stack
 
 ## Limitations
 
-- Percentiles and distinct counts over a range that spans both tiers are
-  answered up to the last flush. Mergeable sketches (e.g. KLL, HLL) would lift
-  this.
-- A query reads one model at a time; there are no joins across models.
+- Percentiles and distinct counts over a range that spans both tiers, by week
+  or month, or with more than 5,000 values since the last flush, are answered
+  up to the last flush.
+- Models combine on dimensions they share (one dataset's models read together,
+  or a drill-across), not by joining rows: there are no lookup (dimension)
+  tables yet.
 - The stack is set up for local use: the credentials are placeholders, and the
   API has no authentication.
 
