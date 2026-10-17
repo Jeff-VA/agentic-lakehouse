@@ -16,6 +16,6 @@ GROUP BY
   client_isp,
   CASE WHEN client_device IN ('ios', 'android') THEN TRUE ELSE FALSE END
 ORDER BY
-  "event_ts",
-  "isp_provider",
-  "is_mobile_device"
+  "event_ts" NULLS LAST,
+  "isp_provider" NULLS LAST,
+  "is_mobile_device" NULLS LAST

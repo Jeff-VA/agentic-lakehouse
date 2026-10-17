@@ -270,7 +270,7 @@ class SqlCompiler:
         for key in query.order_by:
             if key.field not in selected:
                 raise QueryError(f"cannot order by '{key.field}': it is not a selected column ({', '.join(selected)})")
-        order = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''}" for k in query.order_by or [OrderBy(field=k) for k in keys])
+        order = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''} NULLS LAST" for k in query.order_by or [OrderBy(field=k) for k in keys])
         return (
             f"SELECT {', '.join(columns)} FROM {relation}"
             + (f" ORDER BY {order}" if order else "")
@@ -335,7 +335,7 @@ class SqlCompiler:
             source = f"({every_group}) AS keys {joins}"
         else:  # no dimension, no grain: one row each
             source = ", ".join(relation for relation, _ in parts)
-        order_sql = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''}" for k in order)
+        order_sql = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''} NULLS LAST" for k in order)
         return (
             f"SELECT {', '.join(columns)} FROM {source}"
             + (f" ORDER BY {order_sql}" if order_sql else "")

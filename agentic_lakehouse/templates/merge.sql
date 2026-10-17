@@ -14,7 +14,7 @@ GROUP BY {{ group_by | join(", ") }}
 {% if order_by %}
 ORDER BY
 {% for key in order_by %}
-  {{ adapter.quote(key.field) }}{{ " DESC" if key.descending else "" }}{{ "," if not loop.last else "" }}
+  {{ adapter.quote(key.field) }}{{ " DESC" if key.descending else "" }} NULLS LAST{{ "," if not loop.last else "" }}
 {% endfor %}
 {% endif %}
 {{ adapter.limit(limit) }}
