@@ -92,12 +92,23 @@ def field_spec(text: str) -> tuple[str, str]:
 
 
 def run_then_serve(flow, name: str, interval: timedelta, config_dir: str) -> None:
-    """Run a Prefect flow now, then on a schedule: a fresh install shouldn't wait a whole interval."""
+    """Run a Prefect flow now, then on a schedule: a fresh install shouldn't wait a whole interval.
+
+    One run at a time, across every process serving it: a run that comes due while another is
+    going is cancelled, not queued. When a sleeping laptop wakes, Prefect would otherwise start
+    every run it missed at once, and each run covers everything since the last anyway."""
+    from prefect.client.schemas.objects import ConcurrencyLimitConfig, ConcurrencyLimitStrategy  # after PREFECT_API_URL is set
+
     try:
         flow(config_dir=config_dir)
     except Exception as e:  # the failed run shows in the Prefect UI; the schedule still starts
         print(f"{name}: first run failed: {e}")
-    flow.serve(name=name, interval=interval, parameters={"config_dir": config_dir})
+    flow.serve(
+        name=name,
+        interval=interval,
+        parameters={"config_dir": config_dir},
+        global_limit=ConcurrencyLimitConfig(limit=1, collision_strategy=ConcurrencyLimitStrategy.CANCEL_NEW),
+    )
 
 
 def main() -> None:
