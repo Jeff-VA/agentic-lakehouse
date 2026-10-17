@@ -1,6 +1,6 @@
 # Plan: v0.9.1 (NULL ordering) and v0.10.0 (dimension links)
 
-Status: v0.9.1 shipped 2026-10-17; v0.10.0 built and verified live, awaiting review before release.
+Status: shipped: v0.9.1 and v0.10.0, 2026-10-17. wiki-pulse runs on v0.10.0 with the `wikis` lookup.
 Tracking: the checklists in each section.
 
 ## Where things stand
@@ -12,7 +12,7 @@ Tracking: the checklists in each section.
   of different datasets are drilled across, the ontology may list metrics across models (ratios),
   and SQL `FROM metrics` reads every model. `FROM <model>` reads its dataset, as before
   (README, "Queries across models").
-- **wiki-pulse** runs on v0.9.0, from `~/code/wiki-pulse`, with the Docker stack up.
+- **wiki-pulse** ran on v0.9.0 when this was planned, from `~/code/wiki-pulse`, with the Docker stack up.
 
 ## How we work
 
@@ -118,7 +118,7 @@ lookups:
   dimensions), loading and refresh (gateway), catalog
 - [x] Verify live on wiki-pulse with the `wiki_sizes` step and the `wikis` lookup
 - [x] Docs (README)
-- [ ] Show the user, then release v0.10.0, pin wiki-pulse, and add the `wikis` lookup to its ontology
+- [x] Show the user, then release v0.10.0, pin wiki-pulse, and add the `wikis` lookup to its ontology
 
 ## After these
 
