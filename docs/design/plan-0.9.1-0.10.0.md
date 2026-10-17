@@ -1,6 +1,6 @@
 # Plan: v0.9.1 (NULL ordering) and v0.10.0 (dimension links)
 
-Status: planned 2026-10-17; v0.9.1 first, then v0.10.0.
+Status: v0.9.1 shipped 2026-10-17; v0.10.0 next.
 Tracking: the checklists in each section.
 
 ## Where things stand
@@ -47,14 +47,14 @@ engine generates:
 Trino and DuckDB already sort NULLs last, so only Pinot's answers change. The SQL text changes
 everywhere, golden files included (`tests/golden/sample_query.*.sql`).
 
-- [ ] Branch `fix/null-ordering`
-- [ ] Failing tests: every engine's compiled SQL says `NULLS LAST` for ascending and descending
+- [x] Branch `fix/null-ordering`
+- [x] Failing tests: every engine's compiled SQL says `NULLS LAST` for ascending and descending
   keys, and so do the merge, drill-across and across-models SQL. On DuckDB, a query ordered by a
   metric that's NULL for some groups puts those groups last, both ways.
-- [ ] Fix the templates and the two SQL builders; update the golden files
-- [ ] Check that Pinot's multi-stage engine accepts `NULLS LAST` (live)
-- [ ] Verify live: the query above leads with the wikis that added the most
-- [ ] Release v0.9.1, pin wiki-pulse, rebuild, push
+- [x] Fix the templates and the two SQL builders; update the golden files
+- [x] Check that Pinot's multi-stage engine accepts `NULLS LAST` (live)
+- [x] Verify live: the query above leads with the wikis that added the most
+- [x] Release v0.9.1, pin wiki-pulse, rebuild, push
 
 ## v0.10.0: dimension links (lookup tables)
 
