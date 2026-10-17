@@ -85,6 +85,7 @@ from agentic_lakehouse.ontology import (
     SemanticModel,
     StrictModel,
     display_format,
+    models_together,
     words,
 )
 
@@ -521,8 +522,11 @@ def _model_source(
         )
     table = select.args["from_"].this
     qualifiers = {model.name, table.alias_or_name}
-    dimensions = {d.name: d for d in model.dimensions}
-    metrics = {m.name: m for m in model.metrics}
+    # The FROM model's metrics and dimensions, then those of the other models over its dataset: lenses
+    # on the same rows. Its own definitions win; the compile below refuses a dimension two models define differently.
+    lenses = models_together([model], lenses)[0] if (lenses := ontology.lenses_of(model)) else model
+    dimensions = {d.name: d for d in lenses.dimensions}
+    metrics = {m.name: m for m in lenses.metrics}
     time = model.time_dimension
     choices = (
         f"Metrics: {', '.join(metrics)}. Dimensions: {', '.join(d for d in dimensions if d != time)}; "

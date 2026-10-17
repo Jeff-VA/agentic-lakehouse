@@ -243,6 +243,11 @@ class Ontology(StrictModel):
         """The SQL macros this ontology compiles with: its project's over the engine's."""
         return self._macros or NO_PROJECT_MACROS
 
+    def lenses_of(self, model: SemanticModel) -> list[SemanticModel]:
+        """The other models over `model`'s dataset that keep time as it does: lenses on the same rows,
+        whose metrics and dimensions combine with its own (models_together)."""
+        return [m for m in self.models if m.name != model.name and m.source == model.source and _time_key(m) == _time_key(model)]
+
     @model_validator(mode="after")
     def _check_unique_names(self) -> Self:
         index_by_name(self.models, "model", "ontology")
@@ -256,6 +261,46 @@ class Ontology(StrictModel):
                     )
                 owner[metric.name] = model.name
         return self
+
+
+def _time_key(model: SemanticModel) -> tuple:
+    time = next(d for d in model.dimensions if d.name == model.time_dimension)
+    return model.time_dimension, time.expr
+
+
+def models_together(primary: list[SemanticModel], others: list[SemanticModel] = ()) -> tuple[SemanticModel, dict[str, tuple[str, ...]]]:
+    """Models over the same dataset as one: every lens on the same rows, so their metrics and
+    dimensions combine in one query. `primary` are the models asked for (a query's metrics', or a
+    view's FROM); `others`, the rest over the dataset, add the metrics and dimensions they don't have.
+    Returns the combined model and its ambiguous dimensions, by name: those defined differently by
+    two models of the same group, with their models. A primary model's definition always wins over
+    another model's, so a model asked for alone means what it always did."""
+    first = primary[0]
+    dimensions: dict[str, Dimension] = {}
+    ambiguous: dict[str, tuple[str, ...]] = {}
+    for group in (primary, others):
+        found: dict[str, list[tuple[str, Dimension]]] = {}
+        for model in group:
+            for dimension in model.dimensions:
+                found.setdefault(dimension.name, []).append((model.name, dimension))
+        for name, definitions in found.items():
+            if name in dimensions or name in ambiguous:
+                continue
+            if len({(d.type, d.expr) for _, d in definitions}) > 1:
+                ambiguous[name] = tuple(dict.fromkeys(model for model, _ in definitions))
+            else:
+                dimensions[name] = definitions[0][1]
+    metrics = list({m.name: m for model in (*primary, *others) for m in model.metrics}.values())
+    names = [m.name for m in (*primary, *others)]
+    together = SemanticModel(
+        name="__".join(names),  # an identifier, as model names are
+        description=f"Models {', '.join(names)} together: the same {first.source} rows.",
+        source=first.source,
+        time_dimension=first.time_dimension,
+        dimensions=[d for name, d in dimensions.items() if name not in {m.name for m in metrics}],
+        metrics=metrics,
+    )
+    return together, ambiguous
 
 
 def load_ontology(path: str | Path) -> Ontology:

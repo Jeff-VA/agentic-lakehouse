@@ -32,6 +32,7 @@ from agentic_lakehouse.ontology import (
     Ontology,
     SemanticModel,
     StrictModel,
+    models_together,
     parse_fragment,
 )
 
@@ -188,6 +189,7 @@ class SqlCompiler:
     def __init__(self, ontology: Ontology):
         self.ontology = ontology
         self._model_of = {metric.name: model for model in ontology.models for metric in model.metrics}
+        self._together: dict[tuple[str, ...], tuple[SemanticModel, dict]] = {}  # by the models' names
 
     @property
     def _macros(self):
@@ -199,13 +201,33 @@ class SqlCompiler:
         return self.ontology.macros.env
 
     def model_for(self, query: MetricQuery) -> SemanticModel:
-        """The model the query's metrics belong to. Raises QueryError if they don't share one."""
+        """The model the query reads: its metrics' model, as it always was; or, when they come from
+        several models over one dataset, or it asks for a dimension only another model over the
+        dataset has, those models together (models_together). Raises QueryError if its metrics come
+        from models over different datasets, or a dimension it asks for means different things in
+        the models its metrics come from."""
         if unknown := [name for name in query.metrics if name not in self._model_of]:
             raise QueryError(f"unknown metrics: {', '.join(unknown)}. Available: {', '.join(sorted(self._model_of))}")
-        models = sorted({self._model_of[name].name for name in query.metrics})
-        if len(models) > 1:
-            raise QueryError(f"metrics come from different models ({', '.join(models)}); query one model at a time")
-        return self._model_of[query.metrics[0]]
+        models = list({self._model_of[name].name: self._model_of[name] for name in query.metrics}.values())
+        lenses = {m.name for model in models[:1] for m in self.ontology.lenses_of(model)}
+        if len(models) > 1 and not {m.name for m in models[1:]} <= lenses:
+            raise QueryError(f"metrics come from different models ({', '.join(sorted(m.name for m in models))}); query one model at a time")
+        asked = [*query.dimensions, *(f.dimension for f in query.filters)]
+        if len(models) == 1:
+            own = {d.name for d in models[0].dimensions}
+            elsewhere = {d.name for m in self.ontology.lenses_of(models[0]) for d in m.dimensions}
+            if all(name in own or name not in elsewhere for name in asked):
+                return models[0]  # an unknown dimension is reported against it, as before
+        names = tuple(m.name for m in models)
+        if names not in self._together:
+            self._together[names] = models_together(models, [m for m in self.ontology.lenses_of(models[0]) if m.name not in names])
+        together, ambiguous = self._together[names]
+        if clash := next((name for name in asked if name in ambiguous), None):
+            raise QueryError(
+                f"'{clash}' means different things in models {' and '.join(ambiguous[clash])}: ask for it with metrics "
+                "of one of them, or give the other's dimension its own name"
+            )
+        return together
 
     def unmergeable_metrics(self, query: MetricQuery) -> list[str]:
         """Requested metrics whose results from two tiers can't be combined (percentiles, distinct counts)."""
