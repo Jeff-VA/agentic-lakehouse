@@ -495,8 +495,8 @@ class Gateway:
         result, rows, notes, truncated = self._run(
             query, "narrow the query with filters, a coarser grain or fewer dimensions, or set order_by and limit for a top-N"
         )
-        model = self.router.compiler.model_for(query)
-        columns = [ResultColumn(name=model.time_dimension, role="time")] if query.grain else []
+        time = self.router.compiler.time_dimension_for(query)  # a drill-across's too
+        columns = [ResultColumn(name=time, role="time")] if query.grain else []
         columns += [ResultColumn(name=d, role="dimension") for d in query.dimensions]
         columns += [ResultColumn(name=m, role="metric") for m in query.metrics]
         return QueryResponse(

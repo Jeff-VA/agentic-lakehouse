@@ -229,6 +229,87 @@ class SqlCompiler:
             )
         return together
 
+    def datasets_of(self, query: MetricQuery) -> dict[str, list[str]]:
+        """`query`'s metrics by the dataset their models read, in the order they're asked for. More
+        than one dataset makes the query a drill-across (the router's)."""
+        if unknown := [name for name in query.metrics if name not in self._model_of]:
+            raise QueryError(f"unknown metrics: {', '.join(unknown)}. Available: {', '.join(sorted(self._model_of))}")
+        datasets: dict[str, list[str]] = {}
+        for name in query.metrics:
+            datasets.setdefault(self._model_of[name].source, []).append(name)
+        return datasets
+
+    def drill_across(self, query: MetricQuery) -> dict[str, tuple[MetricQuery, SemanticModel]]:
+        """`query` as one query per dataset, with that dataset's metrics and all of `query`'s
+        dimensions, filters, grain and range, and the model it reads. Raises QueryError unless every
+        dataset's model has each dimension asked for, with one type, and, with a grain, names time alike."""
+        parts = {}
+        for dataset, metrics in self.datasets_of(query).items():
+            part = query.model_copy(update={"metrics": metrics, "order_by": [], "limit": None})
+            parts[dataset] = (part, self.model_for(part))
+        models = [model for _, model in parts.values()]
+        for name in dict.fromkeys([*query.dimensions, *(f.dimension for f in query.filters)]):
+            found = {m.name: next((d for d in m.dimensions if d.name == name and name != m.time_dimension), None) for m in models}
+            if missing := [model for model, d in found.items() if d is None]:
+                raise QueryError(
+                    f"'{name}' isn't a dimension of every dataset's models: {', '.join(missing)} hasn't one. Metrics "
+                    "of different datasets are joined on dimensions they all have"
+                )
+            if len({d.type for d in found.values()}) > 1:
+                (first, a), *others = found.items()
+                raise QueryError(f"'{name}' is a {a.type} in {first} but " + ", ".join(f"a {d.type} in {m}" for m, d in others))
+        if query.grain and len({m.time_dimension for m in models}) > 1:
+            first, *others = models
+            raise QueryError(
+                f"metrics of different datasets are joined by time: {first.name}'s is {first.time_dimension}, "
+                + ", ".join(f"{m.name}'s {m.time_dimension}" for m in others)
+                + ", so they can't be bucketed together; leave out the grain, or name time alike"
+            )
+        return parts
+
+    def drill_across_sql(self, query: MetricQuery, parts: list[tuple[str, list[str]]], time_dimension: str) -> str:
+        """DuckDB SQL joining a drill-across's answers, each a relation with its metrics (`parts`), on
+        the query's time buckets (`time_dimension`) and dimensions: every group any of them has,
+        outer. Counts a part lacks the group for are 0, as one query over no rows answers; its other
+        metrics, NULL. Then `query`'s ordering and limit."""
+        quote = self._adapter("duckdb").quote
+        keys = ([time_dimension] if query.grain else []) + query.dimensions
+        columns = [f"keys.{quote(k)} AS {quote(k)}" for k in keys]
+        for relation, names in parts:
+            for name in names:
+                metric = next(m for m in self._model_of[name].metrics if m.name == name)
+                value = f"{relation}.{quote(name)}"
+                if isinstance(metric, AggregateMetric) and metric.agg in ("count", "count_distinct"):
+                    value = f"COALESCE({value}, 0)"
+                columns.append(f"{value} AS {quote(name)}")
+        selected = keys + list(query.metrics)
+        for key in query.order_by:
+            if key.field not in selected:
+                raise QueryError(f"cannot order by '{key.field}': it is not a selected column ({', '.join(selected)})")
+        order = query.order_by or [OrderBy(field=k) for k in keys]
+        if keys:
+            names = ", ".join(quote(k) for k in keys)
+            every_group = " UNION ".join(f"SELECT {names} FROM {relation}" for relation, _ in parts)
+            joins = " ".join(
+                f"LEFT JOIN {relation} ON " + " AND ".join(f"{relation}.{quote(k)} IS NOT DISTINCT FROM keys.{quote(k)}" for k in keys)
+                for relation, _ in parts
+            )
+            source = f"({every_group}) AS keys {joins}"
+        else:  # no dimension, no grain: one row each
+            source = ", ".join(relation for relation, _ in parts)
+        order_sql = ", ".join(f"{quote(k.field)}{' DESC' if k.descending else ''}" for k in order)
+        return (
+            f"SELECT {', '.join(columns)} FROM {source}"
+            + (f" ORDER BY {order_sql}" if order_sql else "")
+            + (f" LIMIT {int(query.limit)}" if query.limit else "")
+        )
+
+    def time_dimension_for(self, query: MetricQuery) -> str:
+        """The name of the time dimension `query`'s rows are bucketed by, a drill-across's included."""
+        if len(self.datasets_of(query)) > 1:
+            return next(iter(self.drill_across(query).values()))[1].time_dimension
+        return self.model_for(query).time_dimension
+
     def unmergeable_metrics(self, query: MetricQuery) -> list[str]:
         """Requested metrics whose results from two tiers can't be combined (percentiles, distinct counts)."""
         metrics = {m.name: m for m in self.model_for(query).metrics}

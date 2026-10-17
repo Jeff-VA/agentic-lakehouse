@@ -143,6 +143,8 @@ class Router:
         return cls(SqlCompiler(platform.ontology), placements)
 
     def run(self, query: MetricQuery) -> QueryResult:
+        if len(self.compiler.datasets_of(query)) > 1:
+            return self._drill_across(query)
         model = self.compiler.model_for(query)
         placement = self.placements.get(model.source)
         if placement is None:
@@ -177,6 +179,32 @@ class Router:
             f"grain or start after {realtime_from:%Y-%m-%d %H:%M} UTC to include the latest data."
         )
         return result
+
+    def _drill_across(self, query: MetricQuery) -> QueryResult:
+        """A query whose metrics come from models over different datasets: each dataset's part is
+        routed on its own, like any query, and their answers are joined on the query's dimensions and
+        time buckets (SqlCompiler.drill_across_sql). Every part answers for the same range: one that
+        covers more than another is asked again for the narrower range, so no row mixes two."""
+        parts = self.compiler.drill_across(query)
+        results = {dataset: self.run(part) for dataset, (part, _) in parts.items()}
+        start, end = max(r.start for r in results.values()), min(r.end for r in results.values())
+        narrowed = []
+        for dataset, result in results.items():
+            if (result.start, result.end) != (start, end):
+                part = parts[dataset][0]
+                results[dataset] = self.run(part.model_copy(update={"start": start, "end": end}))
+                narrowed += part.metrics
+        notes = [note for result in results.values() for note in result.notes]
+        if narrowed:
+            notes.append(f"{', '.join(narrowed)}: answered from {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC too, so every row covers one range")
+
+        con, sql, relations = duckdb.connect(), {}, []
+        for i, (dataset, result) in enumerate(results.items()):
+            con.register(f"part_{i}", result.table)
+            relations.append((f"part_{i}", parts[dataset][0].metrics))
+            sql |= {f"{dataset}: {label}": text for label, text in result.sql.items()}
+        sql["join"] = self.compiler.drill_across_sql(query, relations, next(iter(parts.values()))[1].time_dimension)
+        return QueryResult(plain_types(con.execute(sql["join"]).to_arrow_table()), start, end, sql, list(dict.fromkeys(notes)))
 
     def _single(self, query: MetricQuery, tier: Tier, label: str, snapshot: int | None = None) -> QueryResult:
         sql = self.compiler.compile(query, engine=tier.engine.name, table=tier.table)
