@@ -208,7 +208,41 @@ def test_a_column_with_too_many_values_to_be_categories_is_not_watched(stream, t
     stream.publish([at(170 + i / 100, session_id=f"new-{i % 201}") for i in range(1005)])  # 201 values, 5 events each
     report, _ = detect_drift("telemetry", platform, stream.table, now=NOW)
     assert report.signals == []
-    assert "new values not watched in session_id: 201 different values in the last 24 hours" in report.notes
+    assert "new values not watched in session_id: more than 200 different values in the last 24 hours" in report.notes
+
+
+def test_free_text_stops_being_counted_once_it_cant_be_categories(stream, tmp_path, monkeypatch):
+    """Counting every value of a free-text column held them all in memory: a day of edit summaries
+    is about 100,000 values. Counting stops once a column passes 200, so its cost doesn't grow."""
+    platform = with_metric(tmp_path, {"filters": ["session_id <> 'test'"]})
+    stream.publish([at(1 + i, session_id="old") for i in range(100)])
+    for flush_number in range(10):  # 10 flushes of 2,000 events, every session_id different: 20,000 values
+        stream.publish([at(170 + flush_number + i / 2000, session_id=f"s-{flush_number}-{i}") for i in range(2000)])
+    counted, count_values = [], signals._count_values
+    monkeypatch.setattr(signals, "_count_values", lambda *args: counted.append(count_values(*args)) or counted[-1])
+    report, _ = detect_drift("telemetry", platform, stream.table, now=NOW)
+    [(counts, read, _)] = counted
+    assert read == 20_000  # every recent event read: the categories in other columns are still counted
+    assert 200 < len(counts["session_id"]) <= 200 + 2000  # but session_id stopped within the file that passed 200
+    assert "new values not watched in session_id: more than 200 different values in the last 24 hours" in report.notes
+
+
+def test_scans_read_one_data_file_at_a_time(stream, monkeypatch):
+    """pyiceberg's readers hand every file to a thread pool at once and hold their rows until
+    they're consumed; reading file by file keeps a scan's memory to about one file's worth."""
+    for flush_number in range(6):
+        stream.publish(every(170 + flush_number * 3, 6, client_device="ios" if flush_number < 5 else "tv"))
+    stream.publish(every(1, 100, client_device="ios"))
+    files_per_read = []
+    to_record_batches = signals.ArrowScan.to_record_batches
+    monkeypatch.setattr(signals.ArrowScan, "to_record_batches",
+                        lambda self, tasks: files_per_read.append(len(tasks)) or to_record_batches(self, tasks))  # fmt: skip
+    report, samples = detect_drift("telemetry", PLATFORM, stream.table, now=NOW)
+    assert [s.value for s in report.signals] == ["tv"] and samples.recent.num_rows > 0
+    assert files_per_read and set(files_per_read) == {1}
+    files_per_read.clear()
+    assert signals._read_rows(stream.table, signals.AlwaysTrue(), 3).num_rows == 3
+    assert files_per_read == [1]  # the first file held 3 rows: no other file was opened
 
 
 def test_a_candidate_the_capped_read_missed_is_confirmed_by_a_targeted_scan(stream, monkeypatch):

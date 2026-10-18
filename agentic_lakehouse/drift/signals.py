@@ -18,7 +18,11 @@ Signal, with a key that stays the same from run to run:
   names it. Only those columns are read, up to a cap per window, and a
   candidate the cap may have hidden is confirmed with a targeted scan. A column
   with more than 200 different recent values isn't a set of categories, and is
-  left out.
+  left out: its counting stops there, so a column of free text costs no more
+  memory than one of categories.
+
+Every scan reads one data file at a time, so a check's memory stays about the
+same however long the windows or large the table.
 
 Fading columns and new values list the definitions that read the column. The
 samples hold rows of both windows and rows for each signal, to check a
@@ -38,9 +42,13 @@ import duckdb
 import pyarrow as pa
 import pyarrow.compute as pc
 from pydantic import BaseModel
-from pyiceberg.expressions import And, BooleanExpression, EqualTo, GreaterThanOrEqual, LessThan, NotNull, Or
+from pyiceberg.conversions import from_bytes
+from pyiceberg.expressions import AlwaysTrue, And, BooleanExpression, EqualTo, GreaterThanOrEqual, LessThan, NotNull, Or
+from pyiceberg.io.pyarrow import ArrowScan, schema_to_pyarrow
+from pyiceberg.manifest import DataFileContent, ManifestContent, clear_manifest_cache
 from pyiceberg.table import Table
 from pyiceberg.types import BooleanType, DoubleType, FloatType, IntegerType, LongType, StringType, TimestampType
+from pyiceberg.utils.datetime import micros_to_timestamp
 from sqlglot import exp
 
 from agentic_lakehouse.config import ColumnType, Dataset, Platform
@@ -174,6 +182,28 @@ def detect_drift(
     `value_scan_limit` rows. Returns the report and, when there are signals, samples of rows: up
     to `sample_rows` of each window, plus rows for each signal.
     """
+    try:
+        return _detect_drift(dataset_name, platform, table, sample_rows, now, recent, earlier, min_recent_rows,
+                             min_value_rows, value_scan_limit)  # fmt: skip
+    finally:
+        # Arrow's allocator keeps freed memory for reuse, and pyiceberg caches every manifest it reads, so a
+        # long-running `drift --serve` would hold more after each check; hand both back between checks.
+        pa.default_memory_pool().release_unused()
+        clear_manifest_cache()
+
+
+def _detect_drift(
+    dataset_name: str,
+    platform: Platform,
+    table: Table,
+    sample_rows: int,
+    now: datetime | None,
+    recent: timedelta,
+    earlier: timedelta,
+    min_recent_rows: int,
+    min_value_rows: int,
+    value_scan_limit: int,
+) -> tuple[DriftReport, DriftSamples | None]:
     dataset = platform.dataset(dataset_name)
     configured = {c.name: c.type for c in dataset.columns}
     live = {f.name: _COLUMN_TYPES.get(type(f.field_type)) for f in table.schema().fields}
@@ -224,7 +254,7 @@ def _new_columns(table: Table, configured: dict[str, str], live: dict[str, str |
 def _profile(table: Table, dataset: str, columns: dict[str, str], sample_rows: int) -> tuple[list[Signal], pa.Table]:
     """A new_column signal for each of `columns`, profiled from rows where at least one is set;
     and those rows."""
-    sample = table.scan(row_filter=reduce(Or, [NotNull(name) for name in columns]), limit=sample_rows).to_arrow()
+    sample = _read_rows(table, reduce(Or, [NotNull(name) for name in columns]), sample_rows)
     con = duckdb.connect()
     con.register("sample", sample)
     signals = []
@@ -270,23 +300,35 @@ class _DataFile:
 
 
 def _data_files(table: Table, time_column: str) -> list[_DataFile]:
-    files = table.inspect.files()
-    files = files.filter(pc.equal(files["content"], 0))  # data files: a delete file's record count is of deleted rows
-    metrics = files["readable_metrics"]  # per column of the current schema; empty for a column the file predates
+    """Each data file's metrics, read a manifest at a time and kept as a few numbers per file.
+    (table.inspect.files() decodes every column's bounds for every file at once: 87 MB for 541
+    files, growing with every flush.)"""
+    snapshot = table.current_snapshot()
+    if snapshot is None:
+        return []
+    schema = table.schema()
+    columns = {field.field_id: field.name for field in schema.fields}  # the current schema's
+    time_field = schema.find_field(time_column)
 
-    def metric(column: str, name: str) -> list:
-        return pc.struct_field(metrics, [column, name]).to_pylist()
+    def bound(bounds: dict[int, bytes] | None) -> datetime | None:
+        raw = (bounds or {}).get(time_field.field_id)
+        if raw is None:
+            return None
+        moment = micros_to_timestamp(from_bytes(time_field.field_type, raw))
+        return moment.replace(tzinfo=None)
 
-    columns = [f.name for f in table.schema().fields]
-    set_rows = {
-        name: [(values or 0) - (nulls or 0) for values, nulls in zip(metric(name, "value_count"), metric(name, "null_value_count"))]
-        for name in columns
-    }
-    first, last = metric(time_column, "lower_bound"), metric(time_column, "upper_bound")
-    return [
-        _DataFile(rows, first[i], last[i], {name: set_rows[name][i] for name in columns})
-        for i, rows in enumerate(files["record_count"].to_pylist())
-    ]
+    files = []
+    for manifest in snapshot.manifests(table.io):
+        if manifest.content != ManifestContent.DATA:
+            continue
+        for entry in manifest.fetch_manifest_entry(table.io, discard_deleted=True):
+            data = entry.data_file
+            if data.content != DataFileContent.DATA:  # a delete file's record count is of deleted rows
+                continue
+            values, nulls = data.value_counts or {}, data.null_value_counts or {}
+            set_rows = {name: (values.get(i) or 0) - (nulls.get(i) or 0) for i, name in columns.items()}  # 0: a column the file predates
+            files.append(_DataFile(data.record_count, bound(data.lower_bounds), bound(data.upper_bounds), set_rows))
+    return files
 
 
 def _window_end(table: Table, files: list[_DataFile], now: datetime | None) -> datetime:
@@ -525,7 +567,7 @@ def _new_values(
     for column in list(enumerated):
         if len(counts[column]) > _MAX_DISTINCT:  # e.g. a title compared with one literal: not categories
             report.notes.append(
-                f"new values not watched in {column}: {len(counts[column]):,} different values in the last {recent.length}"
+                f"new values not watched in {column}: more than {_MAX_DISTINCT} different values in the last {recent.length}"
             )
             del enumerated[column]
     candidates = {
@@ -575,21 +617,24 @@ def _new_values(
 
 def _count_values(table: Table, columns: list[str], rows: BooleanExpression, limit: int) -> tuple[dict[str, Counter], int, bool]:
     """Each column's values, with their counts, in up to `limit` of the rows `rows` selects; how many
-    rows were read; and whether the limit cut the read short."""
+    rows were read; and whether the limit cut the read short. A column with more than _MAX_DISTINCT
+    different values isn't a set of categories: its counting stops once it passes that, so its
+    counter isn't complete, and free text costs no more memory than categories."""
     counts: dict[str, Counter] = {column: Counter() for column in columns}
-    read, capped = 0, False
+    counting, read, capped = list(columns), 0, False
     # Reads these columns, and the time column for the filter: nothing else.
-    with table.scan(row_filter=rows, selected_fields=tuple(columns)).to_arrow_batch_reader() as reader:
-        for batch in reader:
-            if batch.num_rows > limit - read:
-                batch, capped = batch.slice(0, limit - read), True
-            read += batch.num_rows
-            for column in columns:
-                for item in pc.value_counts(batch.column(column)).to_pylist():
-                    if item["values"] is not None:
-                        counts[column][item["values"]] += item["counts"]
-            if capped:
-                break
+    for batch in _batches(table, rows, tuple(columns)):
+        if batch.num_rows > limit - read:
+            batch, capped = batch.slice(0, limit - read), True
+        read += batch.num_rows
+        for column in list(counting):
+            for item in pc.value_counts(batch.column(column)).to_pylist():
+                if item["values"] is not None:
+                    counts[column][item["values"]] += item["counts"]
+            if len(counts[column]) > _MAX_DISTINCT:
+                counting.remove(column)
+        if capped or not counting:
+            break
     return counts, read, capped
 
 
@@ -601,23 +646,22 @@ def _missing_values(
     as soon as every candidate is found."""
     missing = {column: set(values) for column, values in candidates.items()}
     read, capped = 0, False
-    with table.scan(row_filter=rows, selected_fields=tuple(missing)).to_arrow_batch_reader() as reader:
-        for batch in reader:
-            if batch.num_rows > limit - read:
-                batch, capped = batch.slice(0, limit - read), True
-            read += batch.num_rows
-            for column, values in missing.items():
-                if values:
-                    seen = batch.column(column)
-                    values -= set(pc.unique(seen.filter(pc.is_in(seen, value_set=pa.array(list(values), seen.type)))).to_pylist())
-            if capped or not any(missing.values()):
-                break
+    for batch in _batches(table, rows, tuple(missing)):
+        if batch.num_rows > limit - read:
+            batch, capped = batch.slice(0, limit - read), True
+        read += batch.num_rows
+        for column, values in missing.items():
+            if values:
+                seen = batch.column(column)
+                values -= set(pc.unique(seen.filter(pc.is_in(seen, value_set=pa.array(list(values), seen.type)))).to_pylist())
+        if capped or not any(missing.values()):
+            break
     return missing, read, capped
 
 
 def _occurs(table: Table, column: str, value: str, rows: BooleanExpression) -> bool:
     """Whether a row `rows` selects has `value` in `column`: a targeted scan, which file metrics prune."""
-    return table.scan(row_filter=And(EqualTo(column, value), rows), selected_fields=(column,), limit=1).to_arrow().num_rows > 0
+    return next(_batches(table, And(EqualTo(column, value), rows), (column,), limit=1), None) is not None
 
 
 def _samples(
@@ -625,18 +669,49 @@ def _samples(
 ) -> DriftSamples:
     """Up to `sample_rows` rows of each window, then rows for each signal: where the new columns are
     set (`profiled`), with each new value, and where each fading column was set."""
-    recent_rows = [table.scan(row_filter=recent.rows, limit=sample_rows).to_arrow()]
+    recent_rows = [_read_rows(table, recent.rows, sample_rows)]
     if profiled is not None:
         recent_rows.append(profiled)
-    earlier_rows = [table.scan(row_filter=earlier.rows, limit=sample_rows).to_arrow()]
+    earlier_rows = [_read_rows(table, earlier.rows, sample_rows)]
     for signal in signals:
         if signal.kind == "new_value":
-            in_recent = And(EqualTo(signal.column, signal.value), recent.rows)
-            recent_rows.append(table.scan(row_filter=in_recent, limit=_VALUE_ROWS).to_arrow())
+            recent_rows.append(_read_rows(table, And(EqualTo(signal.column, signal.value), recent.rows), _VALUE_ROWS))
         elif signal.kind == "fading_column":
-            in_earlier = And(NotNull(signal.column), earlier.rows)
-            earlier_rows.append(table.scan(row_filter=in_earlier, limit=_FADING_ROWS).to_arrow())
+            earlier_rows.append(_read_rows(table, And(NotNull(signal.column), earlier.rows), _FADING_ROWS))
     return DriftSamples(recent=_distinct(recent_rows), earlier=_distinct(earlier_rows))
+
+
+# Reading Iceberg one file at a time
+
+
+def _batches(
+    table: Table, rows: BooleanExpression, selected_fields: tuple[str, ...] = ("*",), limit: int | None = None
+) -> Iterator[pa.RecordBatch]:
+    """The rows `rows` selects, as record batches with rows in them, read one data file at a time
+    and stopping after `limit` rows. pyiceberg's own readers hand every file to a thread pool at
+    once and hold each file's rows until they're consumed, so their memory grows with the window
+    read; this holds about one file's worth."""
+    scan = table.scan(row_filter=rows, selected_fields=selected_fields)
+    reader = ArrowScan(scan.table_metadata, scan.io, scan.projection(), scan.row_filter, scan.case_sensitive)
+    read = 0
+    for task in scan.plan_files():
+        for batch in reader.to_record_batches([task]):
+            if not batch.num_rows:
+                continue
+            if limit is not None and read + batch.num_rows >= limit:
+                yield batch.slice(0, limit - read)
+                return
+            read += batch.num_rows
+            yield batch
+
+
+def _read_rows(table: Table, rows: BooleanExpression, limit: int) -> pa.Table:
+    """Up to `limit` of the rows `rows` selects, with every column, read as _batches reads them."""
+    batches = [pa.Table.from_batches([batch]) for batch in _batches(table, rows, limit=limit)]
+    if not batches:
+        return schema_to_pyarrow(table.schema(), include_field_ids=False).empty_table()
+    # Files written before a column was added can come back as string where later ones are large_string.
+    return pa.concat_tables(batches, promote_options="permissive")
 
 
 def _distinct(scans: list[pa.Table]) -> pa.Table:
