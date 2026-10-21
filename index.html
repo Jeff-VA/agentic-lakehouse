@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building a Next-Generation Agentic Lakehouse BI Platform</title>
+<meta name="description" content="Agentic Lakehouse: an AI-first platform that streams live data and keeps its history, queryable together through one gateway, on a foundation of semantic models, an ontology and a drift agent, shown on every edit to Wikipedia.">
+<meta name="author" content="Jeffrey Van Anderson">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Building a Next-Generation Agentic Lakehouse BI Platform">
+<meta property="og:description" content="An AI-first platform that streams live data and keeps its history, queryable together through one gateway, on a foundation of semantic models, an ontology and a drift agent.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Schibsted+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~68ch) for the argument; figures break out wider. Four colors carry meaning everywhere,
+   in diagrams and code labels alike: live data (Pinot), history (Iceberg), the semantic layer, and Claude and agents. */
+:root {
+  --paper: #fafbfc;
+  --surface: #ffffff;
+  --ink: #15171c;
+  --ink-2: #454b56;
+  --muted: #737a86;
+  --rule: #e2e5ea;
+  --rule-strong: #b9bfc9;
+  --code-bg: #f1f3f6;
+  --live: #0b877d;
+  --live-tint: #e3f4f2;
+  --history: #3f51b5;
+  --history-tint: #e8ebf8;
+  --semantic: #a8650a;
+  --semantic-tint: #fbf1e1;
+  --ai: #7d47b8;
+  --ai-tint: #f1e9f9;
+  --link: #3f51b5;
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #111318; --surface: #171a20; --ink: #eceef2; --ink-2: #b8bec9; --muted: #8a919d;
+    --rule: #262a32; --rule-strong: #444a55; --code-bg: #1a1d24;
+    --live: #3fc3b5; --live-tint: #12302d; --history: #8f9dff; --history-tint: #1f2440;
+    --semantic: #e2a443; --semantic-tint: #33270f; --ai: #bb8cf0; --ai-tint: #2a1f3a; --link: #9fabff;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 19px/1.65 var(--serif); }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 56px 80px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+.col { max-width: 680px; margin-left: auto; margin-right: auto; }
+a { color: var(--link); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; border-radius: 2px; }
+p { margin: 0 0 1.05em; }
+strong { font-weight: 600; }
+
+/* Masthead */
+header.masthead { display: grid; gap: 18px; padding-bottom: 36px; margin-bottom: 40px; border-bottom: 1px solid var(--rule); }
+.eyebrow { font: 600 13px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.eyebrow span + span::before { content: "·"; margin-right: 10px; color: var(--rule-strong); }
+h1 { font: 700 clamp(2.1rem, 5.4vw, 3.4rem)/1.08 var(--sans); letter-spacing: -0.025em; margin: 0; text-wrap: balance; }
+.byline { font: 500 15px/1.5 var(--sans); color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.byline .name { color: var(--ink); font-weight: 600; text-decoration: none; }
+.byline a.name:hover { text-decoration: underline; }
+.byline a { color: var(--ink-2); }
+.lede { font-size: 1.12em; line-height: 1.6; color: var(--ink); }
+
+/* Headings */
+h2 { font: 700 1.6rem/1.2 var(--sans); letter-spacing: -0.015em; margin: 64px 0 18px; text-wrap: balance; }
+h3 { font: 600 1.22rem/1.3 var(--sans); margin: 48px 0 12px; text-wrap: balance; }
+h2 + h3 { margin-top: 24px; }
+.kicker { font: 600 12px/1 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 8px; }
+
+/* Figures */
+figure { margin: 34px 0 38px; }
+figure.wide { margin-left: auto; margin-right: auto; max-width: 1000px; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 16px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--ink); }
+figcaption { font: 400 14.5px/1.5 var(--sans); color: var(--muted); max-width: 680px; margin: 12px auto 0; }
+figcaption b { color: var(--ink-2); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 500 13px/1 var(--sans); color: var(--ink-2); margin: 0 0 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid; display: inline-block; }
+.legend .l-live i { border-color: var(--live); background: var(--live-tint); }
+.legend .l-history i { border-color: var(--history); background: var(--history-tint); }
+.legend .l-semantic i { border-color: var(--semantic); background: var(--semantic-tint); }
+.legend .l-ai i { border-color: var(--ai); background: var(--ai-tint); }
+
+/* Diagram marks, styled from here so both themes follow */
+svg text { font-family: var(--sans); font-size: 14px; font-weight: 600; fill: currentColor; }
+svg text.sub { font-size: 12px; font-weight: 400; fill: var(--muted); }
+svg text.edge-label { font-size: 12px; font-weight: 500; fill: var(--ink-2); }
+svg text.zone { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--rule-strong); stroke-width: 1.25; }
+svg .box.live { fill: var(--live-tint); stroke: var(--live); stroke-width: 1.5; }
+svg .box.history { fill: var(--history-tint); stroke: var(--history); stroke-width: 1.5; }
+svg .box.semantic { fill: var(--semantic-tint); stroke: var(--semantic); stroke-width: 1.5; }
+svg .box.ai { fill: var(--ai-tint); stroke: var(--ai); stroke-width: 1.5; }
+svg .zone-box { fill: none; stroke: var(--rule-strong); stroke-width: 1.25; stroke-dasharray: 5 5; }
+svg .edge { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+svg .edge.live { stroke: var(--live); } svg .edge.history { stroke: var(--history); }
+svg .edge.semantic { stroke: var(--semantic); } svg .edge.ai { stroke: var(--ai); }
+svg .head { fill: var(--muted); } svg .head.live { fill: var(--live); } svg .head.history { fill: var(--history); }
+svg .head.semantic { fill: var(--semantic); } svg .head.ai { fill: var(--ai); }
+svg .band.live { fill: var(--live); } svg .band.history { fill: var(--history); }
+svg .marker-line { stroke: var(--ink-2); stroke-width: 1.5; }
+svg .marker-line.dashed { stroke-dasharray: 4 4; }
+
+/* Code panels */
+.panels { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .panels.three { grid-template-columns: 1.15fr 1fr; grid-template-rows: auto auto; }
+  .panels.three .panel:first-child { grid-row: span 2; }
+  .panels.two { grid-template-columns: 1fr 1fr; }
+}
+.panel { min-width: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.panel-head { display: flex; align-items: center; gap: 8px; font: 600 12.5px/1 var(--sans); color: var(--ink-2); padding: 11px 14px; border-bottom: 1px solid var(--rule); }
+.panel-head i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.panel-head .muted { font-weight: 500; color: var(--muted); margin-left: auto; font-family: var(--mono); font-size: 11.5px; }
+.dot-live { background: var(--live); } .dot-history { background: var(--history); }
+.dot-semantic { background: var(--semantic); } .dot-ai { background: var(--ai); } .dot-neutral { background: var(--muted); }
+pre { margin: 0; padding: 14px 16px; overflow-x: auto; background: var(--code-bg); font: 400 12.75px/1.6 var(--mono); color: var(--ink); tab-size: 2; font-variant-ligatures: none; }
+code { font-variant-ligatures: none; font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.c { color: var(--muted); } .k { color: var(--history); } .s { color: var(--live); } .m { color: var(--semantic); } .add { color: var(--live); }
+
+/* Screenshots */
+.shot { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--rule); background: #fff; }
+
+/* Links */
+ul.links { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; font: 500 16px/1.5 var(--sans); }
+ul.links li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+ul.links li span { color: var(--muted); font-weight: 400; font-size: 14.5px; }
+footer { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--rule); font: 400 13.5px/1.6 var(--sans); color: var(--muted); }
+@media (max-width: 600px) {
+  body { font-size: 17.5px; }
+  .wrap { padding-block: 36px 56px; }
+  h2 { margin-top: 52px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead col">
+  <div class="eyebrow"><span>Agentic Lakehouse</span><span>wiki-pulse</span></div>
+  <h1>Building a Next&#8209;Generation Agentic Lakehouse BI Platform</h1>
+  <div class="byline">
+    <a class="name" href="https://www.linkedin.com/in/jeff-va">Jeffrey Van Anderson</a>
+    <span>October 2026</span>
+    <span>8 minute read</span>
+    <a href="https://github.com/Jeff-VA/agentic-lakehouse">Code on GitHub</a>
+  </div>
+</header>
+
+<article>
+<div class="col">
+  <p class="lede">I'm an L6 Business Intelligence Engineer at Amazon Web Services, leading the team that owns the end-to-end analytics stack, from ingestion to presentation, for a global infrastructure development organization. In the past year, the value of data insights has transformed, and so have the platforms we build on and the roles I play, whether I'm wearing the hat of a data engineer, an analytics engineer or a data scientist.</p>
+  <p>The biggest change has been the move from AI-assisted to AI-first development. In mid-2025, AI tools helped me stand up platform resources, structure ingests from APIs and write repetitive code, but they fell short on advanced SQL and on charts and dashboards that explain an analysis elegantly. Anthropic's latest models, like Claude Opus 5.5, now handle even those surprisingly well.</p>
+  <p>There's still an important role for data professionals; it has just shifted. Instead of writing complicated SQL, chasing data quality issues, tuning hyperparameters and dragging fields into dashboard wells, we build scalable solutions for metric consistency, translate data into business meaning, and invent new approaches.</p>
+  <p>This paper presents a platform I built for that shift: Agentic Lakehouse, an AI-first package that streams live data and keeps its history, queryable together through one gateway, on a foundation of semantic models, an ontology and a drift agent. I walk through each component with wiki-pulse, a working example that streams and classifies every edit to Wikipedia.</p>
+
+  <h2>The Agentic Lakehouse Platform</h2>
+  <p>Agentic Lakehouse is an end-to-end, AI-first platform for live data. Point it at any event stream, and it ingests the stream, stores it, and serves governed metrics to dashboards, pipelines, models and AI agents from one place. The platform has five key strengths.</p>
+</div>
+
+<figure class="wide">
+  <div class="legend" aria-hidden="true">
+    <span class="l-live"><i></i>Live data</span>
+    <span class="l-history"><i></i>History</span>
+    <span class="l-semantic"><i></i>Semantic layer</span>
+    <span class="l-ai"><i></i>Claude and AI agents</span>
+  </div>
+  <div class="diagram">
+    <svg viewBox="0 0 1000 462" role="img" aria-label="Events stream through Kafka into Pinot for live data and into Iceberg for history. A gateway's router answers recent buckets from Pinot and older ones from Iceberg through Trino, compiling queries from the semantic layer, and serves the same answers to dashboards, AI agents over MCP, ad hoc SQL and pipeline steps. A drift agent profiles the data hourly and proposes reviewed patches to the semantic layer.">
+      <defs>
+        <marker id="a-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="a-live" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head live" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="a-hist" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head history" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="a-sem" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head semantic" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="a-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head ai" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+
+      <!-- Sources -->
+      <rect class="box" x="20" y="24" width="150" height="58" rx="10"/>
+      <text x="95" y="49" text-anchor="middle">Event stream</text>
+      <text class="sub" x="95" y="68" text-anchor="middle">Wikipedia edits, ~3/s</text>
+      <path class="edge" d="M95,82 V144" marker-end="url(#a-n)"/>
+      <text class="edge-label" x="103" y="118">ingest</text>
+      <rect class="box" x="20" y="148" width="150" height="62" rx="10"/>
+      <text x="95" y="174" text-anchor="middle">Kafka</text>
+      <text class="sub" x="95" y="194" text-anchor="middle">one topic per dataset</text>
+
+      <!-- Storage tiers -->
+      <path class="edge live" d="M170,166 H205 V95 H234" marker-end="url(#a-live)"/>
+      <text class="edge-label" x="211" y="145">consumes</text>
+      <path class="edge history" d="M170,192 H205 V263 H234" marker-end="url(#a-hist)"/>
+      <text class="edge-label" x="211" y="208">flush every 5 min,</text>
+      <text class="edge-label" x="211" y="222">exactly once</text>
+      <rect class="box live" x="240" y="64" width="170" height="62" rx="10"/>
+      <text x="325" y="90" text-anchor="middle">Apache Pinot</text>
+      <text class="sub" x="325" y="110" text-anchor="middle">live · last 2 days</text>
+      <rect class="box history" x="240" y="232" width="170" height="62" rx="10"/>
+      <text x="325" y="258" text-anchor="middle">Apache Iceberg</text>
+      <text class="sub" x="325" y="278" text-anchor="middle">history · everything</text>
+
+      <!-- Gateway -->
+      <rect class="zone-box" x="462" y="20" width="280" height="320" rx="14"/>
+      <text class="zone" x="482" y="46">GATEWAY</text>
+      <text class="sub" x="722" y="46" text-anchor="end">REST · MCP · SQL</text>
+      <path class="edge live" d="M410,95 H486" marker-end="url(#a-live)"/>
+      <text class="edge-label" x="418" y="87">recent</text>
+      <path class="edge history" d="M410,263 H445 V114 H486" marker-end="url(#a-hist)"/>
+      <text class="edge-label" x="438" y="184" text-anchor="end">older,</text>
+      <text class="edge-label" x="438" y="198" text-anchor="end">via Trino</text>
+      <rect class="box" x="490" y="64" width="230" height="62" rx="10"/>
+      <text x="605" y="90" text-anchor="middle">Router</text>
+      <text class="sub" x="605" y="110" text-anchor="middle">splits by time · merges in DuckDB</text>
+      <path class="edge semantic" d="M605,158 V130" marker-end="url(#a-sem)"/>
+      <text class="edge-label" x="613" y="149">compiles</text>
+      <rect class="box semantic" x="490" y="158" width="230" height="86" rx="10"/>
+      <text x="605" y="184" text-anchor="middle">Semantic layer</text>
+      <text class="sub" x="605" y="204" text-anchor="middle">ontology + Jinja macros</text>
+      <text class="sub" x="605" y="222" text-anchor="middle">DuckDB SQL → Pinot, Trino</text>
+
+      <!-- Consumers -->
+      <path class="edge" d="M742,57 H796" marker-end="url(#a-n)"/>
+      <path class="edge ai" d="M742,127 H796" marker-end="url(#a-ai)"/>
+      <path class="edge" d="M742,197 H796" marker-end="url(#a-n)"/>
+      <path class="edge" d="M742,267 H796" marker-end="url(#a-n)"/>
+      <rect class="box" x="800" y="30" width="180" height="54" rx="10"/>
+      <text x="890" y="53" text-anchor="middle">Dashboards</text>
+      <text class="sub" x="890" y="71" text-anchor="middle">HTML chart tags, live</text>
+      <rect class="box ai" x="800" y="100" width="180" height="54" rx="10"/>
+      <text x="890" y="123" text-anchor="middle">AI agents</text>
+      <text class="sub" x="890" y="141" text-anchor="middle">MCP tools</text>
+      <rect class="box" x="800" y="170" width="180" height="54" rx="10"/>
+      <text x="890" y="193" text-anchor="middle">Ad hoc SQL</text>
+      <text class="sub" x="890" y="211" text-anchor="middle">DuckDB · DBeaver</text>
+      <rect class="box" x="800" y="240" width="180" height="54" rx="10"/>
+      <text x="890" y="263" text-anchor="middle">Pipeline steps</text>
+      <text class="sub" x="890" y="281" text-anchor="middle">rollups · ML · DAG from reads</text>
+
+      <!-- Drift agent -->
+      <path class="edge ai" d="M325,294 V411 H486" marker-end="url(#a-ai)"/>
+      <text class="edge-label" x="335" y="402">profiles the data</text>
+      <rect class="box ai" x="490" y="380" width="230" height="62" rx="10"/>
+      <text x="605" y="406" text-anchor="middle">Drift agent</text>
+      <text class="sub" x="605" y="426" text-anchor="middle">hourly · Claude proposes patches</text>
+      <path class="edge ai" d="M605,380 V248" marker-end="url(#a-ai)"/>
+      <text class="edge-label" x="613" y="364">reviewed patch</text>
+    </svg>
+  </div>
+  <figcaption><b>Agentic Lakehouse architecture.</b> Every consumer reads through one gateway, so a dashboard, an agent and an ad hoc query get the same answer from the same definitions, whether the data is seconds or months old.</figcaption>
+</figure>
+
+<div class="col">
+  <p><strong>End-to-end platform that seamlessly combines live and historical data.</strong> Events flow through Kafka into Apache Pinot for second-by-second freshness and into Apache Iceberg for full history. One query spans both: a router splits the time range across the two tiers and merges the answer, so a seven-day metric is current to the second, with nothing counted twice.</p>
+  <p><strong>AI-first semantic layer with a side-by-side ontology for MCP context.</strong> Every metric and business rule is defined once, in YAML and SQL macros written in DuckDB's dialect, and translated into Pinot SQL for live data and Trino SQL for history, so it answers the same on both. Each definition carries its plain-language meaning, served to AI agents over MCP, so an agent knows what a metric means before it queries it.</p>
+  <p><strong>Built-in drift agent.</strong> When producers add a field, drop one or send a new category, the drift agent catches it within the hour and has Claude propose a reviewable patch to the semantic layer, so definitions don't go stale unnoticed.</p>
+  <p><strong>Lightweight design, including the DAG.</strong> A project is mostly configuration: wiki-pulse is 593 lines of Python and 33 config files. Pipeline steps declare the tables they read, and the platform derives the DAG from those reads, so there's no orchestration code to maintain. Even ML models are steps, versioned as ordinary tables.</p>
+  <p><strong>AI dashboard development.</strong> I didn't set out to build an AI dashboard framework, but the design produced one. Dashboards are plain HTML chart tags over named views, with labels and formats from the ontology, so an agent can build, check and screenshot one from a sentence. I believe this is the future of BI development.</p>
+  <p>The next sections walk through each piece on wiki-pulse.</p>
+
+  <h2>Platform Components in wiki-pulse</h2>
+
+  <h3>Live and history in one query</h3>
+  <p>In wiki-pulse, every edit to every Wikipedia, about three a second across 327 language editions, streams through Kafka into Apache Pinot, which keeps the last two days ready to query to the second. Every five minutes the platform also flushes those events into Apache Iceberg, exactly once, to keep the full history. When a question comes in, the gateway's router sends recent time ranges to Pinot and older ones to Iceberg through Trino, and when a range spans both, it splits the query, runs each part on its own tier and merges the results, so a question like edits over the last seven days comes back complete and current to the second without counting anything twice.</p>
+</div>
+
+<figure class="wide">
+  <div class="diagram">
+    <svg viewBox="0 0 1000 214" role="img" aria-label="A seven-day question by day. Iceberg holds everything up to the flush watermark, and Pinot holds the last two days. The router splits at the start of the bucket that holds the watermark: Trino answers October 12 to 17 from Iceberg, Pinot answers today, and DuckDB merges them into one answer.">
+      <text class="sub" x="60" y="22">Iceberg · everything up to the flush watermark</text>
+      <rect class="band history" x="60" y="30" width="856" height="8" rx="4"/>
+      <text class="sub" x="690" y="58">Pinot · last 2 days</text>
+      <rect class="band live" x="690" y="66" width="246" height="8" rx="4"/>
+
+      <rect class="box history" x="60" y="92" width="120" height="50" rx="8"/>
+      <rect class="box history" x="186" y="92" width="120" height="50" rx="8"/>
+      <rect class="box history" x="312" y="92" width="120" height="50" rx="8"/>
+      <rect class="box history" x="438" y="92" width="120" height="50" rx="8"/>
+      <rect class="box history" x="564" y="92" width="120" height="50" rx="8"/>
+      <rect class="box history" x="690" y="92" width="120" height="50" rx="8"/>
+      <rect class="box live" x="816" y="92" width="120" height="50" rx="8"/>
+      <text x="120" y="122" text-anchor="middle">Trino</text>
+      <text x="246" y="122" text-anchor="middle">Trino</text>
+      <text x="372" y="122" text-anchor="middle">Trino</text>
+      <text x="498" y="122" text-anchor="middle">Trino</text>
+      <text x="624" y="122" text-anchor="middle">Trino</text>
+      <text x="750" y="122" text-anchor="middle">Trino</text>
+      <text x="876" y="122" text-anchor="middle">Pinot</text>
+
+      <text class="sub" x="120" y="164" text-anchor="middle">Oct 12</text>
+      <text class="sub" x="246" y="164" text-anchor="middle">Oct 13</text>
+      <text class="sub" x="372" y="164" text-anchor="middle">Oct 14</text>
+      <text class="sub" x="498" y="164" text-anchor="middle">Oct 15</text>
+      <text class="sub" x="624" y="164" text-anchor="middle">Oct 16</text>
+      <text class="sub" x="750" y="164" text-anchor="middle">Oct 17</text>
+      <text class="sub" x="876" y="164" text-anchor="middle">Oct 18, today</text>
+
+      <line class="marker-line" x1="813" y1="26" x2="813" y2="150"/>
+      <text class="edge-label" x="813" y="190" text-anchor="middle">split here</text>
+      <line class="marker-line dashed" x1="916" y1="26" x2="916" y2="150"/>
+      <text class="edge-label" x="916" y="190" text-anchor="middle">watermark</text>
+      <text class="edge-label" x="60" y="190">each day comes from one tier, then DuckDB merges them into one answer</text>
+    </svg>
+  </div>
+  <figcaption><b>Edits per day over the last seven days.</b> Pinot holds the last two days and Iceberg holds everything up to the last flush, so the two overlap. The router splits at the start of the bucket that holds the flush watermark, which means every day is read from exactly one tier and nothing is counted twice.</figcaption>
+</figure>
+
+<div class="col">
+  <p>That combined result is available everywhere the data gets used. I can explore it ad hoc from a query engine like DuckDB in DBeaver, writing plain SQL against the models as if live and historical data were one table. The same queries, saved as named views, feed the dashboards directly and refresh as new edits arrive, and AI agents retrieve the same results through the gateway's MCP server, so a person, a dashboard and an agent asking the same question always get the same answer.</p>
+
+  <h3>Unified Semantic Layer With Ontology</h3>
+  <p>At the center of the platform is a semantic layer where every metric, dimension and business rule is defined once. The definitions are written once, in YAML and dbt-like Jinja SQL templates using DuckDB's SQL dialect, and the platform translates them into Pinot SQL for the live tier and Trino SQL for history, so the same definition answers on both. Every definition is checked when the configuration loads, so a broken one fails right away instead of in someone's query. In wiki-pulse, a single macro decides whether an edit came from a bot, an anonymous editor or a registered account, and every model, view, rollup and dashboard that needs that answer calls the same macro.</p>
+</div>
+
+<figure class="wide">
+  <div class="panels three">
+    <div class="panel">
+      <div class="panel-head"><i class="dot-semantic"></i>Defined once, with its meaning<span class="muted">ontology.yaml · macros</span></div>
+<pre><code><span class="c"># a metric, with the description agents read over MCP</span>
+- name: <span class="m">revert_share</span>
+  description: Share of edits that undo another edit.
+    High means disputes or vandalism being cleaned up.
+  type: ratio
+  numerator: revert_edits
+  denominator: edit_count
+  format: percent
+
+<span class="c">{# Who made an edit, broadly: a bot, someone anonymous
+   (an IP address or a temporary account), or a
+   registered editor. #}</span>
+{% macro <span class="m">editor_type</span>() %}
+CASE WHEN is_bot = true THEN 'bot'
+     WHEN is_anonymous = true THEN 'anonymous'
+     ELSE 'registered' END
+{% endmacro %}</code></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><i class="dot-live"></i>Translated for Pinot<span class="muted">live tier</span></div>
+<pre><code>SELECT CASE WHEN "is_bot" = TRUE THEN 'bot' … END
+         AS "editor_type",
+  CAST(COUNT(*) FILTER (WHERE "is_revert" = TRUE)
+    AS DOUBLE) / NULLIF(COUNT(*), 0) AS "revert_share"
+FROM edits
+WHERE "event_ts" &gt;= <span class="s">1792324800000</span>
+  AND "event_ts" &lt;  <span class="s">1792328400000</span>
+GROUP BY …</code></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><i class="dot-history"></i>Translated for Trino<span class="muted">history tier</span></div>
+<pre><code>SELECT CASE WHEN is_bot = TRUE THEN 'bot' … END
+         AS "editor_type",
+  CAST(COUNT(*) FILTER (WHERE is_revert = TRUE)
+    AS DOUBLE) / NULLIF(COUNT(*), 0) AS "revert_share"
+FROM iceberg.raw.edits
+WHERE event_ts &gt;= <span class="k">TIMESTAMP '2026-10-18 12:00:00'</span>
+  AND event_ts &lt;  <span class="k">TIMESTAMP '2026-10-18 13:00:00'</span>
+GROUP BY …</code></pre>
+    </div>
+  </div>
+  <figcaption><b>Revert share by editor type, from wiki-pulse's real config.</b> The definition and its plain-language meaning sit side by side; the platform writes each engine's SQL, down to Pinot's quoted columns and epoch-millisecond times.</figcaption>
+</figure>
+
+<div class="col">
+  <p>What makes the layer AI-first is that the ontology sits side by side with those definitions. Every metric and dimension carries its label, its format and a plain-language description of what it means, and every macro has its description written directly above it, so the meaning always travels with the logic. The gateway itself is an MCP server, and when an agent asks it for the metrics it can use, it gets back every metric, dimension and macro along with what each one means and how far its data reaches. That context lets an agent work from the same definitions people do, instead of guessing at column names or writing business logic of its own.</p>
+
+  <h3>Drift Agent</h3>
+  <p>Data rarely stays the shape it was in when the semantic layer was written. Producers add fields, stop sending others or start sending new categories, and the definitions built on top of that data can quietly drift out of step with it. The drift agent runs every hour, comparing the last day of data with the week before and with the semantic layer itself, and it looks for exactly that kind of drift: a new field no definition describes, a field a metric depends on going quiet, or a new value that a definition's filters or logic don't account for.</p>
+</div>
+
+<figure class="wide">
+  <div class="diagram">
+    <svg viewBox="0 0 1110 262" role="img" aria-label="Every hour the drift agent compares the last day of data with the week before, turns what changed into signals, and Claude proposes new or revised macros, dimensions and metrics. The platform validates the proposal, sending errors back for up to three tries, then saves a patch for review, which updates the semantic layer the next check compares against.">
+      <defs>
+        <marker id="d-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="d-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head ai" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="d-sem" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head semantic" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <rect class="box history" x="20" y="70" width="170" height="66" rx="10"/>
+      <text x="105" y="98" text-anchor="middle">Iceberg data</text>
+      <text class="sub" x="105" y="118" text-anchor="middle">last day vs. the week</text>
+      <path class="edge" d="M190,103 H230" marker-end="url(#d-n)"/>
+      <rect class="box" x="234" y="70" width="180" height="66" rx="10"/>
+      <text x="324" y="98" text-anchor="middle">Drift signals</text>
+      <text class="sub" x="324" y="118" text-anchor="middle">new · fading · new value</text>
+      <path class="edge ai" d="M414,103 H454" marker-end="url(#d-ai)"/>
+      <rect class="box ai" x="458" y="70" width="200" height="66" rx="10"/>
+      <text x="558" y="98" text-anchor="middle">Claude proposes</text>
+      <text class="sub" x="558" y="118" text-anchor="middle">macros · dimensions · metrics</text>
+      <path class="edge" d="M658,103 H698" marker-end="url(#d-n)"/>
+      <rect class="box" x="702" y="70" width="200" height="66" rx="10"/>
+      <text x="802" y="98" text-anchor="middle">Validation</text>
+      <text class="sub" x="802" y="118" text-anchor="middle">loads · runs · dashboards</text>
+      <path class="edge semantic" d="M902,103 H942" marker-end="url(#d-sem)"/>
+      <rect class="box semantic" x="946" y="70" width="144" height="66" rx="10"/>
+      <text x="1018" y="98" text-anchor="middle">Patch</text>
+      <text class="sub" x="1018" y="118" text-anchor="middle">you review, apply</text>
+
+      <path class="edge ai" d="M802,136 V178 H558 V140" marker-end="url(#d-ai)"/>
+      <text class="edge-label" x="680" y="196" text-anchor="middle">errors go back, up to 3 tries</text>
+      <path class="edge semantic" d="M1018,136 V232 H105 V140" marker-end="url(#d-sem)"/>
+      <text class="edge-label" x="560" y="252" text-anchor="middle">the semantic layer the next check compares against</text>
+    </svg>
+  </div>
+  <figcaption><b>The drift agent's hourly check.</b> Claude sees the signals, sample rows and every definition that reads the drifting column. Nothing reaches the semantic layer until it loads, runs on real rows and keeps every dashboard working, and a person applies it.</figcaption>
+</figure>
+
+<div class="col">
+  <p>When it finds drift, it gives Claude the signals, sample rows and the definitions involved, and Claude proposes updated semantic definitions, new or revised macros, dimensions and metrics, written to hold for all of history on both tiers. Before anything reaches me, the platform checks that the updated configuration loads, that each new or changed definition runs on the sample data and that every dashboard still works, then saves the proposal as a patch I can review and apply. In wiki-pulse, when Wikimedia started flagging temporary accounts in October 2026, the agent proposed a new macro, dimension and metric for them, and they went live as proposed, once my review turned up an engine bug that the next release fixed.</p>
+</div>
+
+<figure class="wide">
+  <div class="panel">
+    <div class="panel-head"><i class="dot-ai"></i>Proposed by the drift agent, as it runs today<span class="muted">macros/default.sql · ontology.yaml</span></div>
+<pre><code><span class="add">+ {# An edit made from a Wikimedia temporary account: an automatically created account
++    named ~... for editors who aren't logged in, counted as anonymous. Uses the
++    is_temporary flag where producers send it (from around October 2026). For older
++    rows it falls back to the editor name starting with '~'. #}
++ {% macro temporary_account_edit() %}coalesce(is_temporary, editor LIKE '~%'){% endmacro %}
+
++ - name: temporary_account_edits
++   description: Edits made from temporary accounts (named ~...), a subset of anonymous
++     edits. The other anonymous edits come from IP addresses. …
++   agg: count
++   filters: ["{{ temporary_account_edit() }}"]</span></code></pre>
+  </div>
+  <figcaption><b>The drift agent's first live proposal in wiki-pulse.</b> A new macro and the metric that calls it (a dimension came with them), written so older rows without the new flag still count.</figcaption>
+</figure>
+
+<div class="col">
+  <h3>AI-first dashboards and agents</h3>
+  <p>Dashboards in the platform are plain HTML pages with a handful of chart tags, each pointing at a named view and the columns to draw. Labels, number formats and descriptions all come from the ontology, so a dashboard never redefines a metric, and every chart stays live, redrawing as new data arrives. Because the same MCP server that answers questions also lets an agent list the metrics and views, write a new view, build a page, check it for problems and screenshot it to review its own work, an agent can take a dashboard from a short request to a finished page.</p>
+</div>
+
+<figure class="wide">
+  <div class="panels two">
+    <div class="panel">
+      <div class="panel-head"><i class="dot-semantic"></i>The view<span class="muted">views/bursts_breaking.sql</span></div>
+<pre><code>SELECT date_trunc('minute', event_ts) AS flagged_at,
+       url, language, news_probability, peak_editors,
+       reading, explanation
+FROM trends
+WHERE event_ts &gt;= now() - INTERVAL :hours HOUR
+  AND classifier_says = 'news'
+ORDER BY news_probability DESC</code></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><i class="dot-neutral"></i>The chart tag<span class="muted">dashboards/trends.html</span></div>
+<pre><code>&lt;h2&gt;Breaking now&lt;/h2&gt;
+&lt;al-table view="bursts_breaking"
+  columns="flagged_at,url,language,
+           news_probability,peak_editors,
+           reading,explanation"&gt;
+&lt;/al-table&gt;</code></pre>
+    </div>
+  </div>
+  <img class="shot" src="images/breaking-now.jpg" width="1280" height="300" alt="The Breaking now table on the Bursts dashboard: three bursts the classifier called news on October 18, 2026, including the October 17 protests in France and the death of Lua Blanco, each with Claude's one-line read." loading="lazy" style="margin-top:14px">
+  <figcaption><b>The Breaking now panel.</b> One SQL view and one chart tag on the Bursts dashboard, shown as it ran on October 18, 2026.</figcaption>
+</figure>
+
+<div class="col">
+  <p>The Bursts dashboard in wiki-pulse was built that way. Its Breaking now panel, which lists the bursts the classifier calls news, and its panel judging the classifier against Claude's labels each started as a short request and became a new SQL view and a few chart tags, checked and screenshotted by the agent before I reviewed them. For me, this is where AI-first BI gets exciting, since the work shifts from dragging fields into dashboard wells to deciding which questions are worth answering.</p>
+
+  <h3>ML Classifier in the Pipeline</h3>
+  <p>The burst detector in wiki-pulse flags articles that are getting far more edits than usual, and Claude reads each fresh burst and labels it as news, an edit war or routine work, along with a sentence about what's happening. To score every burst instantly and at no cost, a pipeline step retrains a logistic regression on Claude's labels every hour and writes the model's weights to an Iceberg table, which the detector reloads and applies to each burst as it streams in. Since the model is just another table in the lakehouse, it's versioned, quality-gated and queryable like any other data, and its evaluation is a semantic model too, so its precision and recall against Claude's labels show up on the dashboard as governed metrics.</p>
+</div>
+
+<figure class="wide">
+  <div class="diagram">
+    <svg viewBox="0 0 1000 290" role="img" aria-label="The burst detector flags bursts in the stream and Claude labels the fresh ones; both land in raw.trends. An hourly pipeline step fits a logistic regression on the labels and writes its weights and threshold to gold.news_classifier, which the detector reloads to score every burst. The classifier_eval semantic model turns the labels and scores into precision and recall on the Bursts dashboard.">
+      <defs>
+        <marker id="m-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-live" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head live" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head ai" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-hist" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head history" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="m-sem" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head semantic" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <path class="edge live" d="M915,96 V36 H105 V92" marker-end="url(#m-live)"/>
+      <text class="edge-label" x="510" y="28" text-anchor="middle">reloaded every 15 minutes, scores every burst as it streams in</text>
+
+      <rect class="box live" x="20" y="96" width="170" height="64" rx="10"/>
+      <text x="105" y="123" text-anchor="middle">Burst detector</text>
+      <text class="sub" x="105" y="143" text-anchor="middle">flags bursts in the stream</text>
+      <path class="edge ai" d="M190,128 H226" marker-end="url(#m-ai)"/>
+      <rect class="box ai" x="230" y="96" width="170" height="64" rx="10"/>
+      <text x="315" y="123" text-anchor="middle">Claude</text>
+      <text class="sub" x="315" y="143" text-anchor="middle">labels fresh bursts</text>
+      <path class="edge history" d="M400,128 H436" marker-end="url(#m-hist)"/>
+      <rect class="box history" x="440" y="96" width="170" height="64" rx="10"/>
+      <text x="525" y="123" text-anchor="middle">raw.trends</text>
+      <text class="sub" x="525" y="143" text-anchor="middle">bursts, scores, labels</text>
+      <path class="edge" d="M610,128 H646" marker-end="url(#m-n)"/>
+      <rect class="box" x="650" y="96" width="160" height="64" rx="10"/>
+      <text x="730" y="123" text-anchor="middle">Hourly step</text>
+      <text class="sub" x="730" y="143" text-anchor="middle">logistic regression</text>
+      <path class="edge history" d="M810,128 H846" marker-end="url(#m-hist)"/>
+      <rect class="box history" x="850" y="96" width="130" height="64" rx="10"/>
+      <text x="915" y="123" text-anchor="middle">Model table</text>
+      <text class="sub" x="915" y="143" text-anchor="middle">weights, threshold</text>
+
+      <path class="edge semantic" d="M525,160 V206" marker-end="url(#m-sem)"/>
+      <rect class="box semantic" x="440" y="210" width="170" height="60" rx="10"/>
+      <text x="525" y="236" text-anchor="middle">classifier_eval</text>
+      <text class="sub" x="525" y="255" text-anchor="middle">precision · recall</text>
+      <path class="edge" d="M610,240 H646" marker-end="url(#m-n)"/>
+      <rect class="box" x="650" y="210" width="160" height="60" rx="10"/>
+      <text x="730" y="236" text-anchor="middle">Dashboard</text>
+      <text class="sub" x="730" y="255" text-anchor="middle">governed metrics</text>
+    </svg>
+  </div>
+  <figcaption><b>The classifier in the pipeline.</b> A pipeline step trains it, an Iceberg table holds it, the detector applies it, and a semantic model judges it on the dashboard.</figcaption>
+</figure>
+
+<figure class="wide">
+  <img class="shot" src="images/classifier-panel.jpg" width="1280" height="500" alt="The classifier panel on the Bursts dashboard: precision, recall, the news labels they rest on and the Brier score for the classifier's calls, with a toggle between the learned threshold and the fixed 0.5 before it, and calibration and wiki-size breakdowns." loading="lazy">
+  <figcaption><b>The classifier panel on the Bursts dashboard.</b> Precision and recall against Claude's labels are governed metrics, and the toggle compares the learned threshold with the fixed 0.5 it replaced.</figcaption>
+</figure>
+
+<div class="col">
+  <p>That evaluation is also what made the classifier better. The first version looked 87% accurate, but only because it never called anything news, so I ran a study comparing logistic regression with XGBoost under cross-validation that kept each story's flags together, and then shipped a second version with stronger features and a threshold it learns on its own. The full study is linked at the end for anyone who wants the details.</p>
+
+  <h2>The Future of BI</h2>
+  <p>When I started building Agentic Lakehouse, I wanted to see what business intelligence could look like if it were designed AI-first from the ground up, instead of adding AI to the tools we already have. What I found is that the things we've always cared about, consistent metrics, trustworthy data and clear insights, become far more achievable when the platform itself carries the meaning of the data, keeps that meaning current as the data changes, and lets people and agents work from the same definitions.</p>
+  <p>That's why I think this is such an exciting time to work in BI. We have a real opportunity to transform our architecture, our platforms and the way we deliver insights, all at the same time. As AI takes on more of the tedious work, we get to focus on the most valuable part of the job, which is deciding what matters, defining it well and turning data into better decisions. I can't wait to see where we take it.</p>
+
+  <h2>Links</h2>
+  <ul class="links">
+    <li><a href="https://github.com/Jeff-VA/agentic-lakehouse">Agentic Lakehouse</a><span>the platform: engine, gateway, semantic layer and drift agent</span></li>
+    <li><a href="https://github.com/Jeff-VA/wiki-pulse">wiki-pulse</a><span>the working example, built on the platform</span></li>
+    <li><a href="classifier-study.html">The classifier study</a><span>logistic regression against XGBoost, and which features help</span></li>
+    <li><a href="https://www.linkedin.com/in/jeff-va">Jeffrey Van Anderson on LinkedIn</a><span>contact</span></li>
+  </ul>
+</div>
+</article>
+
+<footer class="col">
+  © 2026 Jeffrey Van Anderson. Data from <a href="https://stream.wikimedia.org/v2/stream/recentchange">Wikimedia EventStreams</a>, Wikipedia content and edit metadata under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>.
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,8047 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiki Pulse Classifier Study</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=Source+Code+Pro:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~66ch) for the argument; figures widen to 920px. Findings first, evidence after,
+   decisions last. Wikipedia's own conventions carry the subject: serif section heads over a hairline, link blue,
+   and byte changes printed the way a page history prints them (+593 in green, −313 in red, bold from 500). */
+:root {
+  --paper: #fcfcfb;
+  --raised: #f3f4f6;
+  --ink: #15171b;
+  --ink-2: #4b505a;
+  --muted: #7d828c;
+  --rule: #e1e0d9;
+  --axis: #c3c2b7;
+  --accent: #3366cc;
+  --add: #006400;
+  --remove: #8b0000;
+  --s0: #9a9ea6;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --band: rgba(42, 120, 214, 0.10);
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Source Code Pro", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1a19; --raised: #232422; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86; --rule: #2c2c2a;
+    --axis: #45453f; --accent: #7aa2f7; --add: #4cbf4c; --remove: #ff7b72; --s0: #6f716d; --s1: #3987e5;
+    --s2: #d95926; --s3: #199e70; --band: rgba(57, 135, 229, 0.16); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #1a1a19; --raised: #232422; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86; --rule: #2c2c2a;
+  --axis: #45453f; --accent: #7aa2f7; --add: #4cbf4c; --remove: #ff7b72; --s0: #6f716d; --s1: #3987e5;
+  --s2: #d95926; --s3: #199e70; --band: rgba(57, 135, 229, 0.16); color-scheme: dark;
+}
+body { background: var(--paper); color: var(--ink); font: 400 17px/1.6 var(--sans); }
+main { max-width: 920px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.prose { max-width: 66ch; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4.5vw, 2.6rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.55rem; font-weight: 500; padding-bottom: 6px; border-bottom: 1px solid var(--rule); margin-top: 56px; }
+h3 { font-size: 1.15rem; margin-top: 32px; }
+p { margin: 14px 0 0; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+.eyebrow { font: 600 0.78rem/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 14px; }
+.lede { font-size: 1.15rem; color: var(--ink-2); max-width: 62ch; margin: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 22px; color: var(--muted); font-size: 0.9rem; }
+.meta b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.verdict { margin-top: 32px; padding: 20px 22px; background: var(--raised); border-radius: 6px; }
+.verdict h2 { margin: 0; border: 0; padding: 0; font-size: 1.2rem; }
+.verdict ol { margin: 12px 0 0; padding-left: 1.3em; display: grid; gap: 10px; }
+.verdict li::marker { font-family: var(--serif); font-weight: 600; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.add, .remove { font-family: var(--mono); font-size: 0.9em; }
+.add { color: var(--add); } .remove { color: var(--remove); } .big { font-weight: 600; }
+figure { margin: 24px 0 0; }
+figcaption { font-size: 0.92rem; color: var(--ink-2); max-width: 70ch; margin-top: 8px; }
+figcaption b { color: var(--ink); }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.88rem; color: var(--ink-2); margin-bottom: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
+.legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+svg text { font-family: var(--sans); fill: var(--muted); font-size: 12px; }
+svg text.label { fill: var(--ink-2); font-size: 13px; }
+svg text.value { fill: var(--ink); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .axis { stroke: var(--axis); stroke-width: 1; }
+svg .ref { stroke: var(--muted); stroke-width: 1; }
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.85rem; line-height: 1.35;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); max-width: 260px; }
+.tip .t { color: var(--muted); font-size: 0.78rem; margin-bottom: 4px; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row i { width: 12px; height: 2px; flex: none; }
+.tip .row b { font-variant-numeric: tabular-nums; font-weight: 600; }
+.tip .row span { color: var(--ink-2); }
+.table-wrap { overflow-x: auto; margin-top: 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; }
+th { font-weight: 600; color: var(--ink-2); font-size: 0.82rem; letter-spacing: 0.02em; vertical-align: bottom; }
+tr.pick td { font-weight: 600; }
+tr.pick td:first-child::after { content: "recommended"; margin-left: 8px; font: 600 0.68rem/1 var(--sans); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--accent); border: 1px solid currentColor; border-radius: 3px; padding: 2px 5px; vertical-align: 2px; }
+details { margin-top: 10px; font-size: 0.9rem; }
+summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 28px; }
+.two > * { min-width: 0; }
+.decisions { display: grid; gap: 16px; margin-top: 18px; }
+.decision { display: grid; grid-template-columns: 2.2rem 1fr; gap: 4px 14px; }
+.decision .n { font: 600 1.35rem/1.2 var(--serif); color: var(--muted); }
+.decision h3 { margin: 0; font-size: 1.08rem; }
+.decision p { margin: 4px 0 0; grid-column: 2; color: var(--ink-2); }
+.pill { display: inline-block; font: 600 0.7rem/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 7px;
+  border-radius: 3px; border: 1px solid currentColor; vertical-align: 2px; margin-left: 6px; }
+.pill.done { color: var(--add); } .pill.ask { color: var(--accent); }
+pre { background: var(--raised); padding: 12px 14px; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+footer { margin-top: 56px; color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--rule); padding-top: 14px; }
+@media (max-width: 560px) { body { font-size: 16px; } h2 { margin-top: 44px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+<p style="margin:0 0 28px;font:600 14px/1.4 var(--sans)"><a href="./">&larr; Building a Next-Generation Agentic Lakehouse BI Platform</a></p>
+<header>
+  <div class="eyebrow">wiki-pulse · the ML phase · study 1</div>
+  <h1>Logistic regression or XGBoost, and on which features?</h1>
+  <p class="lede">The news classifier scores every burst the detector flags, so the dashboard can tell a story breaking
+    from an edit war without asking Claude about each one. This study tests which model and which features do that
+    best. Every score is out-of-sample, and no story ever lands on both sides of a train/test split.</p>
+  <div class="meta">
+    <span><b data-v="data.bursts" data-f="int"></b> bursts flagged</span>
+    <span><b data-v="data.labeled" data-f="int"></b> labeled news, edit war or routine</span>
+    <span><b data-v="data.news" data-f="int"></b> news, on <b data-v="data.news_articles" data-f="int"></b> articles</span>
+    <span id="window"></span>
+  </div>
+</header>
+
+<section class="verdict" aria-labelledby="verdict-h">
+  <h2 id="verdict-h">The short answer</h2>
+  <ol>
+    <li><b>Logistic regression, not XGBoost, for now.</b> LR on the v2 features scores
+      <span data-v="m.lr_v2.metrics.ap" data-f="d2"></span> average precision against tuned XGBoost's
+      <span data-v="m.xgb_v2.metrics.ap" data-f="d2"></span>. Given the choice, tuning picked depth-1 trees for
+      XGBoost, an additive model with no interactions, which is nearly what logistic regression already is.</li>
+    <li><b>Features are the real gain.</b> Choosing features honestly inside each training fold lifts average
+      precision from <span data-v="m.lr_deployed.metrics.ap" data-f="d2"></span> (the deployed features) to
+      <span data-v="m.lr_selected.metrics.ap" data-f="d2"></span>, ahead in
+      <span data-v="p.lr_selected__lr_deployed.a_better_share" data-f="pct0"></span> of resamples. Two features carry
+      it: whether the wiki is large, and how busy its baseline is.</li>
+    <li><b>The threshold is the bug users see.</b> The live model's probabilities never reach 0.5, so it never calls
+      news. Calling news at <span data-v="t.p50.threshold" data-f="d2"></span> gives 50% precision and catches
+      <span data-v="t.p50.recall" data-f="pct0"></span> of news.</li>
+    <li><b>The intervals are wide</b> (<span data-v="m.lr_v2.ap_bootstrap_interval.0" data-f="d2"></span> to
+      <span data-v="m.lr_v2.ap_bootstrap_interval.1" data-f="d2"></span> for the best model), because the news labels
+      cover only <span data-v="data.news_articles" data-f="int"></span> stories. The random-sample labels that started
+      today are what will narrow them.</li>
+  </ol>
+</section>
+
+<section class="prose">
+  <h2>What the model learns from</h2>
+  <p>Each row is a burst: an article with at least 6 edits by 3 editors in 30 minutes, at least 4σ above what's usual
+    for an article on that wiki at that hour. Claude Haiku labels a sample of them as <i>news</i>, <i>edit war</i>,
+    <i>routine</i> or <i>unclear</i>. The model predicts news (1) against edit war or routine (0), leaving out the
+    unclear ones. News is <b data-v="base_rate" data-f="pct0"></b> of the labeled bursts.</p>
+  <p>Three facts about these labels shape every choice below.</p>
+  <ul>
+    <li><b>Few positives.</b> <span data-v="data.news" data-f="int"></span> news labels come from only
+      <span data-v="data.news_articles" data-f="int"></span> articles, because a growing story is flagged several
+      times. The real sample size is closer to the number of stories than the number of rows, so every comparison
+      here splits by article and reports an interval.</li>
+    <li><b>A skewed sample.</b> Until today Claude read the first 10 bursts of each hour, so busy hours were the least
+      covered (chart below). The model learned from, and was judged on, a sample tilted toward quiet hours.</li>
+    <li><b>A teacher who sees more.</b> Claude reads the title, the edit summaries and what it knows of the world. The
+      model sees a handful of numbers. Features that carry some of what Claude sees (a year in the title, how busy the
+      article already was) are where the gains should come from.</li>
+  </ul>
+</section>
+<figure>
+  <div class="chart" id="coverage"></div>
+  <figcaption><b>Share of bursts Claude labeled, by hour of the flag (UTC), October 14 onward.</b> First-come reading
+    left the busiest hours, 10:00 to 13:00 UTC, the least covered. <span class="pill done">Fixed today</span> Claude now
+    reads a random half of fresh bursts, and each burst records its chance of being read
+    (<code>read_probability</code>). Filter <code>classifier_eval</code> on <code>label_sample = 'random'</code> for
+    unbiased rates.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Why logistic regression, and why Newton's method</h2>
+  <p><b>Newton's method is how the model is fitted, not a modeling choice.</b> Logistic regression with an L2 penalty
+    minimizes one smooth, convex loss, so it has exactly one best set of weights, and any decent solver finds it.
+    Newton's method uses the loss's curvature (a 7×7 matrix here) to reach it in a few steps. scikit-learn's default
+    solver approximates that curvature instead. Fitted on the same data with the same penalty, the deployed Newton
+    code and scikit-learn agree to within <b data-v="newton_check.max_difference" data-f="sci"></b> on every weight, a
+    gap left by scikit-learn stopping at its default tolerance. Writing it in numpy kept scikit-learn out of the
+    stack's image.</p>
+  <p><b>Logistic regression against XGBoost is the real question.</b> XGBoost is usually the strongest choice for
+    tabular data: it adds up hundreds of small trees, each correcting the last, and finds interactions nobody wrote
+    down. That strength needs data. With about 30 news labels in a training fold, a tree can carve out one story per
+    branch, and its probabilities tend to be overconfident on so few positives. A logistic regression has one weight
+    per feature, can't memorize a story, and its log-loss fit keeps probabilities near the base rate unless the
+    evidence is strong. It also deploys as a dozen numbers in an Iceberg table that the detector applies with
+    arithmetic, and each weight reads as an effect in the paper. Those are reasons to expect LR to hold up here, not
+    proof, so the rest of this page measures it, tuning both models the same way.</p>
+</section>
+
+<section class="prose">
+  <h2>Eight models, scored the same way</h2>
+  <p>Three feature sets and two model families:</p>
+  <ul>
+    <li><b>Deployed:</b> the six features the live model uses.</li>
+    <li><b>All <span class="nall"></span>:</b> those six plus candidates from the burst's window, the article's
+      recent past, the wiki's baseline and its size (listed under <a href="#features">Which features carry it</a>).</li>
+    <li><b>v2:</b> the deployed six plus <i>large wiki</i> and <i>year in title</i>, the two candidates that each
+      raised average precision when added alone, with <i>surprise</i> swapped for the <i>usual edits</i> it is
+      measured against. Surprise moves with the edit count (correlation 0.93), so the two weights blow up in opposite
+      directions; edits and the baseline are nearly uncorrelated (0.04), score the same, and give weights that read
+      as effects.</li>
+  </ul>
+  <p>v2 was picked by looking at these same labels, so its score flatters it. The honest check is <b>LR, features
+    picked in each fold</b>: it reruns the picking (forward selection from the deployed six) inside every training
+    fold, so the held-out fold never influences which features are used. XGBoost has its hyperparameters tuned over a
+    24-point grid inside every training fold, and logistic regression has its regularization tuned the same way.
+    XGBoost with the library's defaults shows what an untuned XGBoost does on data this small.</p>
+  <p><b>The headline metric is average precision</b> (the area under the precision–recall curve), because the job is
+    ranking: the dashboard should put real stories at the top. Random guessing scores the base rate,
+    <span data-v="base_rate" data-f="pct0"></span>.</p>
+</section>
+<figure>
+  <div class="chart" id="models"></div>
+  <figcaption><b>Average precision under grouped cross-validation, with 90% intervals from resampling articles.</b>
+    Every tuned model on v2 or all features clears the deployed features, and every logistic regression clears its
+    XGBoost counterpart. Untuned XGBoost (depth 6, 100 trees) falls back to the deployed model's level, with the worst
+    log loss of all: overconfident probabilities. The live row in the calibration chart below is production's own record,
+    <span data-v="live.ap" data-f="d2"></span> average precision on the <span data-v="live.n" data-f="int"></span>
+    bursts it scored before they were labeled.</figcaption>
+</figure>
+<div class="table-wrap"><table id="models-table"></table></div>
+<p class="prose" style="font-size:0.92rem;color:var(--ink-2)">Settled hyperparameters, the ones chosen in the most
+  folds: XGBoost <span id="xgb-settled"></span>; logistic regression <span id="lr-settled"></span>.</p>
+
+<h3>Head to head</h3>
+<p class="prose">Each row compares two models on the same resampled articles. "First ahead" is the share of resamples,
+  and of cross-validation repeats, in which the first model scored higher.</p>
+<div class="table-wrap"><table id="pairs-table"></table></div>
+<p class="prose">Read the intervals before the averages. Three gaps clear zero: features picked in each fold over the
+  deployed features, LR over XGBoost on the deployed features, and tuned over untuned XGBoost. v2 over the deployed
+  features very nearly does. LR against XGBoost on v2 is
+  <span data-v="p.lr_v2__xgb_v2.delta_ap" data-f="signed"></span>, with an interval spanning zero: LR is ahead in
+  <span data-v="p.lr_v2__xgb_v2.a_better_share" data-f="pct0"></span> of resamples, which is a lean, not a verdict.
+  With equal accuracy, logistic regression wins on everything else: weights that read as effects, a model that is a
+  few rows in an Iceberg table, and probabilities that stay calibrated.</p>
+
+<section class="prose">
+  <h2>Precision and recall</h2>
+  <p>Each curve traces what the model catches (recall) against how often it's right (precision) as its threshold
+    falls. Hover to read every model at one recall.</p>
+</section>
+<figure>
+  <div class="chart" id="pr"></div>
+  <figcaption><b>Precision–recall curves from out-of-fold probabilities</b>, averaged over the cross-validation
+    repeats. v2 logistic regression keeps 75% precision out to 30% recall and 57% at 40%; the deployed features are down to
+    37% by 30% recall.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Would XGBoost win with more labels?</h2>
+  <p>A fair worry is that XGBoost only needs more data. The learning curve trains each model on a quarter, half,
+    three quarters and all of each training fold's articles, then tests on the same held-out folds.</p>
+</section>
+<figure>
+  <div class="chart" id="learning"></div>
+  <figcaption><b>Average precision against the news labels available for training</b>, with 90% bands across
+    repeats. Both v2 models rise steeply to about 22 news labels and then flatten. XGBoost starts level
+    with LR, slightly ahead at 8 labels, and falls behind as labels grow, the opposite of the "it just needs more data"
+    story at this scale. With every feature, XGBoost gets no better past 16 labels: more columns give the trees more
+    ways to fit noise. More labels of the same kind will narrow the intervals, but the next real gain more likely comes from new
+    information, such as the text Claude reads.</figcaption>
+</figure>
+
+<section class="prose" id="features">
+  <h2>Which features carry it</h2>
+  <p>Medians by Claude's label (shares and yes/no features as averages). Bytes removed are printed the way a
+    Wikipedia page history prints them. A feature can separate the labels well here and still add nothing to the
+    model, when another feature already carries the same information.</p>
+</section>
+<div class="table-wrap"><table id="feat-table"></table></div>
+<div>
+  <figure>
+    <div class="chart" id="ablation-without"></div>
+    <figcaption><b>Leaving a group out of v2</b>: the change in average precision, with 90% intervals across repeats.
+      Blue bars are groups v2 needs.</figcaption>
+  </figure>
+  <figure>
+    <div class="chart" id="ablation-with"></div>
+    <figcaption><b>Adding one more candidate to v2</b>: the same measure. Blue would be a gain; gray adds nothing or
+      costs precision.</figcaption>
+  </figure>
+</div>
+<div class="two">
+  <figure>
+    <div class="chart" id="selection"></div>
+    <figcaption><b>How often each candidate was picked</b> when forward selection ran inside each of the
+      <span data-v="selection.folds" data-f="int"></span> training folds. Stable picks are real signal; rare picks are
+      noise one fold happened to like.</figcaption>
+  </figure>
+  <figure>
+    <div class="chart" id="coefs"></div>
+    <figcaption><b>v2 logistic regression's weights</b>, per standard deviation of each feature, with 90% intervals
+      from refitting on resampled articles. Blue raises the odds of news; orange lowers them.</figcaption>
+  </figure>
+</div>
+<figure>
+  <div class="chart" id="shap"></div>
+  <figcaption><b>What tuned XGBoost leans on when given all 14 features</b>: each feature's average absolute
+    contribution to the log-odds (TreeSHAP, from XGBoost's own <code>pred_contribs</code>).</figcaption>
+</figure>
+<section class="prose">
+  <p><b>What holds up.</b> Wiki size and the baseline are the stable signals: forward selection picked large wiki
+    in <span data-v="selection.picked.large_wiki" data-f="pct0"></span> of training folds and usual edits in
+    <span data-v="selection.picked.log_expected" data-f="pct0"></span>, and leaving either out of v2 costs about 0.07 to
+    0.12. Reverts matter as much, pushing the other way. Tuned XGBoost, given all the features, leans on the baseline
+    most too.</p>
+  <p><b>What doesn't.</b> Year in title looked strong alone (half of news titles carry a year) but adds little once
+    wiki size is in: picked in <span data-v="selection.picked.year_in_title" data-f="pct0"></span> of folds. Bot and
+    anonymous shares slightly hurt v2; dropping them is a candidate once the random-sample labels can confirm it. The
+    20-language revert pattern measures reverts more correctly but predicts no better than the English one here.</p>
+  <p><b>A caution for the paper.</b> Large wiki is the strongest feature, and
+    <span data-v="data.by_tier.large.news" data-f="int"></span> of <span data-v="data.news" data-f="int"></span> news
+    labels are on large wikis. Part of that is real (big wikis cover breaking news fast), and part may be Claude
+    recognizing English and French events more readily than others. The model would then learn Claude's coverage, not
+    the world's. Per-tier precision on the random sample will show which.</p>
+</section>
+
+<section class="prose">
+  <h2>Are the probabilities honest?</h2>
+  <p>A calibrated model's 20% means news about one time in five. Points on the diagonal are calibrated; below it, the
+    model is overconfident.</p>
+</section>
+<figure>
+  <div class="chart" id="calib"></div>
+  <figcaption><b>Calibration by probability band</b>: average predicted probability against the share Claude labeled
+    news. "Live model" is what production actually scored, before each label existed. v2 logistic regression follows the diagonal except in one thin band. The live model sits above it: when it says 8%, news is 15%; when
+    it says 24%, news is 36%. It is underconfident, which is why it never reaches 0.5.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Where to draw the line</h2>
+  <p>The live model calls news at 0.5, which it never reaches. A threshold should come from the precision the
+    dashboard needs. These are chosen on v2 logistic regression's out-of-fold probabilities, and "news calls a day"
+    applies each to every burst flagged so far, read or not.</p>
+</section>
+<div class="table-wrap"><table id="thr-table"></table></div>
+<p class="prose">50% precision means half the bursts called news are news, which suits a feed people scan. A threshold
+  chosen on <span data-v="data.labeled" data-f="int"></span> labels moves as labels arrive, so the step should recompute it every time it retrains and store it
+  next to the weights.</p>
+
+<section class="prose">
+  <h2>Robustness checks</h2>
+  <h3>Forward in time</h3>
+  <p>Cross-validation mixes days. Here every model trains on bursts before <span id="split"></span> and is tested on
+    the <span data-v="forward.test" data-f="int"></span> labeled bursts after it
+    (<span data-v="forward.test_news" data-f="int"></span> news). The live row is production's own scores on those
+    bursts.</p>
+</section>
+<div class="table-wrap"><table id="fwd-table"></table></div>
+<section class="prose">
+  <p>Forward in time, the three new models score 0.55 to 0.57, against 0.34 for the deployed features and 0.37 for the
+    live model. XGBoost on every feature edges ahead here, though it trailed in cross-validation; with
+    <span data-v="forward.train_news" data-f="int"></span> news to train on and
+    <span data-v="forward.test_news" data-f="int"></span> to test on, the differences among the three aren't real. v2's
+    features were chosen with these test labels in view, so this check is not fully independent.</p>
+  <h3>The skewed label sample</h3>
+  <p>Weighting each first-come label by how thinly its hour was covered (weights
+    <span data-v="reweighted.weight_range.0" data-f="d1"></span> to
+    <span data-v="reweighted.weight_range.1" data-f="d1"></span>) moves v2's average precision from
+    <b data-v="reweighted.unweighted.ap" data-f="d3"></b> to <b data-v="reweighted.weighted.ap" data-f="d3"></b>.
+    The model does somewhat worse in the busy hours the first-come sample under-covered, so the cross-validated scores
+    above are a little flattering. The random sample removes this bias for every label from today on.</p>
+  <h3>The October 16–17 incident window</h3>
+  <p>Duplicated edits inflated the baselines for 38 hours, so surprise was understated there. v2 doesn't use surprise.
+    Training with the window's <span data-v="incident.labeled_inside" data-f="int"></span> labels
+    (<span data-v="incident.news_inside" data-f="int"></span> news) scores
+    <b data-v="incident.ap_trained_with" data-f="d3"></b> on bursts outside it, against
+    <b data-v="incident.ap_trained_without" data-f="d3"></b> without them. Keep the window: its labels help more than the distorted baseline hurts.</p>
+</section>
+
+<section>
+  <h2>Decisions</h2>
+  <p class="prose">All six shipped on October 18, 2026. The live classifier now trains on the v2 features, calls news
+    from the threshold it learns, and records each call on the burst (<code>called_news</code>).</p>
+  <div class="decisions">
+    <div class="decision"><div class="n">1</div><h3>Keep logistic regression <span class="pill done">Shipped</span></h3>
+      <p>Tuned XGBoost scores <span data-v="m.xgb_v2.metrics.ap" data-f="d2"></span> on v2 and
+        <span data-v="m.xgb_all.metrics.ap" data-f="d2"></span> on every feature, against logistic regression's
+        <span data-v="m.lr_v2.metrics.ap" data-f="d2"></span>, and tuning chose C =
+        <span data-v="settled.lr_c" data-f="d1"></span>, the deployed value. Revisit XGBoost by rerunning this study as
+        random-sample labels accumulate, and switch when its learning curve crosses LR's.</p></div>
+    <div class="decision"><div class="n">2</div><h3>Ship the v2 features <span class="pill done">Shipped</span></h3>
+      <p>Large wiki and usual edits in place of surprise carry the gain; year in title is cheap and marginal. None
+        needs a new data feed: the size tier is
+        the <code>wikis</code> lookup the stack already maintains, the year is a regex on the title, and usual edits
+        is already on every burst row. <code>classifier.py</code>'s feature list and the detector change together,
+        so training and serving compute the same features.</p></div>
+    <div class="decision"><div class="n">3</div><h3>Learn the threshold with the weights <span class="pill done">Shipped</span></h3>
+      <p>Call news at the probability that keeps precision at 50% or more: <span data-v="t.p50.threshold" data-f="d2"></span>
+        here, catching <span data-v="t.p50.recall" data-f="pct0"></span> of news, about
+        <span data-v="t.p50.news_calls_per_day" data-f="d1"></span> calls a day. The step stores it in
+        <code>gold.news_classifier</code>, the detector records each burst's call, and the <code>called_news()</code>
+        macro reads that call in place of a hard-coded 0.5.</p></div>
+    <div class="decision"><div class="n">4</div><h3>Gate the model on what matters <span class="pill done">Shipped</span></h3>
+      <p>The current gate (training accuracy above always answering "not news") passes almost any model: the live one
+        cleared it by 0.6 points. The gate is now grouped out-of-fold average precision closing at least a fifth of the
+        gap between random guessing and perfect, computed in the step with the same numpy fit.</p></div>
+    <div class="decision"><div class="n">5</div><h3>Claude reads every fresh burst <span class="pill done">Shipped</span></h3>
+      <p>The model is short of labels, not compute. Reading every fresh burst costs about $0.22 a day and doubles the
+        labels; a burst that arrives with the budget spent records a chance of 0, so the sample stays one whose bias
+        is known.</p></div>
+    <div class="decision"><div class="n">6</div><h3>Label sampling <span class="pill done">Shipped</span></h3>
+      <p>Reads with a logged probability, <code>read_probability</code> on every burst, and the
+        <code>label_sample</code> dimension in <code>classifier_eval</code>. From here on, the random sample is the
+        clean test set for every decision above.</p></div>
+  </div>
+</section>
+
+<footer>
+  <p>Reproduce: <code>cd analysis &amp;&amp; python features.py &amp;&amp; python classifier_study.py &amp;&amp; python report.py</code>
+    (with the stack running; <code>features.py</code> reads the lakehouse through Trino). Settings:
+    <span data-v="repeats" data-f="int"></span> repeats of 5-fold cross-validation grouped by article, hyperparameters
+    tuned in 4 inner folds of each training fold, <span data-v="bootstrap" data-f="int"></span> bootstrap resamples of
+    articles for intervals. Generated <span id="generated"></span>.</p>
+</footer>
+</main>
+<div class="tip" id="tip" hidden></div>
+<script type="application/json" id="results">{
+ "generated_at": "2026-10-18T14:24:17+00:00",
+ "repeats": 10,
+ "bootstrap": 1000,
+ "data": {
+  "bursts": 1512,
+  "articles": 966,
+  "first": "2026-10-12 21:58:52",
+  "last": "2026-10-18 14:05:01",
+  "labels": {
+   "not read": 1172,
+   "edit war": 163,
+   "routine": 134,
+   "news": 38,
+   "unclear": 5
+  },
+  "labeled": 335,
+  "news": 38,
+  "news_articles": 21,
+  "labeled_articles": 256,
+  "coverage_by_hour": [
+   {
+    "hour": 0,
+    "flagged": 45,
+    "labeled": 20
+   },
+   {
+    "hour": 1,
+    "flagged": 36,
+    "labeled": 16
+   },
+   {
+    "hour": 2,
+    "flagged": 28,
+    "labeled": 16
+   },
+   {
+    "hour": 3,
+    "flagged": 45,
+    "labeled": 13
+   },
+   {
+    "hour": 4,
+    "flagged": 23,
+    "labeled": 6
+   },
+   {
+    "hour": 5,
+    "flagged": 22,
+    "labeled": 6
+   },
+   {
+    "hour": 6,
+    "flagged": 30,
+    "labeled": 7
+   },
+   {
+    "hour": 7,
+    "flagged": 49,
+    "labeled": 15
+   },
+   {
+    "hour": 8,
+    "flagged": 32,
+    "labeled": 5
+   },
+   {
+    "hour": 9,
+    "flagged": 42,
+    "labeled": 10
+   },
+   {
+    "hour": 10,
+    "flagged": 58,
+    "labeled": 8
+   },
+   {
+    "hour": 11,
+    "flagged": 40,
+    "labeled": 7
+   },
+   {
+    "hour": 12,
+    "flagged": 71,
+    "labeled": 12
+   },
+   {
+    "hour": 13,
+    "flagged": 76,
+    "labeled": 15
+   },
+   {
+    "hour": 14,
+    "flagged": 70,
+    "labeled": 19
+   },
+   {
+    "hour": 15,
+    "flagged": 62,
+    "labeled": 15
+   },
+   {
+    "hour": 16,
+    "flagged": 50,
+    "labeled": 14
+   },
+   {
+    "hour": 17,
+    "flagged": 60,
+    "labeled": 16
+   },
+   {
+    "hour": 18,
+    "flagged": 92,
+    "labeled": 26
+   },
+   {
+    "hour": 19,
+    "flagged": 71,
+    "labeled": 31
+   },
+   {
+    "hour": 20,
+    "flagged": 61,
+    "labeled": 25
+   },
+   {
+    "hour": 21,
+    "flagged": 44,
+    "labeled": 10
+   },
+   {
+    "hour": 22,
+    "flagged": 36,
+    "labeled": 13
+   },
+   {
+    "hour": 23,
+    "flagged": 28,
+    "labeled": 8
+   }
+  ],
+  "by_tier": {
+   "large": {
+    "edit war": 113,
+    "routine": 69,
+    "news": 33
+   },
+   "medium": {
+    "routine": 59,
+    "edit war": 44,
+    "news": 5
+   },
+   "small": {
+    "edit war": 6,
+    "routine": 6
+   }
+  }
+ },
+ "features": {
+  "log_edits": {
+   "group": "size",
+   "description": "Edits in the 30 minutes, logged",
+   "in_v2": true,
+   "in_deployed": true,
+   "median": {
+    "edit war": 1.9459101490553132,
+    "news": 2.2499048351651325,
+    "routine": 1.9459101490553132
+   },
+   "mean": {
+    "edit war": 2.1083497512829115,
+    "news": 2.2485561506147467,
+    "routine": 2.141953294897462
+   }
+  },
+  "log_editors": {
+   "group": "size",
+   "description": "Different editors in the 30 minutes, logged",
+   "in_v2": true,
+   "in_deployed": true,
+   "median": {
+    "edit war": 1.3862943611198906,
+    "news": 1.6094379124341003,
+    "routine": 1.3862943611198906
+   },
+   "mean": {
+    "edit war": 1.5694508781632996,
+    "news": 1.6017103442990923,
+    "routine": 1.4550687552670205
+   }
+  },
+  "log_surprise": {
+   "group": "size",
+   "description": "Standard deviations above usual, logged",
+   "in_v2": false,
+   "in_deployed": true,
+   "median": {
+    "edit war": 2.038619547159581,
+    "news": 2.3473166525002442,
+    "routine": 2.0438143640366846
+   },
+   "mean": {
+    "edit war": 2.1619300977636957,
+    "news": 2.362526633781985,
+    "routine": 2.1704498655545494
+   }
+  },
+  "log_expected": {
+   "group": "baseline",
+   "description": "What's usual in 30 minutes for an article on that wiki at that hour, logged",
+   "in_v2": true,
+   "in_deployed": false,
+   "median": {
+    "edit war": -0.41248972304512876,
+    "news": -0.4652151125139384,
+    "routine": -0.4049652330665133
+   },
+   "mean": {
+    "edit war": -0.40714014795214915,
+    "news": -0.45174063987425145,
+    "routine": -0.4000412275774449
+   }
+  },
+  "bot_share": {
+   "group": "who",
+   "description": "Share of edits by bots",
+   "in_v2": true,
+   "in_deployed": true,
+   "median": {
+    "edit war": 0.0,
+    "news": 0.0,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.007067484662576688,
+    "news": 0.004394736842105264,
+    "routine": 0.02252238805970149
+   }
+  },
+  "anonymous_share": {
+   "group": "who",
+   "description": "Share of edits by editors without an account",
+   "in_v2": true,
+   "in_deployed": true,
+   "median": {
+    "edit war": 0.333,
+    "news": 0.167,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.3442453987730061,
+    "news": 0.23402631578947367,
+    "routine": 0.23285820895522388
+   }
+  },
+  "revert_share": {
+   "group": "reverts",
+   "description": "Share of edits undoing others, English summaries only",
+   "in_v2": true,
+   "in_deployed": true,
+   "median": {
+    "edit war": 0.167,
+    "news": 0.0,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.27594478527607363,
+    "news": 0.010026315789473684,
+    "routine": 0.0028134328358208954
+   }
+  },
+  "revert_share_any_language": {
+   "group": "reverts",
+   "description": "Share of edits undoing others, in 20 languages' summaries",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 0.3,
+    "news": 0.0,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.36625766871165644,
+    "news": 0.018421052631578946,
+    "routine": 0.011940298507462687
+   }
+  },
+  "year_in_title": {
+   "group": "title",
+   "description": "The title holds a year, e.g. 2026 World Series",
+   "in_v2": true,
+   "in_deployed": false,
+   "median": {
+    "edit war": 0.0,
+    "news": 0.5,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.10429447852760736,
+    "news": 0.5,
+    "routine": 0.23880597014925373
+   }
+  },
+  "log_prior_24h": {
+   "group": "history",
+   "description": "The article's edits in the 24 hours before the window, logged",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 0.0,
+    "news": 2.4414009612931853,
+    "routine": 1.0986122886681098
+   },
+   "mean": {
+    "edit war": 0.8033596168872561,
+    "news": 2.5731303153327905,
+    "routine": 1.3905017997649258
+   }
+  },
+  "log_earlier_flags": {
+   "group": "history",
+   "description": "Earlier flags of the article in the last 24 hours, logged",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 0.0,
+    "news": 0.6931471805599453,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.29141801850293736,
+    "news": 0.8690812876814069,
+    "routine": 0.2862363119276544
+   }
+  },
+  "log_bytes_removed": {
+   "group": "content",
+   "description": "Bytes the window's edits removed, logged",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 5.655991810819852,
+    "news": 4.03105879137737,
+    "routine": 3.40064151723581
+   },
+   "mean": {
+    "edit war": 5.882539499120297,
+    "news": 3.3821430439762095,
+    "routine": 3.1507088258664426
+   }
+  },
+  "new_page": {
+   "group": "content",
+   "description": "The article was created within the window",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 0.0,
+    "news": 0.0,
+    "routine": 0.0
+   },
+   "mean": {
+    "edit war": 0.012269938650306749,
+    "news": 0.05263157894736842,
+    "routine": 0.17164179104477612
+   }
+  },
+  "span_minutes": {
+   "group": "pace",
+   "description": "Minutes from the window's first edit to its last",
+   "in_v2": false,
+   "in_deployed": false,
+   "median": {
+    "edit war": 15.383333,
+    "news": 23.908333,
+    "routine": 21.6583335
+   },
+   "mean": {
+    "edit war": 15.512269932515338,
+    "news": 22.74298242105263,
+    "routine": 20.119402962686568
+   }
+  },
+  "large_wiki": {
+   "group": "wiki",
+   "description": "On a large wiki (100,000+ edits a week)",
+   "in_v2": true,
+   "in_deployed": false,
+   "median": {
+    "edit war": 1.0,
+    "news": 1.0,
+    "routine": 1.0
+   },
+   "mean": {
+    "edit war": 0.6932515337423313,
+    "news": 0.868421052631579,
+    "routine": 0.5149253731343284
+   }
+  }
+ },
+ "newton_check": {
+  "features": [
+   "(intercept)",
+   "log_edits",
+   "log_editors",
+   "log_surprise",
+   "bot_share",
+   "anonymous_share",
+   "revert_share"
+  ],
+  "newton": [
+   -2.812836941239663,
+   -1.2887174493326692,
+   0.5557050085681754,
+   1.5716272615174947,
+   -0.36593643629821027,
+   -0.2335976609470336,
+   -1.7267109755606826
+  ],
+  "lbfgs": [
+   -2.812847799914083,
+   -1.2892815311443449,
+   0.5558707224969377,
+   1.572043330805876,
+   -0.36542680704632496,
+   -0.23346105400769612,
+   -1.7267003671913483
+  ],
+  "max_difference": 0.0005640818116756652
+ },
+ "models": [
+  {
+   "key": "lr_deployed",
+   "label": "Logistic regression, deployed features (C=1, as live)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "bot_share",
+    "anonymous_share",
+    "revert_share"
+   ],
+   "metrics": {
+    "ap": 0.34458319302029355,
+    "roc_auc": 0.7879009392167287,
+    "log_loss": 0.29662282881065094,
+    "brier": 0.08856946163234909,
+    "precision_top10": 0.35882352941176465
+   },
+   "ap_repeats": [
+    0.3007678087877848,
+    0.34760481253020126,
+    0.34010749133521717,
+    0.3752088008225274,
+    0.36493105679363735,
+    0.37982878389812974,
+    0.27668477519398527,
+    0.3634202501102707,
+    0.35897208061891295,
+    0.338306070112269
+   ],
+   "ap_bootstrap_interval": [
+    0.20255290467406903,
+    0.520172634473342
+   ],
+   "chosen": [
+    {
+     "params": 1.0,
+     "folds": 50
+    }
+   ]
+  },
+  {
+   "key": "lr_v2",
+   "label": "Logistic regression, v2 features (C tuned)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "large_wiki",
+    "year_in_title"
+   ],
+   "metrics": {
+    "ap": 0.4927985943349982,
+    "roc_auc": 0.8122452596136807,
+    "log_loss": 0.28181352431850093,
+    "brier": 0.07826181663729972,
+    "precision_top10": 0.5
+   },
+   "ap_repeats": [
+    0.45418119122430844,
+    0.4871629277409375,
+    0.46359356344186703,
+    0.508699493781736,
+    0.512446646739252,
+    0.523072067378765,
+    0.4538206446710823,
+    0.49758506456124396,
+    0.5223262501716592,
+    0.5050980936391306
+   ],
+   "ap_bootstrap_interval": [
+    0.2457763239544525,
+    0.6854620009275417
+   ],
+   "chosen": [
+    {
+     "params": 1.0,
+     "folds": 18
+    },
+    {
+     "params": 0.3,
+     "folds": 16
+    },
+    {
+     "params": 3.0,
+     "folds": 8
+    }
+   ]
+  },
+  {
+   "key": "lr_selected",
+   "label": "Logistic regression, features selected in each fold",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "revert_share_any_language",
+    "year_in_title",
+    "log_prior_24h",
+    "log_earlier_flags",
+    "log_bytes_removed",
+    "new_page",
+    "span_minutes",
+    "large_wiki"
+   ],
+   "metrics": {
+    "ap": 0.44357009327595665,
+    "roc_auc": 0.8103491050859473,
+    "log_loss": 0.30395494123100464,
+    "brier": 0.08301069360348245,
+    "precision_top10": 0.45
+   },
+   "ap_repeats": [
+    0.47606491021160086,
+    0.4558899650166541,
+    0.49816739489276424,
+    0.4526183407951809,
+    0.418641065003174,
+    0.48539705501806596,
+    0.3889243763027495,
+    0.45610791437855164,
+    0.3696421448537813,
+    0.43424776628704376
+   ],
+   "ap_bootstrap_interval": [
+    0.2619535296109861,
+    0.6757442131497636
+   ],
+   "chosen": [
+    {
+     "params": {
+      "c": 30.0,
+      "features": [
+       "log_edits",
+       "log_editors",
+       "log_surprise",
+       "bot_share",
+       "anonymous_share",
+       "revert_share",
+       "large_wiki",
+       "log_expected",
+       "revert_share_any_language"
+      ]
+     },
+     "folds": 3
+    },
+    {
+     "params": {
+      "c": 3.0,
+      "features": [
+       "log_edits",
+       "log_editors",
+       "log_surprise",
+       "bot_share",
+       "anonymous_share",
+       "revert_share",
+       "large_wiki",
+       "revert_share_any_language",
+       "log_expected",
+       "log_bytes_removed"
+      ]
+     },
+     "folds": 2
+    },
+    {
+     "params": {
+      "c": 30.0,
+      "features": [
+       "log_edits",
+       "log_editors",
+       "log_surprise",
+       "bot_share",
+       "anonymous_share",
+       "revert_share",
+       "large_wiki",
+       "revert_share_any_language",
+       "log_expected"
+      ]
+     },
+     "folds": 2
+    }
+   ]
+  },
+  {
+   "key": "lr_all",
+   "label": "Logistic regression, all 14 features (C tuned)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "revert_share_any_language",
+    "year_in_title",
+    "log_prior_24h",
+    "log_earlier_flags",
+    "log_bytes_removed",
+    "new_page",
+    "span_minutes",
+    "large_wiki"
+   ],
+   "metrics": {
+    "ap": 0.47397978728021056,
+    "roc_auc": 0.8103136629452419,
+    "log_loss": 0.2906190109806167,
+    "brier": 0.08150831244697844,
+    "precision_top10": 0.49411764705882355
+   },
+   "ap_repeats": [
+    0.4779464119191243,
+    0.47544652756495015,
+    0.46674570421382866,
+    0.483764280575796,
+    0.483305161568316,
+    0.49590323168786093,
+    0.43551989872391883,
+    0.4631031629499603,
+    0.49305795047058687,
+    0.46500554312776354
+   ],
+   "ap_bootstrap_interval": [
+    0.23552653781118432,
+    0.6929304850104562
+   ],
+   "chosen": [
+    {
+     "params": 0.3,
+     "folds": 33
+    },
+    {
+     "params": 30.0,
+     "folds": 8
+    },
+    {
+     "params": 1.0,
+     "folds": 5
+    }
+   ]
+  },
+  {
+   "key": "xgb_deployed",
+   "label": "XGBoost, deployed features (tuned)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "bot_share",
+    "anonymous_share",
+    "revert_share"
+   ],
+   "metrics": {
+    "ap": 0.24860099225923057,
+    "roc_auc": 0.7072700691121744,
+    "log_loss": 0.3491258244945247,
+    "brier": 0.09921882523143429,
+    "precision_top10": 0.2735294117647059
+   },
+   "ap_repeats": [
+    0.21976247271224866,
+    0.26565367886357466,
+    0.24472138202003912,
+    0.2846805046292068,
+    0.2530493224719225,
+    0.2035213097924032,
+    0.21044255490450323,
+    0.30463435245367126,
+    0.268588289153136,
+    0.23095605559159993
+   ],
+   "ap_bootstrap_interval": [
+    0.15146957472421568,
+    0.3983840935176801
+   ],
+   "chosen": [
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 3,
+      "min_child_weight": 1,
+      "n_estimators": 300
+     },
+     "folds": 7
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 2,
+      "min_child_weight": 1,
+      "n_estimators": 300
+     },
+     "folds": 6
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 1,
+      "min_child_weight": 1,
+      "n_estimators": 100
+     },
+     "folds": 5
+    }
+   ]
+  },
+  {
+   "key": "xgb_v2",
+   "label": "XGBoost, v2 features (tuned)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "large_wiki",
+    "year_in_title"
+   ],
+   "metrics": {
+    "ap": 0.45643389672728807,
+    "roc_auc": 0.8010189615452774,
+    "log_loss": 0.2858359726044792,
+    "brier": 0.08074179577199217,
+    "precision_top10": 0.4794117647058823
+   },
+   "ap_repeats": [
+    0.45197132936483636,
+    0.5381396246314608,
+    0.3784817342089505,
+    0.5156165796062634,
+    0.42259159285106657,
+    0.5054353080351417,
+    0.4044522909695405,
+    0.39285964630423353,
+    0.4785425609003977,
+    0.4762483004009901
+   ],
+   "ap_bootstrap_interval": [
+    0.2382749363069036,
+    0.6727562597349541
+   ],
+   "chosen": [
+    {
+     "params": {
+      "learning_rate": 0.03,
+      "max_depth": 1,
+      "min_child_weight": 1,
+      "n_estimators": 300
+     },
+     "folds": 14
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 1,
+      "min_child_weight": 1,
+      "n_estimators": 300
+     },
+     "folds": 10
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 2,
+      "min_child_weight": 5,
+      "n_estimators": 300
+     },
+     "folds": 9
+    }
+   ]
+  },
+  {
+   "key": "xgb_all",
+   "label": "XGBoost, all 14 features (tuned)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "revert_share_any_language",
+    "year_in_title",
+    "log_prior_24h",
+    "log_earlier_flags",
+    "log_bytes_removed",
+    "new_page",
+    "span_minutes",
+    "large_wiki"
+   ],
+   "metrics": {
+    "ap": 0.39133739905207976,
+    "roc_auc": 0.7882996632996633,
+    "log_loss": 0.2993893544247486,
+    "brier": 0.08700829005985299,
+    "precision_top10": 0.41470588235294115
+   },
+   "ap_repeats": [
+    0.3621110784717202,
+    0.3991215698693831,
+    0.34936456169692576,
+    0.46824352544632136,
+    0.4124949853244943,
+    0.4351198449856448,
+    0.3923956610489217,
+    0.30074734216473614,
+    0.366665906248029,
+    0.42710951526462204
+   ],
+   "ap_bootstrap_interval": [
+    0.1798162494355892,
+    0.6519683357462135
+   ],
+   "chosen": [
+    {
+     "params": {
+      "learning_rate": 0.03,
+      "max_depth": 1,
+      "min_child_weight": 1,
+      "n_estimators": 300
+     },
+     "folds": 9
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 1,
+      "min_child_weight": 1,
+      "n_estimators": 100
+     },
+     "folds": 6
+    },
+    {
+     "params": {
+      "learning_rate": 0.1,
+      "max_depth": 2,
+      "min_child_weight": 5,
+      "n_estimators": 100
+     },
+     "folds": 5
+    }
+   ]
+  },
+  {
+   "key": "xgb_all_defaults",
+   "label": "XGBoost, all 14 features (library defaults)",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_surprise",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "revert_share_any_language",
+    "year_in_title",
+    "log_prior_24h",
+    "log_earlier_flags",
+    "log_bytes_removed",
+    "new_page",
+    "span_minutes",
+    "large_wiki"
+   ],
+   "metrics": {
+    "ap": 0.3416930665151666,
+    "roc_auc": 0.7718146376041114,
+    "log_loss": 0.4175524536826479,
+    "brier": 0.100953710785931,
+    "precision_top10": 0.3911764705882353
+   },
+   "ap_repeats": [
+    0.36843747159930595,
+    0.3463552385055491,
+    0.2513430107741475,
+    0.3527382880551558,
+    0.29431505381717804,
+    0.3851677143571857,
+    0.3809817990999068,
+    0.35233689039487015,
+    0.3766631943541548,
+    0.3085920041942126
+   ],
+   "ap_bootstrap_interval": [
+    0.16555764765051034,
+    0.5843175672872919
+   ],
+   "chosen": [
+    {
+     "params": {
+      "learning_rate": 0.3,
+      "max_depth": 6,
+      "min_child_weight": 1,
+      "n_estimators": 100
+     },
+     "folds": 50
+    }
+   ]
+  }
+ ],
+ "base_rate": 0.11343283582089553,
+ "pairs": [
+  {
+   "a": "lr_v2",
+   "b": "lr_deployed",
+   "delta_ap": 0.1286355692193999,
+   "interval": [
+    -0.005669366006805103,
+    0.24652791064258547
+   ],
+   "a_better_share": 0.941,
+   "a_better_repeats": 1.0
+  },
+  {
+   "a": "lr_selected",
+   "b": "lr_deployed",
+   "delta_ap": 0.12306467583779229,
+   "interval": [
+    0.0029343133857210506,
+    0.23327672047128306
+   ],
+   "a_better_share": 0.952,
+   "a_better_repeats": 1.0
+  },
+  {
+   "a": "lr_v2",
+   "b": "lr_all",
+   "delta_ap": 0.006958555328594961,
+   "interval": [
+    -0.0649647643281651,
+    0.0838241116239838
+   ],
+   "a_better_share": 0.562,
+   "a_better_repeats": 0.8
+  },
+  {
+   "a": "lr_v2",
+   "b": "xgb_v2",
+   "delta_ap": 0.021118727509443762,
+   "interval": [
+    -0.051210338586812044,
+    0.08517866315764769
+   ],
+   "a_better_share": 0.702,
+   "a_better_repeats": 0.8
+  },
+  {
+   "a": "lr_v2",
+   "b": "xgb_all",
+   "delta_ap": 0.05930021414134654,
+   "interval": [
+    -0.026306442244151122,
+    0.15576277803387842
+   ],
+   "a_better_share": 0.86,
+   "a_better_repeats": 1.0
+  },
+  {
+   "a": "xgb_all",
+   "b": "xgb_all_defaults",
+   "delta_ap": 0.05892651030171831,
+   "interval": [
+    0.0025575818024197164,
+    0.1120505914802297
+   ],
+   "a_better_share": 0.961,
+   "a_better_repeats": 0.7
+  },
+  {
+   "a": "lr_deployed",
+   "b": "xgb_deployed",
+   "delta_ap": 0.09240322769396772,
+   "interval": [
+    0.014033481774577524,
+    0.17808140841483944
+   ],
+   "a_better_share": 0.971,
+   "a_better_repeats": 1.0
+  }
+ ],
+ "pr_curves": {
+  "lr_deployed": [
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.0263,
+    1.0
+   ],
+   [
+    0.0263,
+    0.5
+   ],
+   [
+    0.0526,
+    0.6667
+   ],
+   [
+    0.0526,
+    0.5
+   ],
+   [
+    0.0526,
+    0.4
+   ],
+   [
+    0.0789,
+    0.5
+   ],
+   [
+    0.1053,
+    0.5714
+   ],
+   [
+    0.1053,
+    0.5
+   ],
+   [
+    0.1316,
+    0.5556
+   ],
+   [
+    0.1579,
+    0.6
+   ],
+   [
+    0.1842,
+    0.6364
+   ],
+   [
+    0.1842,
+    0.5833
+   ],
+   [
+    0.1842,
+    0.5385
+   ],
+   [
+    0.1842,
+    0.5
+   ],
+   [
+    0.1842,
+    0.4667
+   ],
+   [
+    0.2105,
+    0.5
+   ],
+   [
+    0.2105,
+    0.4706
+   ],
+   [
+    0.2368,
+    0.5
+   ],
+   [
+    0.2368,
+    0.4737
+   ],
+   [
+    0.2368,
+    0.45
+   ],
+   [
+    0.2368,
+    0.4286
+   ],
+   [
+    0.2368,
+    0.4091
+   ],
+   [
+    0.2368,
+    0.3913
+   ],
+   [
+    0.2368,
+    0.375
+   ],
+   [
+    0.2632,
+    0.4
+   ],
+   [
+    0.2632,
+    0.3846
+   ],
+   [
+    0.2632,
+    0.3704
+   ],
+   [
+    0.2632,
+    0.3571
+   ],
+   [
+    0.2895,
+    0.3793
+   ],
+   [
+    0.2895,
+    0.3667
+   ],
+   [
+    0.2895,
+    0.3548
+   ],
+   [
+    0.2895,
+    0.3438
+   ],
+   [
+    0.3158,
+    0.3636
+   ],
+   [
+    0.3158,
+    0.3529
+   ],
+   [
+    0.3421,
+    0.3714
+   ],
+   [
+    0.3421,
+    0.3611
+   ],
+   [
+    0.3421,
+    0.3514
+   ],
+   [
+    0.3421,
+    0.3421
+   ],
+   [
+    0.3421,
+    0.3333
+   ],
+   [
+    0.3684,
+    0.35
+   ],
+   [
+    0.3684,
+    0.3415
+   ],
+   [
+    0.3684,
+    0.3333
+   ],
+   [
+    0.3684,
+    0.3256
+   ],
+   [
+    0.3684,
+    0.3182
+   ],
+   [
+    0.3947,
+    0.3333
+   ],
+   [
+    0.3947,
+    0.3261
+   ],
+   [
+    0.3947,
+    0.3191
+   ],
+   [
+    0.3947,
+    0.3125
+   ],
+   [
+    0.4211,
+    0.3265
+   ],
+   [
+    0.4211,
+    0.32
+   ],
+   [
+    0.4211,
+    0.3137
+   ],
+   [
+    0.4474,
+    0.3269
+   ],
+   [
+    0.4474,
+    0.3208
+   ],
+   [
+    0.4474,
+    0.3148
+   ],
+   [
+    0.4737,
+    0.3273
+   ],
+   [
+    0.4737,
+    0.3214
+   ],
+   [
+    0.4737,
+    0.3158
+   ],
+   [
+    0.4737,
+    0.3103
+   ],
+   [
+    0.4737,
+    0.3051
+   ],
+   [
+    0.5,
+    0.3167
+   ],
+   [
+    0.5,
+    0.3115
+   ],
+   [
+    0.5,
+    0.3065
+   ],
+   [
+    0.5263,
+    0.3175
+   ],
+   [
+    0.5263,
+    0.3125
+   ],
+   [
+    0.5263,
+    0.3077
+   ],
+   [
+    0.5263,
+    0.303
+   ],
+   [
+    0.5526,
+    0.3134
+   ],
+   [
+    0.5526,
+    0.3088
+   ],
+   [
+    0.5526,
+    0.3043
+   ],
+   [
+    0.5526,
+    0.3
+   ],
+   [
+    0.5526,
+    0.2958
+   ],
+   [
+    0.5526,
+    0.2917
+   ],
+   [
+    0.5526,
+    0.2877
+   ],
+   [
+    0.5526,
+    0.2838
+   ],
+   [
+    0.5526,
+    0.28
+   ],
+   [
+    0.5526,
+    0.2763
+   ],
+   [
+    0.5789,
+    0.2857
+   ],
+   [
+    0.5789,
+    0.2821
+   ],
+   [
+    0.5789,
+    0.2785
+   ],
+   [
+    0.6053,
+    0.2875
+   ],
+   [
+    0.6053,
+    0.284
+   ],
+   [
+    0.6053,
+    0.2805
+   ],
+   [
+    0.6053,
+    0.2771
+   ],
+   [
+    0.6053,
+    0.2738
+   ],
+   [
+    0.6053,
+    0.2706
+   ],
+   [
+    0.6316,
+    0.2791
+   ],
+   [
+    0.6316,
+    0.2759
+   ],
+   [
+    0.6316,
+    0.2727
+   ],
+   [
+    0.6316,
+    0.2697
+   ],
+   [
+    0.6579,
+    0.2778
+   ],
+   [
+    0.6579,
+    0.2747
+   ],
+   [
+    0.6579,
+    0.2717
+   ],
+   [
+    0.6579,
+    0.2688
+   ],
+   [
+    0.6579,
+    0.266
+   ],
+   [
+    0.6579,
+    0.2632
+   ],
+   [
+    0.6579,
+    0.2604
+   ],
+   [
+    0.6579,
+    0.2577
+   ],
+   [
+    0.6579,
+    0.2551
+   ],
+   [
+    0.6579,
+    0.2525
+   ],
+   [
+    0.6579,
+    0.25
+   ],
+   [
+    0.6842,
+    0.2574
+   ],
+   [
+    0.7105,
+    0.2647
+   ],
+   [
+    0.7105,
+    0.2621
+   ],
+   [
+    0.7105,
+    0.2596
+   ],
+   [
+    0.7105,
+    0.2571
+   ],
+   [
+    0.7105,
+    0.2547
+   ],
+   [
+    0.7105,
+    0.2523
+   ],
+   [
+    0.7105,
+    0.25
+   ],
+   [
+    0.7105,
+    0.2477
+   ],
+   [
+    0.7368,
+    0.2545
+   ],
+   [
+    0.7368,
+    0.2523
+   ],
+   [
+    0.7368,
+    0.25
+   ],
+   [
+    0.7368,
+    0.2478
+   ],
+   [
+    0.7368,
+    0.2456
+   ],
+   [
+    0.7632,
+    0.2522
+   ],
+   [
+    0.7632,
+    0.25
+   ],
+   [
+    0.7632,
+    0.2479
+   ],
+   [
+    0.7632,
+    0.2458
+   ],
+   [
+    0.7632,
+    0.2437
+   ],
+   [
+    0.7632,
+    0.2417
+   ],
+   [
+    0.7632,
+    0.2397
+   ],
+   [
+    0.7632,
+    0.2377
+   ],
+   [
+    0.7632,
+    0.2358
+   ],
+   [
+    0.7632,
+    0.2339
+   ],
+   [
+    0.7632,
+    0.232
+   ],
+   [
+    0.7632,
+    0.2302
+   ],
+   [
+    0.7632,
+    0.2283
+   ],
+   [
+    0.7632,
+    0.2266
+   ],
+   [
+    0.7632,
+    0.2248
+   ],
+   [
+    0.7632,
+    0.2231
+   ],
+   [
+    0.7632,
+    0.2214
+   ],
+   [
+    0.7632,
+    0.2197
+   ],
+   [
+    0.7632,
+    0.218
+   ],
+   [
+    0.7632,
+    0.2164
+   ],
+   [
+    0.7632,
+    0.2148
+   ],
+   [
+    0.7632,
+    0.2132
+   ],
+   [
+    0.7632,
+    0.2117
+   ],
+   [
+    0.7895,
+    0.2174
+   ],
+   [
+    0.8158,
+    0.223
+   ],
+   [
+    0.8158,
+    0.2214
+   ],
+   [
+    0.8158,
+    0.2199
+   ],
+   [
+    0.8158,
+    0.2183
+   ],
+   [
+    0.8158,
+    0.2168
+   ],
+   [
+    0.8421,
+    0.2222
+   ],
+   [
+    0.8421,
+    0.2207
+   ],
+   [
+    0.8421,
+    0.2192
+   ],
+   [
+    0.8421,
+    0.2177
+   ],
+   [
+    0.8421,
+    0.2162
+   ],
+   [
+    0.8421,
+    0.2148
+   ],
+   [
+    0.8421,
+    0.2133
+   ],
+   [
+    0.8421,
+    0.2119
+   ],
+   [
+    0.8421,
+    0.2105
+   ],
+   [
+    0.8421,
+    0.2092
+   ],
+   [
+    0.8421,
+    0.2078
+   ],
+   [
+    0.8421,
+    0.2065
+   ],
+   [
+    0.8421,
+    0.2051
+   ],
+   [
+    0.8421,
+    0.2038
+   ],
+   [
+    0.8421,
+    0.2025
+   ],
+   [
+    0.8421,
+    0.2013
+   ],
+   [
+    0.8421,
+    0.2
+   ],
+   [
+    0.8421,
+    0.1988
+   ],
+   [
+    0.8421,
+    0.1975
+   ],
+   [
+    0.8421,
+    0.1963
+   ],
+   [
+    0.8421,
+    0.1951
+   ],
+   [
+    0.8421,
+    0.1939
+   ],
+   [
+    0.8421,
+    0.1928
+   ],
+   [
+    0.8421,
+    0.1916
+   ],
+   [
+    0.8421,
+    0.1905
+   ],
+   [
+    0.8421,
+    0.1893
+   ],
+   [
+    0.8421,
+    0.1882
+   ],
+   [
+    0.8421,
+    0.1871
+   ],
+   [
+    0.8421,
+    0.186
+   ],
+   [
+    0.8421,
+    0.185
+   ],
+   [
+    0.8421,
+    0.1839
+   ],
+   [
+    0.8684,
+    0.1886
+   ],
+   [
+    0.8684,
+    0.1875
+   ],
+   [
+    0.8684,
+    0.1864
+   ],
+   [
+    0.8684,
+    0.1854
+   ],
+   [
+    0.8684,
+    0.1844
+   ],
+   [
+    0.8684,
+    0.1833
+   ],
+   [
+    0.8684,
+    0.1823
+   ],
+   [
+    0.8684,
+    0.1813
+   ],
+   [
+    0.8684,
+    0.1803
+   ],
+   [
+    0.8684,
+    0.1793
+   ],
+   [
+    0.8684,
+    0.1784
+   ],
+   [
+    0.8684,
+    0.1774
+   ],
+   [
+    0.8684,
+    0.1765
+   ],
+   [
+    0.8684,
+    0.1755
+   ],
+   [
+    0.8684,
+    0.1746
+   ],
+   [
+    0.8684,
+    0.1737
+   ],
+   [
+    0.8684,
+    0.1728
+   ],
+   [
+    0.8684,
+    0.1719
+   ],
+   [
+    0.8947,
+    0.1762
+   ],
+   [
+    0.8947,
+    0.1753
+   ],
+   [
+    0.8947,
+    0.1744
+   ],
+   [
+    0.8947,
+    0.1735
+   ],
+   [
+    0.8947,
+    0.1726
+   ],
+   [
+    0.8947,
+    0.1717
+   ],
+   [
+    0.9211,
+    0.1759
+   ],
+   [
+    0.9211,
+    0.175
+   ],
+   [
+    0.9211,
+    0.1741
+   ],
+   [
+    0.9211,
+    0.1733
+   ],
+   [
+    0.9211,
+    0.1724
+   ],
+   [
+    0.9211,
+    0.1716
+   ],
+   [
+    0.9211,
+    0.1707
+   ],
+   [
+    0.9211,
+    0.1699
+   ],
+   [
+    0.9211,
+    0.1691
+   ],
+   [
+    0.9211,
+    0.1683
+   ],
+   [
+    0.9211,
+    0.1675
+   ],
+   [
+    0.9211,
+    0.1667
+   ],
+   [
+    0.9211,
+    0.1659
+   ],
+   [
+    0.9474,
+    0.1698
+   ],
+   [
+    0.9474,
+    0.169
+   ],
+   [
+    0.9474,
+    0.1682
+   ],
+   [
+    0.9474,
+    0.1674
+   ],
+   [
+    0.9474,
+    0.1667
+   ],
+   [
+    0.9474,
+    0.1659
+   ],
+   [
+    0.9474,
+    0.1651
+   ],
+   [
+    0.9474,
+    0.1644
+   ],
+   [
+    0.9474,
+    0.1636
+   ],
+   [
+    0.9474,
+    0.1629
+   ],
+   [
+    0.9474,
+    0.1622
+   ],
+   [
+    0.9474,
+    0.1614
+   ],
+   [
+    0.9474,
+    0.1607
+   ],
+   [
+    0.9474,
+    0.16
+   ],
+   [
+    0.9474,
+    0.1593
+   ],
+   [
+    0.9474,
+    0.1586
+   ],
+   [
+    0.9474,
+    0.1579
+   ],
+   [
+    0.9474,
+    0.1572
+   ],
+   [
+    0.9474,
+    0.1565
+   ],
+   [
+    0.9474,
+    0.1558
+   ],
+   [
+    0.9474,
+    0.1552
+   ],
+   [
+    0.9474,
+    0.1545
+   ],
+   [
+    0.9474,
+    0.1538
+   ],
+   [
+    0.9474,
+    0.1532
+   ],
+   [
+    0.9737,
+    0.1568
+   ],
+   [
+    0.9737,
+    0.1561
+   ],
+   [
+    0.9737,
+    0.1555
+   ],
+   [
+    0.9737,
+    0.1548
+   ],
+   [
+    0.9737,
+    0.1542
+   ],
+   [
+    0.9737,
+    0.1535
+   ],
+   [
+    0.9737,
+    0.1529
+   ],
+   [
+    0.9737,
+    0.1523
+   ],
+   [
+    0.9737,
+    0.1516
+   ],
+   [
+    0.9737,
+    0.151
+   ],
+   [
+    0.9737,
+    0.1504
+   ],
+   [
+    0.9737,
+    0.1498
+   ],
+   [
+    0.9737,
+    0.1492
+   ],
+   [
+    0.9737,
+    0.1486
+   ],
+   [
+    0.9737,
+    0.148
+   ],
+   [
+    0.9737,
+    0.1474
+   ],
+   [
+    0.9737,
+    0.1468
+   ],
+   [
+    0.9737,
+    0.1462
+   ],
+   [
+    0.9737,
+    0.1457
+   ],
+   [
+    0.9737,
+    0.1451
+   ],
+   [
+    0.9737,
+    0.1445
+   ],
+   [
+    0.9737,
+    0.144
+   ],
+   [
+    0.9737,
+    0.1434
+   ],
+   [
+    1.0,
+    0.1467
+   ],
+   [
+    1.0,
+    0.1462
+   ],
+   [
+    1.0,
+    0.1456
+   ],
+   [
+    1.0,
+    0.145
+   ],
+   [
+    1.0,
+    0.1445
+   ],
+   [
+    1.0,
+    0.1439
+   ],
+   [
+    1.0,
+    0.1434
+   ],
+   [
+    1.0,
+    0.1429
+   ],
+   [
+    1.0,
+    0.1423
+   ],
+   [
+    1.0,
+    0.1418
+   ],
+   [
+    1.0,
+    0.1413
+   ],
+   [
+    1.0,
+    0.1407
+   ],
+   [
+    1.0,
+    0.1402
+   ],
+   [
+    1.0,
+    0.1397
+   ],
+   [
+    1.0,
+    0.1392
+   ],
+   [
+    1.0,
+    0.1387
+   ],
+   [
+    1.0,
+    0.1382
+   ],
+   [
+    1.0,
+    0.1377
+   ],
+   [
+    1.0,
+    0.1372
+   ],
+   [
+    1.0,
+    0.1367
+   ],
+   [
+    1.0,
+    0.1362
+   ],
+   [
+    1.0,
+    0.1357
+   ],
+   [
+    1.0,
+    0.1352
+   ],
+   [
+    1.0,
+    0.1348
+   ],
+   [
+    1.0,
+    0.1343
+   ],
+   [
+    1.0,
+    0.1338
+   ],
+   [
+    1.0,
+    0.1333
+   ],
+   [
+    1.0,
+    0.1329
+   ],
+   [
+    1.0,
+    0.1324
+   ],
+   [
+    1.0,
+    0.1319
+   ],
+   [
+    1.0,
+    0.1315
+   ],
+   [
+    1.0,
+    0.131
+   ],
+   [
+    1.0,
+    0.1306
+   ],
+   [
+    1.0,
+    0.1301
+   ],
+   [
+    1.0,
+    0.1297
+   ],
+   [
+    1.0,
+    0.1293
+   ],
+   [
+    1.0,
+    0.1288
+   ],
+   [
+    1.0,
+    0.1284
+   ],
+   [
+    1.0,
+    0.1279
+   ],
+   [
+    1.0,
+    0.1275
+   ],
+   [
+    1.0,
+    0.1271
+   ],
+   [
+    1.0,
+    0.1267
+   ],
+   [
+    1.0,
+    0.1262
+   ],
+   [
+    1.0,
+    0.1258
+   ],
+   [
+    1.0,
+    0.1254
+   ],
+   [
+    1.0,
+    0.125
+   ],
+   [
+    1.0,
+    0.1246
+   ],
+   [
+    1.0,
+    0.1242
+   ],
+   [
+    1.0,
+    0.1238
+   ],
+   [
+    1.0,
+    0.1234
+   ],
+   [
+    1.0,
+    0.123
+   ],
+   [
+    1.0,
+    0.1226
+   ],
+   [
+    1.0,
+    0.1222
+   ],
+   [
+    1.0,
+    0.1218
+   ],
+   [
+    1.0,
+    0.1214
+   ],
+   [
+    1.0,
+    0.121
+   ],
+   [
+    1.0,
+    0.1206
+   ],
+   [
+    1.0,
+    0.1203
+   ],
+   [
+    1.0,
+    0.1199
+   ],
+   [
+    1.0,
+    0.1195
+   ],
+   [
+    1.0,
+    0.1191
+   ],
+   [
+    1.0,
+    0.1187
+   ],
+   [
+    1.0,
+    0.1184
+   ],
+   [
+    1.0,
+    0.118
+   ],
+   [
+    1.0,
+    0.1176
+   ],
+   [
+    1.0,
+    0.1173
+   ],
+   [
+    1.0,
+    0.1169
+   ],
+   [
+    1.0,
+    0.1166
+   ],
+   [
+    1.0,
+    0.1162
+   ],
+   [
+    1.0,
+    0.1159
+   ],
+   [
+    1.0,
+    0.1155
+   ],
+   [
+    1.0,
+    0.1152
+   ],
+   [
+    1.0,
+    0.1148
+   ],
+   [
+    1.0,
+    0.1145
+   ],
+   [
+    1.0,
+    0.1141
+   ],
+   [
+    1.0,
+    0.1138
+   ],
+   [
+    1.0,
+    0.1134
+   ]
+  ],
+  "lr_v2": [
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.0263,
+    1.0
+   ],
+   [
+    0.0526,
+    1.0
+   ],
+   [
+    0.0789,
+    1.0
+   ],
+   [
+    0.1053,
+    1.0
+   ],
+   [
+    0.1316,
+    1.0
+   ],
+   [
+    0.1579,
+    1.0
+   ],
+   [
+    0.1579,
+    0.8571
+   ],
+   [
+    0.1579,
+    0.75
+   ],
+   [
+    0.1579,
+    0.6667
+   ],
+   [
+    0.1579,
+    0.6
+   ],
+   [
+    0.1842,
+    0.6364
+   ],
+   [
+    0.2105,
+    0.6667
+   ],
+   [
+    0.2368,
+    0.6923
+   ],
+   [
+    0.2632,
+    0.7143
+   ],
+   [
+    0.2895,
+    0.7333
+   ],
+   [
+    0.3158,
+    0.75
+   ],
+   [
+    0.3158,
+    0.7059
+   ],
+   [
+    0.3158,
+    0.6667
+   ],
+   [
+    0.3158,
+    0.6316
+   ],
+   [
+    0.3158,
+    0.6
+   ],
+   [
+    0.3421,
+    0.619
+   ],
+   [
+    0.3421,
+    0.5909
+   ],
+   [
+    0.3421,
+    0.5652
+   ],
+   [
+    0.3684,
+    0.5833
+   ],
+   [
+    0.3947,
+    0.6
+   ],
+   [
+    0.3947,
+    0.5769
+   ],
+   [
+    0.3947,
+    0.5556
+   ],
+   [
+    0.4211,
+    0.5714
+   ],
+   [
+    0.4211,
+    0.5517
+   ],
+   [
+    0.4211,
+    0.5333
+   ],
+   [
+    0.4211,
+    0.5161
+   ],
+   [
+    0.4211,
+    0.5
+   ],
+   [
+    0.4474,
+    0.5152
+   ],
+   [
+    0.4474,
+    0.5
+   ],
+   [
+    0.4474,
+    0.4857
+   ],
+   [
+    0.4474,
+    0.4722
+   ],
+   [
+    0.4737,
+    0.4865
+   ],
+   [
+    0.4737,
+    0.4737
+   ],
+   [
+    0.4737,
+    0.4615
+   ],
+   [
+    0.4737,
+    0.45
+   ],
+   [
+    0.4737,
+    0.439
+   ],
+   [
+    0.4737,
+    0.4286
+   ],
+   [
+    0.4737,
+    0.4186
+   ],
+   [
+    0.4737,
+    0.4091
+   ],
+   [
+    0.4737,
+    0.4
+   ],
+   [
+    0.4737,
+    0.3913
+   ],
+   [
+    0.4737,
+    0.383
+   ],
+   [
+    0.5,
+    0.3958
+   ],
+   [
+    0.5263,
+    0.4082
+   ],
+   [
+    0.5263,
+    0.4
+   ],
+   [
+    0.5263,
+    0.3922
+   ],
+   [
+    0.5263,
+    0.3846
+   ],
+   [
+    0.5263,
+    0.3774
+   ],
+   [
+    0.5263,
+    0.3704
+   ],
+   [
+    0.5263,
+    0.3636
+   ],
+   [
+    0.5263,
+    0.3571
+   ],
+   [
+    0.5263,
+    0.3509
+   ],
+   [
+    0.5263,
+    0.3448
+   ],
+   [
+    0.5263,
+    0.339
+   ],
+   [
+    0.5263,
+    0.3333
+   ],
+   [
+    0.5263,
+    0.3279
+   ],
+   [
+    0.5263,
+    0.3226
+   ],
+   [
+    0.5263,
+    0.3175
+   ],
+   [
+    0.5263,
+    0.3125
+   ],
+   [
+    0.5526,
+    0.3231
+   ],
+   [
+    0.5789,
+    0.3333
+   ],
+   [
+    0.5789,
+    0.3284
+   ],
+   [
+    0.5789,
+    0.3235
+   ],
+   [
+    0.6053,
+    0.3333
+   ],
+   [
+    0.6316,
+    0.3429
+   ],
+   [
+    0.6316,
+    0.338
+   ],
+   [
+    0.6579,
+    0.3472
+   ],
+   [
+    0.6579,
+    0.3425
+   ],
+   [
+    0.6842,
+    0.3514
+   ],
+   [
+    0.6842,
+    0.3467
+   ],
+   [
+    0.6842,
+    0.3421
+   ],
+   [
+    0.7105,
+    0.3506
+   ],
+   [
+    0.7105,
+    0.3462
+   ],
+   [
+    0.7105,
+    0.3418
+   ],
+   [
+    0.7105,
+    0.3375
+   ],
+   [
+    0.7368,
+    0.3457
+   ],
+   [
+    0.7632,
+    0.3537
+   ],
+   [
+    0.7632,
+    0.3494
+   ],
+   [
+    0.7632,
+    0.3452
+   ],
+   [
+    0.7632,
+    0.3412
+   ],
+   [
+    0.7632,
+    0.3372
+   ],
+   [
+    0.7632,
+    0.3333
+   ],
+   [
+    0.7895,
+    0.3409
+   ],
+   [
+    0.7895,
+    0.3371
+   ],
+   [
+    0.7895,
+    0.3333
+   ],
+   [
+    0.7895,
+    0.3297
+   ],
+   [
+    0.7895,
+    0.3261
+   ],
+   [
+    0.7895,
+    0.3226
+   ],
+   [
+    0.7895,
+    0.3191
+   ],
+   [
+    0.7895,
+    0.3158
+   ],
+   [
+    0.7895,
+    0.3125
+   ],
+   [
+    0.7895,
+    0.3093
+   ],
+   [
+    0.7895,
+    0.3061
+   ],
+   [
+    0.7895,
+    0.303
+   ],
+   [
+    0.7895,
+    0.3
+   ],
+   [
+    0.7895,
+    0.297
+   ],
+   [
+    0.7895,
+    0.2941
+   ],
+   [
+    0.7895,
+    0.2913
+   ],
+   [
+    0.7895,
+    0.2885
+   ],
+   [
+    0.7895,
+    0.2857
+   ],
+   [
+    0.7895,
+    0.283
+   ],
+   [
+    0.7895,
+    0.2804
+   ],
+   [
+    0.7895,
+    0.2778
+   ],
+   [
+    0.7895,
+    0.2752
+   ],
+   [
+    0.7895,
+    0.2727
+   ],
+   [
+    0.7895,
+    0.2703
+   ],
+   [
+    0.7895,
+    0.2679
+   ],
+   [
+    0.7895,
+    0.2655
+   ],
+   [
+    0.7895,
+    0.2632
+   ],
+   [
+    0.7895,
+    0.2609
+   ],
+   [
+    0.7895,
+    0.2586
+   ],
+   [
+    0.7895,
+    0.2564
+   ],
+   [
+    0.7895,
+    0.2542
+   ],
+   [
+    0.7895,
+    0.2521
+   ],
+   [
+    0.7895,
+    0.25
+   ],
+   [
+    0.7895,
+    0.2479
+   ],
+   [
+    0.7895,
+    0.2459
+   ],
+   [
+    0.7895,
+    0.2439
+   ],
+   [
+    0.7895,
+    0.2419
+   ],
+   [
+    0.7895,
+    0.24
+   ],
+   [
+    0.7895,
+    0.2381
+   ],
+   [
+    0.7895,
+    0.2362
+   ],
+   [
+    0.7895,
+    0.2344
+   ],
+   [
+    0.7895,
+    0.2326
+   ],
+   [
+    0.8158,
+    0.2385
+   ],
+   [
+    0.8158,
+    0.2366
+   ],
+   [
+    0.8158,
+    0.2348
+   ],
+   [
+    0.8158,
+    0.2331
+   ],
+   [
+    0.8158,
+    0.2313
+   ],
+   [
+    0.8158,
+    0.2296
+   ],
+   [
+    0.8158,
+    0.2279
+   ],
+   [
+    0.8158,
+    0.2263
+   ],
+   [
+    0.8421,
+    0.2319
+   ],
+   [
+    0.8421,
+    0.2302
+   ],
+   [
+    0.8421,
+    0.2286
+   ],
+   [
+    0.8421,
+    0.227
+   ],
+   [
+    0.8421,
+    0.2254
+   ],
+   [
+    0.8421,
+    0.2238
+   ],
+   [
+    0.8421,
+    0.2222
+   ],
+   [
+    0.8421,
+    0.2207
+   ],
+   [
+    0.8421,
+    0.2192
+   ],
+   [
+    0.8421,
+    0.2177
+   ],
+   [
+    0.8421,
+    0.2162
+   ],
+   [
+    0.8421,
+    0.2148
+   ],
+   [
+    0.8421,
+    0.2133
+   ],
+   [
+    0.8421,
+    0.2119
+   ],
+   [
+    0.8421,
+    0.2105
+   ],
+   [
+    0.8421,
+    0.2092
+   ],
+   [
+    0.8421,
+    0.2078
+   ],
+   [
+    0.8421,
+    0.2065
+   ],
+   [
+    0.8421,
+    0.2051
+   ],
+   [
+    0.8421,
+    0.2038
+   ],
+   [
+    0.8421,
+    0.2025
+   ],
+   [
+    0.8421,
+    0.2013
+   ],
+   [
+    0.8421,
+    0.2
+   ],
+   [
+    0.8421,
+    0.1988
+   ],
+   [
+    0.8684,
+    0.2037
+   ],
+   [
+    0.8684,
+    0.2025
+   ],
+   [
+    0.8684,
+    0.2012
+   ],
+   [
+    0.8684,
+    0.2
+   ],
+   [
+    0.8684,
+    0.1988
+   ],
+   [
+    0.8684,
+    0.1976
+   ],
+   [
+    0.8684,
+    0.1964
+   ],
+   [
+    0.8684,
+    0.1953
+   ],
+   [
+    0.8684,
+    0.1941
+   ],
+   [
+    0.8684,
+    0.193
+   ],
+   [
+    0.8684,
+    0.1919
+   ],
+   [
+    0.8684,
+    0.1908
+   ],
+   [
+    0.8684,
+    0.1897
+   ],
+   [
+    0.8684,
+    0.1886
+   ],
+   [
+    0.8684,
+    0.1875
+   ],
+   [
+    0.8684,
+    0.1864
+   ],
+   [
+    0.8684,
+    0.1854
+   ],
+   [
+    0.8684,
+    0.1844
+   ],
+   [
+    0.8684,
+    0.1833
+   ],
+   [
+    0.8684,
+    0.1823
+   ],
+   [
+    0.8684,
+    0.1813
+   ],
+   [
+    0.8684,
+    0.1803
+   ],
+   [
+    0.8684,
+    0.1793
+   ],
+   [
+    0.8684,
+    0.1784
+   ],
+   [
+    0.8684,
+    0.1774
+   ],
+   [
+    0.8684,
+    0.1765
+   ],
+   [
+    0.8684,
+    0.1755
+   ],
+   [
+    0.8684,
+    0.1746
+   ],
+   [
+    0.8684,
+    0.1737
+   ],
+   [
+    0.8684,
+    0.1728
+   ],
+   [
+    0.8684,
+    0.1719
+   ],
+   [
+    0.8684,
+    0.171
+   ],
+   [
+    0.8684,
+    0.1701
+   ],
+   [
+    0.8684,
+    0.1692
+   ],
+   [
+    0.8684,
+    0.1684
+   ],
+   [
+    0.8684,
+    0.1675
+   ],
+   [
+    0.8684,
+    0.1667
+   ],
+   [
+    0.8684,
+    0.1658
+   ],
+   [
+    0.8684,
+    0.165
+   ],
+   [
+    0.8684,
+    0.1642
+   ],
+   [
+    0.8684,
+    0.1634
+   ],
+   [
+    0.8684,
+    0.1626
+   ],
+   [
+    0.8947,
+    0.1667
+   ],
+   [
+    0.8947,
+    0.1659
+   ],
+   [
+    0.8947,
+    0.165
+   ],
+   [
+    0.8947,
+    0.1643
+   ],
+   [
+    0.8947,
+    0.1635
+   ],
+   [
+    0.8947,
+    0.1627
+   ],
+   [
+    0.8947,
+    0.1619
+   ],
+   [
+    0.8947,
+    0.1611
+   ],
+   [
+    0.8947,
+    0.1604
+   ],
+   [
+    0.8947,
+    0.1596
+   ],
+   [
+    0.8947,
+    0.1589
+   ],
+   [
+    0.8947,
+    0.1581
+   ],
+   [
+    0.8947,
+    0.1574
+   ],
+   [
+    0.8947,
+    0.1567
+   ],
+   [
+    0.8947,
+    0.156
+   ],
+   [
+    0.8947,
+    0.1553
+   ],
+   [
+    0.8947,
+    0.1545
+   ],
+   [
+    0.8947,
+    0.1538
+   ],
+   [
+    0.8947,
+    0.1532
+   ],
+   [
+    0.8947,
+    0.1525
+   ],
+   [
+    0.8947,
+    0.1518
+   ],
+   [
+    0.8947,
+    0.1511
+   ],
+   [
+    0.8947,
+    0.1504
+   ],
+   [
+    0.8947,
+    0.1498
+   ],
+   [
+    0.8947,
+    0.1491
+   ],
+   [
+    0.8947,
+    0.1485
+   ],
+   [
+    0.8947,
+    0.1478
+   ],
+   [
+    0.9211,
+    0.1515
+   ],
+   [
+    0.9211,
+    0.1509
+   ],
+   [
+    0.9211,
+    0.1502
+   ],
+   [
+    0.9211,
+    0.1496
+   ],
+   [
+    0.9211,
+    0.1489
+   ],
+   [
+    0.9211,
+    0.1483
+   ],
+   [
+    0.9211,
+    0.1477
+   ],
+   [
+    0.9211,
+    0.1471
+   ],
+   [
+    0.9211,
+    0.1464
+   ],
+   [
+    0.9211,
+    0.1458
+   ],
+   [
+    0.9211,
+    0.1452
+   ],
+   [
+    0.9211,
+    0.1446
+   ],
+   [
+    0.9211,
+    0.144
+   ],
+   [
+    0.9211,
+    0.1434
+   ],
+   [
+    0.9211,
+    0.1429
+   ],
+   [
+    0.9211,
+    0.1423
+   ],
+   [
+    0.9211,
+    0.1417
+   ],
+   [
+    0.9211,
+    0.1411
+   ],
+   [
+    0.9211,
+    0.1406
+   ],
+   [
+    0.9211,
+    0.14
+   ],
+   [
+    0.9211,
+    0.1394
+   ],
+   [
+    0.9211,
+    0.1389
+   ],
+   [
+    0.9211,
+    0.1383
+   ],
+   [
+    0.9474,
+    0.1417
+   ],
+   [
+    0.9474,
+    0.1412
+   ],
+   [
+    0.9474,
+    0.1406
+   ],
+   [
+    0.9474,
+    0.1401
+   ],
+   [
+    0.9474,
+    0.1395
+   ],
+   [
+    0.9474,
+    0.139
+   ],
+   [
+    0.9474,
+    0.1385
+   ],
+   [
+    0.9474,
+    0.1379
+   ],
+   [
+    0.9474,
+    0.1374
+   ],
+   [
+    0.9474,
+    0.1369
+   ],
+   [
+    0.9474,
+    0.1364
+   ],
+   [
+    0.9474,
+    0.1358
+   ],
+   [
+    0.9474,
+    0.1353
+   ],
+   [
+    0.9474,
+    0.1348
+   ],
+   [
+    0.9474,
+    0.1343
+   ],
+   [
+    0.9474,
+    0.1338
+   ],
+   [
+    0.9474,
+    0.1333
+   ],
+   [
+    0.9474,
+    0.1328
+   ],
+   [
+    0.9474,
+    0.1324
+   ],
+   [
+    0.9737,
+    0.1355
+   ],
+   [
+    0.9737,
+    0.135
+   ],
+   [
+    0.9737,
+    0.1345
+   ],
+   [
+    0.9737,
+    0.1341
+   ],
+   [
+    0.9737,
+    0.1336
+   ],
+   [
+    0.9737,
+    0.1331
+   ],
+   [
+    0.9737,
+    0.1326
+   ],
+   [
+    0.9737,
+    0.1321
+   ],
+   [
+    0.9737,
+    0.1317
+   ],
+   [
+    0.9737,
+    0.1312
+   ],
+   [
+    0.9737,
+    0.1307
+   ],
+   [
+    0.9737,
+    0.1303
+   ],
+   [
+    0.9737,
+    0.1298
+   ],
+   [
+    0.9737,
+    0.1294
+   ],
+   [
+    0.9737,
+    0.1289
+   ],
+   [
+    0.9737,
+    0.1285
+   ],
+   [
+    0.9737,
+    0.128
+   ],
+   [
+    0.9737,
+    0.1276
+   ],
+   [
+    0.9737,
+    0.1271
+   ],
+   [
+    0.9737,
+    0.1267
+   ],
+   [
+    0.9737,
+    0.1263
+   ],
+   [
+    0.9737,
+    0.1259
+   ],
+   [
+    0.9737,
+    0.1254
+   ],
+   [
+    0.9737,
+    0.125
+   ],
+   [
+    1.0,
+    0.1279
+   ],
+   [
+    1.0,
+    0.1275
+   ],
+   [
+    1.0,
+    0.1271
+   ],
+   [
+    1.0,
+    0.1267
+   ],
+   [
+    1.0,
+    0.1262
+   ],
+   [
+    1.0,
+    0.1258
+   ],
+   [
+    1.0,
+    0.1254
+   ],
+   [
+    1.0,
+    0.125
+   ],
+   [
+    1.0,
+    0.1246
+   ],
+   [
+    1.0,
+    0.1242
+   ],
+   [
+    1.0,
+    0.1238
+   ],
+   [
+    1.0,
+    0.1234
+   ],
+   [
+    1.0,
+    0.123
+   ],
+   [
+    1.0,
+    0.1226
+   ],
+   [
+    1.0,
+    0.1222
+   ],
+   [
+    1.0,
+    0.1218
+   ],
+   [
+    1.0,
+    0.1214
+   ],
+   [
+    1.0,
+    0.121
+   ],
+   [
+    1.0,
+    0.1206
+   ],
+   [
+    1.0,
+    0.1203
+   ],
+   [
+    1.0,
+    0.1199
+   ],
+   [
+    1.0,
+    0.1195
+   ],
+   [
+    1.0,
+    0.1191
+   ],
+   [
+    1.0,
+    0.1187
+   ],
+   [
+    1.0,
+    0.1184
+   ],
+   [
+    1.0,
+    0.118
+   ],
+   [
+    1.0,
+    0.1176
+   ],
+   [
+    1.0,
+    0.1173
+   ],
+   [
+    1.0,
+    0.1169
+   ],
+   [
+    1.0,
+    0.1166
+   ],
+   [
+    1.0,
+    0.1162
+   ],
+   [
+    1.0,
+    0.1159
+   ],
+   [
+    1.0,
+    0.1155
+   ],
+   [
+    1.0,
+    0.1152
+   ],
+   [
+    1.0,
+    0.1148
+   ],
+   [
+    1.0,
+    0.1145
+   ],
+   [
+    1.0,
+    0.1141
+   ],
+   [
+    1.0,
+    0.1138
+   ],
+   [
+    1.0,
+    0.1134
+   ]
+  ],
+  "xgb_v2": [
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.0263,
+    1.0
+   ],
+   [
+    0.0263,
+    0.5
+   ],
+   [
+    0.0526,
+    0.6667
+   ],
+   [
+    0.0789,
+    0.75
+   ],
+   [
+    0.1053,
+    0.8
+   ],
+   [
+    0.1053,
+    0.6667
+   ],
+   [
+    0.1316,
+    0.7143
+   ],
+   [
+    0.1579,
+    0.75
+   ],
+   [
+    0.1842,
+    0.7778
+   ],
+   [
+    0.2105,
+    0.8
+   ],
+   [
+    0.2368,
+    0.8182
+   ],
+   [
+    0.2368,
+    0.75
+   ],
+   [
+    0.2632,
+    0.7692
+   ],
+   [
+    0.2632,
+    0.7143
+   ],
+   [
+    0.2895,
+    0.7333
+   ],
+   [
+    0.2895,
+    0.6875
+   ],
+   [
+    0.3158,
+    0.7059
+   ],
+   [
+    0.3158,
+    0.6667
+   ],
+   [
+    0.3158,
+    0.6316
+   ],
+   [
+    0.3421,
+    0.65
+   ],
+   [
+    0.3421,
+    0.619
+   ],
+   [
+    0.3421,
+    0.5909
+   ],
+   [
+    0.3421,
+    0.5652
+   ],
+   [
+    0.3421,
+    0.5417
+   ],
+   [
+    0.3684,
+    0.56
+   ],
+   [
+    0.3684,
+    0.5385
+   ],
+   [
+    0.3684,
+    0.5185
+   ],
+   [
+    0.3947,
+    0.5357
+   ],
+   [
+    0.3947,
+    0.5172
+   ],
+   [
+    0.3947,
+    0.5
+   ],
+   [
+    0.4211,
+    0.5161
+   ],
+   [
+    0.4474,
+    0.5312
+   ],
+   [
+    0.4474,
+    0.5152
+   ],
+   [
+    0.4474,
+    0.5
+   ],
+   [
+    0.4737,
+    0.5143
+   ],
+   [
+    0.4737,
+    0.5
+   ],
+   [
+    0.4737,
+    0.4865
+   ],
+   [
+    0.4737,
+    0.4737
+   ],
+   [
+    0.4737,
+    0.4615
+   ],
+   [
+    0.4737,
+    0.45
+   ],
+   [
+    0.4737,
+    0.439
+   ],
+   [
+    0.5,
+    0.4524
+   ],
+   [
+    0.5,
+    0.4419
+   ],
+   [
+    0.5263,
+    0.4545
+   ],
+   [
+    0.5263,
+    0.4444
+   ],
+   [
+    0.5263,
+    0.4348
+   ],
+   [
+    0.5263,
+    0.4255
+   ],
+   [
+    0.5263,
+    0.4167
+   ],
+   [
+    0.5263,
+    0.4082
+   ],
+   [
+    0.5263,
+    0.4
+   ],
+   [
+    0.5526,
+    0.4118
+   ],
+   [
+    0.5526,
+    0.4038
+   ],
+   [
+    0.5526,
+    0.3962
+   ],
+   [
+    0.5789,
+    0.4074
+   ],
+   [
+    0.5789,
+    0.4
+   ],
+   [
+    0.5789,
+    0.3929
+   ],
+   [
+    0.5789,
+    0.386
+   ],
+   [
+    0.5789,
+    0.3793
+   ],
+   [
+    0.5789,
+    0.3729
+   ],
+   [
+    0.5789,
+    0.3667
+   ],
+   [
+    0.5789,
+    0.3607
+   ],
+   [
+    0.5789,
+    0.3548
+   ],
+   [
+    0.5789,
+    0.3492
+   ],
+   [
+    0.5789,
+    0.3438
+   ],
+   [
+    0.5789,
+    0.3385
+   ],
+   [
+    0.5789,
+    0.3333
+   ],
+   [
+    0.5789,
+    0.3284
+   ],
+   [
+    0.5789,
+    0.3235
+   ],
+   [
+    0.5789,
+    0.3188
+   ],
+   [
+    0.5789,
+    0.3143
+   ],
+   [
+    0.5789,
+    0.3099
+   ],
+   [
+    0.5789,
+    0.3056
+   ],
+   [
+    0.6053,
+    0.3151
+   ],
+   [
+    0.6053,
+    0.3108
+   ],
+   [
+    0.6053,
+    0.3067
+   ],
+   [
+    0.6053,
+    0.3026
+   ],
+   [
+    0.6316,
+    0.3117
+   ],
+   [
+    0.6316,
+    0.3077
+   ],
+   [
+    0.6579,
+    0.3165
+   ],
+   [
+    0.6579,
+    0.3125
+   ],
+   [
+    0.6579,
+    0.3086
+   ],
+   [
+    0.6579,
+    0.3049
+   ],
+   [
+    0.6842,
+    0.3133
+   ],
+   [
+    0.6842,
+    0.3095
+   ],
+   [
+    0.6842,
+    0.3059
+   ],
+   [
+    0.6842,
+    0.3023
+   ],
+   [
+    0.6842,
+    0.2989
+   ],
+   [
+    0.6842,
+    0.2955
+   ],
+   [
+    0.6842,
+    0.2921
+   ],
+   [
+    0.6842,
+    0.2889
+   ],
+   [
+    0.7105,
+    0.2967
+   ],
+   [
+    0.7105,
+    0.2935
+   ],
+   [
+    0.7105,
+    0.2903
+   ],
+   [
+    0.7368,
+    0.2979
+   ],
+   [
+    0.7368,
+    0.2947
+   ],
+   [
+    0.7368,
+    0.2917
+   ],
+   [
+    0.7368,
+    0.2887
+   ],
+   [
+    0.7368,
+    0.2857
+   ],
+   [
+    0.7368,
+    0.2828
+   ],
+   [
+    0.7368,
+    0.28
+   ],
+   [
+    0.7368,
+    0.2772
+   ],
+   [
+    0.7368,
+    0.2745
+   ],
+   [
+    0.7368,
+    0.2718
+   ],
+   [
+    0.7368,
+    0.2692
+   ],
+   [
+    0.7368,
+    0.2667
+   ],
+   [
+    0.7368,
+    0.2642
+   ],
+   [
+    0.7368,
+    0.2617
+   ],
+   [
+    0.7368,
+    0.2593
+   ],
+   [
+    0.7632,
+    0.2661
+   ],
+   [
+    0.7632,
+    0.2636
+   ],
+   [
+    0.7632,
+    0.2613
+   ],
+   [
+    0.7632,
+    0.2589
+   ],
+   [
+    0.7632,
+    0.2566
+   ],
+   [
+    0.7632,
+    0.2544
+   ],
+   [
+    0.7632,
+    0.2522
+   ],
+   [
+    0.7632,
+    0.25
+   ],
+   [
+    0.7632,
+    0.2479
+   ],
+   [
+    0.7632,
+    0.2458
+   ],
+   [
+    0.7632,
+    0.2437
+   ],
+   [
+    0.7632,
+    0.2417
+   ],
+   [
+    0.7632,
+    0.2397
+   ],
+   [
+    0.7632,
+    0.2377
+   ],
+   [
+    0.7632,
+    0.2358
+   ],
+   [
+    0.7895,
+    0.2419
+   ],
+   [
+    0.7895,
+    0.24
+   ],
+   [
+    0.7895,
+    0.2381
+   ],
+   [
+    0.7895,
+    0.2362
+   ],
+   [
+    0.7895,
+    0.2344
+   ],
+   [
+    0.7895,
+    0.2326
+   ],
+   [
+    0.7895,
+    0.2308
+   ],
+   [
+    0.7895,
+    0.229
+   ],
+   [
+    0.7895,
+    0.2273
+   ],
+   [
+    0.7895,
+    0.2256
+   ],
+   [
+    0.7895,
+    0.2239
+   ],
+   [
+    0.7895,
+    0.2222
+   ],
+   [
+    0.7895,
+    0.2206
+   ],
+   [
+    0.7895,
+    0.219
+   ],
+   [
+    0.7895,
+    0.2174
+   ],
+   [
+    0.7895,
+    0.2158
+   ],
+   [
+    0.7895,
+    0.2143
+   ],
+   [
+    0.7895,
+    0.2128
+   ],
+   [
+    0.8158,
+    0.2183
+   ],
+   [
+    0.8158,
+    0.2168
+   ],
+   [
+    0.8158,
+    0.2153
+   ],
+   [
+    0.8158,
+    0.2138
+   ],
+   [
+    0.8158,
+    0.2123
+   ],
+   [
+    0.8158,
+    0.2109
+   ],
+   [
+    0.8158,
+    0.2095
+   ],
+   [
+    0.8158,
+    0.2081
+   ],
+   [
+    0.8158,
+    0.2067
+   ],
+   [
+    0.8158,
+    0.2053
+   ],
+   [
+    0.8421,
+    0.2105
+   ],
+   [
+    0.8421,
+    0.2092
+   ],
+   [
+    0.8421,
+    0.2078
+   ],
+   [
+    0.8421,
+    0.2065
+   ],
+   [
+    0.8421,
+    0.2051
+   ],
+   [
+    0.8421,
+    0.2038
+   ],
+   [
+    0.8421,
+    0.2025
+   ],
+   [
+    0.8421,
+    0.2013
+   ],
+   [
+    0.8421,
+    0.2
+   ],
+   [
+    0.8421,
+    0.1988
+   ],
+   [
+    0.8421,
+    0.1975
+   ],
+   [
+    0.8421,
+    0.1963
+   ],
+   [
+    0.8421,
+    0.1951
+   ],
+   [
+    0.8421,
+    0.1939
+   ],
+   [
+    0.8684,
+    0.1988
+   ],
+   [
+    0.8684,
+    0.1976
+   ],
+   [
+    0.8684,
+    0.1964
+   ],
+   [
+    0.8947,
+    0.2012
+   ],
+   [
+    0.8947,
+    0.2
+   ],
+   [
+    0.8947,
+    0.1988
+   ],
+   [
+    0.8947,
+    0.1977
+   ],
+   [
+    0.8947,
+    0.1965
+   ],
+   [
+    0.8947,
+    0.1954
+   ],
+   [
+    0.8947,
+    0.1943
+   ],
+   [
+    0.8947,
+    0.1932
+   ],
+   [
+    0.8947,
+    0.1921
+   ],
+   [
+    0.8947,
+    0.191
+   ],
+   [
+    0.8947,
+    0.1899
+   ],
+   [
+    0.8947,
+    0.1889
+   ],
+   [
+    0.8947,
+    0.1878
+   ],
+   [
+    0.8947,
+    0.1868
+   ],
+   [
+    0.8947,
+    0.1858
+   ],
+   [
+    0.8947,
+    0.1848
+   ],
+   [
+    0.8947,
+    0.1838
+   ],
+   [
+    0.8947,
+    0.1828
+   ],
+   [
+    0.8947,
+    0.1818
+   ],
+   [
+    0.8947,
+    0.1809
+   ],
+   [
+    0.8947,
+    0.1799
+   ],
+   [
+    0.8947,
+    0.1789
+   ],
+   [
+    0.8947,
+    0.178
+   ],
+   [
+    0.8947,
+    0.1771
+   ],
+   [
+    0.9211,
+    0.1813
+   ],
+   [
+    0.9211,
+    0.1804
+   ],
+   [
+    0.9211,
+    0.1795
+   ],
+   [
+    0.9211,
+    0.1786
+   ],
+   [
+    0.9211,
+    0.1777
+   ],
+   [
+    0.9211,
+    0.1768
+   ],
+   [
+    0.9211,
+    0.1759
+   ],
+   [
+    0.9211,
+    0.175
+   ],
+   [
+    0.9211,
+    0.1741
+   ],
+   [
+    0.9211,
+    0.1733
+   ],
+   [
+    0.9211,
+    0.1724
+   ],
+   [
+    0.9211,
+    0.1716
+   ],
+   [
+    0.9474,
+    0.1756
+   ],
+   [
+    0.9474,
+    0.1748
+   ],
+   [
+    0.9474,
+    0.1739
+   ],
+   [
+    0.9474,
+    0.1731
+   ],
+   [
+    0.9474,
+    0.1722
+   ],
+   [
+    0.9474,
+    0.1714
+   ],
+   [
+    0.9474,
+    0.1706
+   ],
+   [
+    0.9474,
+    0.1698
+   ],
+   [
+    0.9474,
+    0.169
+   ],
+   [
+    0.9474,
+    0.1682
+   ],
+   [
+    0.9474,
+    0.1674
+   ],
+   [
+    0.9474,
+    0.1667
+   ],
+   [
+    0.9474,
+    0.1659
+   ],
+   [
+    0.9474,
+    0.1651
+   ],
+   [
+    0.9474,
+    0.1644
+   ],
+   [
+    0.9474,
+    0.1636
+   ],
+   [
+    0.9474,
+    0.1629
+   ],
+   [
+    0.9474,
+    0.1622
+   ],
+   [
+    0.9474,
+    0.1614
+   ],
+   [
+    0.9474,
+    0.1607
+   ],
+   [
+    0.9474,
+    0.16
+   ],
+   [
+    0.9474,
+    0.1593
+   ],
+   [
+    0.9474,
+    0.1586
+   ],
+   [
+    0.9474,
+    0.1579
+   ],
+   [
+    0.9474,
+    0.1572
+   ],
+   [
+    0.9474,
+    0.1565
+   ],
+   [
+    0.9474,
+    0.1558
+   ],
+   [
+    0.9474,
+    0.1552
+   ],
+   [
+    0.9474,
+    0.1545
+   ],
+   [
+    0.9474,
+    0.1538
+   ],
+   [
+    0.9474,
+    0.1532
+   ],
+   [
+    0.9474,
+    0.1525
+   ],
+   [
+    0.9474,
+    0.1519
+   ],
+   [
+    0.9474,
+    0.1513
+   ],
+   [
+    0.9474,
+    0.1506
+   ],
+   [
+    0.9474,
+    0.15
+   ],
+   [
+    0.9474,
+    0.1494
+   ],
+   [
+    0.9474,
+    0.1488
+   ],
+   [
+    0.9474,
+    0.1481
+   ],
+   [
+    0.9474,
+    0.1475
+   ],
+   [
+    0.9474,
+    0.1469
+   ],
+   [
+    0.9474,
+    0.1463
+   ],
+   [
+    0.9474,
+    0.1457
+   ],
+   [
+    0.9474,
+    0.1452
+   ],
+   [
+    0.9474,
+    0.1446
+   ],
+   [
+    0.9474,
+    0.144
+   ],
+   [
+    0.9474,
+    0.1434
+   ],
+   [
+    0.9474,
+    0.1429
+   ],
+   [
+    0.9474,
+    0.1423
+   ],
+   [
+    0.9474,
+    0.1417
+   ],
+   [
+    0.9474,
+    0.1412
+   ],
+   [
+    0.9474,
+    0.1406
+   ],
+   [
+    0.9474,
+    0.1401
+   ],
+   [
+    0.9474,
+    0.1395
+   ],
+   [
+    0.9474,
+    0.139
+   ],
+   [
+    0.9474,
+    0.1385
+   ],
+   [
+    0.9474,
+    0.1379
+   ],
+   [
+    0.9474,
+    0.1374
+   ],
+   [
+    0.9474,
+    0.1369
+   ],
+   [
+    0.9474,
+    0.1364
+   ],
+   [
+    0.9474,
+    0.1358
+   ],
+   [
+    0.9474,
+    0.1353
+   ],
+   [
+    0.9474,
+    0.1348
+   ],
+   [
+    0.9474,
+    0.1343
+   ],
+   [
+    0.9474,
+    0.1338
+   ],
+   [
+    0.9474,
+    0.1333
+   ],
+   [
+    0.9474,
+    0.1328
+   ],
+   [
+    0.9474,
+    0.1324
+   ],
+   [
+    0.9474,
+    0.1319
+   ],
+   [
+    0.9474,
+    0.1314
+   ],
+   [
+    0.9474,
+    0.1309
+   ],
+   [
+    0.9474,
+    0.1304
+   ],
+   [
+    0.9474,
+    0.13
+   ],
+   [
+    0.9474,
+    0.1295
+   ],
+   [
+    0.9474,
+    0.129
+   ],
+   [
+    0.9474,
+    0.1286
+   ],
+   [
+    0.9474,
+    0.1281
+   ],
+   [
+    0.9474,
+    0.1277
+   ],
+   [
+    0.9474,
+    0.1272
+   ],
+   [
+    0.9737,
+    0.1303
+   ],
+   [
+    0.9737,
+    0.1298
+   ],
+   [
+    0.9737,
+    0.1294
+   ],
+   [
+    0.9737,
+    0.1289
+   ],
+   [
+    0.9737,
+    0.1285
+   ],
+   [
+    0.9737,
+    0.128
+   ],
+   [
+    0.9737,
+    0.1276
+   ],
+   [
+    0.9737,
+    0.1271
+   ],
+   [
+    0.9737,
+    0.1267
+   ],
+   [
+    0.9737,
+    0.1263
+   ],
+   [
+    0.9737,
+    0.1259
+   ],
+   [
+    0.9737,
+    0.1254
+   ],
+   [
+    0.9737,
+    0.125
+   ],
+   [
+    0.9737,
+    0.1246
+   ],
+   [
+    0.9737,
+    0.1242
+   ],
+   [
+    0.9737,
+    0.1237
+   ],
+   [
+    0.9737,
+    0.1233
+   ],
+   [
+    0.9737,
+    0.1229
+   ],
+   [
+    0.9737,
+    0.1225
+   ],
+   [
+    0.9737,
+    0.1221
+   ],
+   [
+    0.9737,
+    0.1217
+   ],
+   [
+    0.9737,
+    0.1213
+   ],
+   [
+    0.9737,
+    0.1209
+   ],
+   [
+    1.0,
+    0.1238
+   ],
+   [
+    1.0,
+    0.1234
+   ],
+   [
+    1.0,
+    0.123
+   ],
+   [
+    1.0,
+    0.1226
+   ],
+   [
+    1.0,
+    0.1222
+   ],
+   [
+    1.0,
+    0.1218
+   ],
+   [
+    1.0,
+    0.1214
+   ],
+   [
+    1.0,
+    0.121
+   ],
+   [
+    1.0,
+    0.1206
+   ],
+   [
+    1.0,
+    0.1203
+   ],
+   [
+    1.0,
+    0.1199
+   ],
+   [
+    1.0,
+    0.1195
+   ],
+   [
+    1.0,
+    0.1191
+   ],
+   [
+    1.0,
+    0.1187
+   ],
+   [
+    1.0,
+    0.1184
+   ],
+   [
+    1.0,
+    0.118
+   ],
+   [
+    1.0,
+    0.1176
+   ],
+   [
+    1.0,
+    0.1173
+   ],
+   [
+    1.0,
+    0.1169
+   ],
+   [
+    1.0,
+    0.1166
+   ],
+   [
+    1.0,
+    0.1162
+   ],
+   [
+    1.0,
+    0.1159
+   ],
+   [
+    1.0,
+    0.1155
+   ],
+   [
+    1.0,
+    0.1152
+   ],
+   [
+    1.0,
+    0.1148
+   ],
+   [
+    1.0,
+    0.1145
+   ],
+   [
+    1.0,
+    0.1141
+   ],
+   [
+    1.0,
+    0.1138
+   ],
+   [
+    1.0,
+    0.1134
+   ]
+  ],
+  "xgb_all": [
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.0263,
+    1.0
+   ],
+   [
+    0.0526,
+    1.0
+   ],
+   [
+    0.0789,
+    1.0
+   ],
+   [
+    0.1053,
+    1.0
+   ],
+   [
+    0.1053,
+    0.8
+   ],
+   [
+    0.1316,
+    0.8333
+   ],
+   [
+    0.1579,
+    0.8571
+   ],
+   [
+    0.1842,
+    0.875
+   ],
+   [
+    0.1842,
+    0.7778
+   ],
+   [
+    0.1842,
+    0.7
+   ],
+   [
+    0.1842,
+    0.6364
+   ],
+   [
+    0.1842,
+    0.5833
+   ],
+   [
+    0.1842,
+    0.5385
+   ],
+   [
+    0.1842,
+    0.5
+   ],
+   [
+    0.2105,
+    0.5333
+   ],
+   [
+    0.2368,
+    0.5625
+   ],
+   [
+    0.2632,
+    0.5882
+   ],
+   [
+    0.2632,
+    0.5556
+   ],
+   [
+    0.2895,
+    0.5789
+   ],
+   [
+    0.2895,
+    0.55
+   ],
+   [
+    0.2895,
+    0.5238
+   ],
+   [
+    0.2895,
+    0.5
+   ],
+   [
+    0.2895,
+    0.4783
+   ],
+   [
+    0.3158,
+    0.5
+   ],
+   [
+    0.3421,
+    0.52
+   ],
+   [
+    0.3421,
+    0.5
+   ],
+   [
+    0.3684,
+    0.5185
+   ],
+   [
+    0.3684,
+    0.5
+   ],
+   [
+    0.3684,
+    0.4828
+   ],
+   [
+    0.3684,
+    0.4667
+   ],
+   [
+    0.3684,
+    0.4516
+   ],
+   [
+    0.3684,
+    0.4375
+   ],
+   [
+    0.3684,
+    0.4242
+   ],
+   [
+    0.3684,
+    0.4118
+   ],
+   [
+    0.3684,
+    0.4
+   ],
+   [
+    0.3684,
+    0.3889
+   ],
+   [
+    0.3947,
+    0.4054
+   ],
+   [
+    0.3947,
+    0.3947
+   ],
+   [
+    0.3947,
+    0.3846
+   ],
+   [
+    0.3947,
+    0.375
+   ],
+   [
+    0.4211,
+    0.3902
+   ],
+   [
+    0.4211,
+    0.381
+   ],
+   [
+    0.4474,
+    0.3953
+   ],
+   [
+    0.4474,
+    0.3864
+   ],
+   [
+    0.4474,
+    0.3778
+   ],
+   [
+    0.4474,
+    0.3696
+   ],
+   [
+    0.4474,
+    0.3617
+   ],
+   [
+    0.4474,
+    0.3542
+   ],
+   [
+    0.4474,
+    0.3469
+   ],
+   [
+    0.4474,
+    0.34
+   ],
+   [
+    0.4474,
+    0.3333
+   ],
+   [
+    0.4474,
+    0.3269
+   ],
+   [
+    0.4474,
+    0.3208
+   ],
+   [
+    0.4474,
+    0.3148
+   ],
+   [
+    0.4737,
+    0.3273
+   ],
+   [
+    0.4737,
+    0.3214
+   ],
+   [
+    0.4737,
+    0.3158
+   ],
+   [
+    0.5,
+    0.3276
+   ],
+   [
+    0.5,
+    0.322
+   ],
+   [
+    0.5,
+    0.3167
+   ],
+   [
+    0.5,
+    0.3115
+   ],
+   [
+    0.5,
+    0.3065
+   ],
+   [
+    0.5263,
+    0.3175
+   ],
+   [
+    0.5526,
+    0.3281
+   ],
+   [
+    0.5526,
+    0.3231
+   ],
+   [
+    0.5526,
+    0.3182
+   ],
+   [
+    0.5526,
+    0.3134
+   ],
+   [
+    0.5526,
+    0.3088
+   ],
+   [
+    0.5526,
+    0.3043
+   ],
+   [
+    0.5526,
+    0.3
+   ],
+   [
+    0.5526,
+    0.2958
+   ],
+   [
+    0.5526,
+    0.2917
+   ],
+   [
+    0.5789,
+    0.3014
+   ],
+   [
+    0.5789,
+    0.2973
+   ],
+   [
+    0.5789,
+    0.2933
+   ],
+   [
+    0.5789,
+    0.2895
+   ],
+   [
+    0.5789,
+    0.2857
+   ],
+   [
+    0.5789,
+    0.2821
+   ],
+   [
+    0.5789,
+    0.2785
+   ],
+   [
+    0.5789,
+    0.275
+   ],
+   [
+    0.5789,
+    0.2716
+   ],
+   [
+    0.5789,
+    0.2683
+   ],
+   [
+    0.5789,
+    0.2651
+   ],
+   [
+    0.6053,
+    0.2738
+   ],
+   [
+    0.6053,
+    0.2706
+   ],
+   [
+    0.6316,
+    0.2791
+   ],
+   [
+    0.6316,
+    0.2759
+   ],
+   [
+    0.6579,
+    0.2841
+   ],
+   [
+    0.6579,
+    0.2809
+   ],
+   [
+    0.6842,
+    0.2889
+   ],
+   [
+    0.6842,
+    0.2857
+   ],
+   [
+    0.6842,
+    0.2826
+   ],
+   [
+    0.6842,
+    0.2796
+   ],
+   [
+    0.6842,
+    0.2766
+   ],
+   [
+    0.6842,
+    0.2737
+   ],
+   [
+    0.6842,
+    0.2708
+   ],
+   [
+    0.6842,
+    0.268
+   ],
+   [
+    0.7105,
+    0.2755
+   ],
+   [
+    0.7105,
+    0.2727
+   ],
+   [
+    0.7105,
+    0.27
+   ],
+   [
+    0.7105,
+    0.2673
+   ],
+   [
+    0.7105,
+    0.2647
+   ],
+   [
+    0.7105,
+    0.2621
+   ],
+   [
+    0.7105,
+    0.2596
+   ],
+   [
+    0.7105,
+    0.2571
+   ],
+   [
+    0.7105,
+    0.2547
+   ],
+   [
+    0.7105,
+    0.2523
+   ],
+   [
+    0.7105,
+    0.25
+   ],
+   [
+    0.7105,
+    0.2477
+   ],
+   [
+    0.7105,
+    0.2455
+   ],
+   [
+    0.7105,
+    0.2432
+   ],
+   [
+    0.7105,
+    0.2411
+   ],
+   [
+    0.7105,
+    0.2389
+   ],
+   [
+    0.7105,
+    0.2368
+   ],
+   [
+    0.7105,
+    0.2348
+   ],
+   [
+    0.7105,
+    0.2328
+   ],
+   [
+    0.7105,
+    0.2308
+   ],
+   [
+    0.7105,
+    0.2288
+   ],
+   [
+    0.7368,
+    0.2353
+   ],
+   [
+    0.7368,
+    0.2333
+   ],
+   [
+    0.7368,
+    0.2314
+   ],
+   [
+    0.7368,
+    0.2295
+   ],
+   [
+    0.7368,
+    0.2276
+   ],
+   [
+    0.7368,
+    0.2258
+   ],
+   [
+    0.7632,
+    0.232
+   ],
+   [
+    0.7632,
+    0.2302
+   ],
+   [
+    0.7632,
+    0.2283
+   ],
+   [
+    0.7632,
+    0.2266
+   ],
+   [
+    0.7632,
+    0.2248
+   ],
+   [
+    0.7632,
+    0.2231
+   ],
+   [
+    0.7632,
+    0.2214
+   ],
+   [
+    0.7632,
+    0.2197
+   ],
+   [
+    0.7632,
+    0.218
+   ],
+   [
+    0.7632,
+    0.2164
+   ],
+   [
+    0.7632,
+    0.2148
+   ],
+   [
+    0.7632,
+    0.2132
+   ],
+   [
+    0.7632,
+    0.2117
+   ],
+   [
+    0.7632,
+    0.2101
+   ],
+   [
+    0.7895,
+    0.2158
+   ],
+   [
+    0.7895,
+    0.2143
+   ],
+   [
+    0.7895,
+    0.2128
+   ],
+   [
+    0.7895,
+    0.2113
+   ],
+   [
+    0.7895,
+    0.2098
+   ],
+   [
+    0.7895,
+    0.2083
+   ],
+   [
+    0.7895,
+    0.2069
+   ],
+   [
+    0.8158,
+    0.2123
+   ],
+   [
+    0.8158,
+    0.2109
+   ],
+   [
+    0.8158,
+    0.2095
+   ],
+   [
+    0.8158,
+    0.2081
+   ],
+   [
+    0.8158,
+    0.2067
+   ],
+   [
+    0.8158,
+    0.2053
+   ],
+   [
+    0.8158,
+    0.2039
+   ],
+   [
+    0.8158,
+    0.2026
+   ],
+   [
+    0.8158,
+    0.2013
+   ],
+   [
+    0.8158,
+    0.2
+   ],
+   [
+    0.8158,
+    0.1987
+   ],
+   [
+    0.8158,
+    0.1975
+   ],
+   [
+    0.8158,
+    0.1962
+   ],
+   [
+    0.8158,
+    0.195
+   ],
+   [
+    0.8421,
+    0.2
+   ],
+   [
+    0.8421,
+    0.1988
+   ],
+   [
+    0.8421,
+    0.1975
+   ],
+   [
+    0.8421,
+    0.1963
+   ],
+   [
+    0.8421,
+    0.1951
+   ],
+   [
+    0.8684,
+    0.2
+   ],
+   [
+    0.8684,
+    0.1988
+   ],
+   [
+    0.8684,
+    0.1976
+   ],
+   [
+    0.8684,
+    0.1964
+   ],
+   [
+    0.8684,
+    0.1953
+   ],
+   [
+    0.8684,
+    0.1941
+   ],
+   [
+    0.8684,
+    0.193
+   ],
+   [
+    0.8684,
+    0.1919
+   ],
+   [
+    0.8684,
+    0.1908
+   ],
+   [
+    0.8684,
+    0.1897
+   ],
+   [
+    0.8684,
+    0.1886
+   ],
+   [
+    0.8684,
+    0.1875
+   ],
+   [
+    0.8684,
+    0.1864
+   ],
+   [
+    0.8684,
+    0.1854
+   ],
+   [
+    0.8684,
+    0.1844
+   ],
+   [
+    0.8684,
+    0.1833
+   ],
+   [
+    0.8684,
+    0.1823
+   ],
+   [
+    0.8684,
+    0.1813
+   ],
+   [
+    0.8947,
+    0.1858
+   ],
+   [
+    0.9211,
+    0.1902
+   ],
+   [
+    0.9211,
+    0.1892
+   ],
+   [
+    0.9211,
+    0.1882
+   ],
+   [
+    0.9211,
+    0.1872
+   ],
+   [
+    0.9211,
+    0.1862
+   ],
+   [
+    0.9211,
+    0.1852
+   ],
+   [
+    0.9211,
+    0.1842
+   ],
+   [
+    0.9211,
+    0.1832
+   ],
+   [
+    0.9474,
+    0.1875
+   ],
+   [
+    0.9474,
+    0.1865
+   ],
+   [
+    0.9474,
+    0.1856
+   ],
+   [
+    0.9474,
+    0.1846
+   ],
+   [
+    0.9474,
+    0.1837
+   ],
+   [
+    0.9474,
+    0.1827
+   ],
+   [
+    0.9474,
+    0.1818
+   ],
+   [
+    0.9474,
+    0.1809
+   ],
+   [
+    0.9474,
+    0.18
+   ],
+   [
+    0.9474,
+    0.1791
+   ],
+   [
+    0.9474,
+    0.1782
+   ],
+   [
+    0.9737,
+    0.1823
+   ],
+   [
+    0.9737,
+    0.1814
+   ],
+   [
+    0.9737,
+    0.1805
+   ],
+   [
+    0.9737,
+    0.1796
+   ],
+   [
+    0.9737,
+    0.1787
+   ],
+   [
+    0.9737,
+    0.1779
+   ],
+   [
+    0.9737,
+    0.177
+   ],
+   [
+    0.9737,
+    0.1762
+   ],
+   [
+    0.9737,
+    0.1754
+   ],
+   [
+    0.9737,
+    0.1745
+   ],
+   [
+    0.9737,
+    0.1737
+   ],
+   [
+    0.9737,
+    0.1729
+   ],
+   [
+    0.9737,
+    0.1721
+   ],
+   [
+    0.9737,
+    0.1713
+   ],
+   [
+    0.9737,
+    0.1705
+   ],
+   [
+    0.9737,
+    0.1697
+   ],
+   [
+    0.9737,
+    0.1689
+   ],
+   [
+    0.9737,
+    0.1682
+   ],
+   [
+    0.9737,
+    0.1674
+   ],
+   [
+    0.9737,
+    0.1667
+   ],
+   [
+    0.9737,
+    0.1659
+   ],
+   [
+    0.9737,
+    0.1652
+   ],
+   [
+    0.9737,
+    0.1644
+   ],
+   [
+    0.9737,
+    0.1637
+   ],
+   [
+    0.9737,
+    0.163
+   ],
+   [
+    0.9737,
+    0.1623
+   ],
+   [
+    0.9737,
+    0.1616
+   ],
+   [
+    0.9737,
+    0.1609
+   ],
+   [
+    0.9737,
+    0.1602
+   ],
+   [
+    0.9737,
+    0.1595
+   ],
+   [
+    0.9737,
+    0.1588
+   ],
+   [
+    0.9737,
+    0.1581
+   ],
+   [
+    0.9737,
+    0.1574
+   ],
+   [
+    0.9737,
+    0.1568
+   ],
+   [
+    0.9737,
+    0.1561
+   ],
+   [
+    0.9737,
+    0.1555
+   ],
+   [
+    1.0,
+    0.159
+   ],
+   [
+    1.0,
+    0.1583
+   ],
+   [
+    1.0,
+    0.1577
+   ],
+   [
+    1.0,
+    0.157
+   ],
+   [
+    1.0,
+    0.1564
+   ],
+   [
+    1.0,
+    0.1557
+   ],
+   [
+    1.0,
+    0.1551
+   ],
+   [
+    1.0,
+    0.1545
+   ],
+   [
+    1.0,
+    0.1538
+   ],
+   [
+    1.0,
+    0.1532
+   ],
+   [
+    1.0,
+    0.1526
+   ],
+   [
+    1.0,
+    0.152
+   ],
+   [
+    1.0,
+    0.1514
+   ],
+   [
+    1.0,
+    0.1508
+   ],
+   [
+    1.0,
+    0.1502
+   ],
+   [
+    1.0,
+    0.1496
+   ],
+   [
+    1.0,
+    0.149
+   ],
+   [
+    1.0,
+    0.1484
+   ],
+   [
+    1.0,
+    0.1479
+   ],
+   [
+    1.0,
+    0.1473
+   ],
+   [
+    1.0,
+    0.1467
+   ],
+   [
+    1.0,
+    0.1462
+   ],
+   [
+    1.0,
+    0.1456
+   ],
+   [
+    1.0,
+    0.145
+   ],
+   [
+    1.0,
+    0.1445
+   ],
+   [
+    1.0,
+    0.1439
+   ],
+   [
+    1.0,
+    0.1434
+   ],
+   [
+    1.0,
+    0.1429
+   ],
+   [
+    1.0,
+    0.1423
+   ],
+   [
+    1.0,
+    0.1418
+   ],
+   [
+    1.0,
+    0.1413
+   ],
+   [
+    1.0,
+    0.1407
+   ],
+   [
+    1.0,
+    0.1402
+   ],
+   [
+    1.0,
+    0.1397
+   ],
+   [
+    1.0,
+    0.1392
+   ],
+   [
+    1.0,
+    0.1387
+   ],
+   [
+    1.0,
+    0.1382
+   ],
+   [
+    1.0,
+    0.1377
+   ],
+   [
+    1.0,
+    0.1372
+   ],
+   [
+    1.0,
+    0.1367
+   ],
+   [
+    1.0,
+    0.1362
+   ],
+   [
+    1.0,
+    0.1357
+   ],
+   [
+    1.0,
+    0.1352
+   ],
+   [
+    1.0,
+    0.1348
+   ],
+   [
+    1.0,
+    0.1343
+   ],
+   [
+    1.0,
+    0.1338
+   ],
+   [
+    1.0,
+    0.1333
+   ],
+   [
+    1.0,
+    0.1329
+   ],
+   [
+    1.0,
+    0.1324
+   ],
+   [
+    1.0,
+    0.1319
+   ],
+   [
+    1.0,
+    0.1315
+   ],
+   [
+    1.0,
+    0.131
+   ],
+   [
+    1.0,
+    0.1306
+   ],
+   [
+    1.0,
+    0.1301
+   ],
+   [
+    1.0,
+    0.1297
+   ],
+   [
+    1.0,
+    0.1293
+   ],
+   [
+    1.0,
+    0.1288
+   ],
+   [
+    1.0,
+    0.1284
+   ],
+   [
+    1.0,
+    0.1279
+   ],
+   [
+    1.0,
+    0.1275
+   ],
+   [
+    1.0,
+    0.1271
+   ],
+   [
+    1.0,
+    0.1267
+   ],
+   [
+    1.0,
+    0.1262
+   ],
+   [
+    1.0,
+    0.1258
+   ],
+   [
+    1.0,
+    0.1254
+   ],
+   [
+    1.0,
+    0.125
+   ],
+   [
+    1.0,
+    0.1246
+   ],
+   [
+    1.0,
+    0.1242
+   ],
+   [
+    1.0,
+    0.1238
+   ],
+   [
+    1.0,
+    0.1234
+   ],
+   [
+    1.0,
+    0.123
+   ],
+   [
+    1.0,
+    0.1226
+   ],
+   [
+    1.0,
+    0.1222
+   ],
+   [
+    1.0,
+    0.1218
+   ],
+   [
+    1.0,
+    0.1214
+   ],
+   [
+    1.0,
+    0.121
+   ],
+   [
+    1.0,
+    0.1206
+   ],
+   [
+    1.0,
+    0.1203
+   ],
+   [
+    1.0,
+    0.1199
+   ],
+   [
+    1.0,
+    0.1195
+   ],
+   [
+    1.0,
+    0.1191
+   ],
+   [
+    1.0,
+    0.1187
+   ],
+   [
+    1.0,
+    0.1184
+   ],
+   [
+    1.0,
+    0.118
+   ],
+   [
+    1.0,
+    0.1176
+   ],
+   [
+    1.0,
+    0.1173
+   ],
+   [
+    1.0,
+    0.1169
+   ],
+   [
+    1.0,
+    0.1166
+   ],
+   [
+    1.0,
+    0.1162
+   ],
+   [
+    1.0,
+    0.1159
+   ],
+   [
+    1.0,
+    0.1155
+   ],
+   [
+    1.0,
+    0.1152
+   ],
+   [
+    1.0,
+    0.1148
+   ],
+   [
+    1.0,
+    0.1145
+   ],
+   [
+    1.0,
+    0.1141
+   ],
+   [
+    1.0,
+    0.1138
+   ],
+   [
+    1.0,
+    0.1134
+   ]
+  ]
+ },
+ "calibration": {
+  "lr_v2": [
+   {
+    "band": "0%-5%",
+    "predicted": 0.018351440653073266,
+    "observed": 0.029940119760479042,
+    "n": 167
+   },
+   {
+    "band": "5%-10%",
+    "predicted": 0.07219031372221037,
+    "observed": 0.05454545454545454,
+    "n": 55
+   },
+   {
+    "band": "10%-20%",
+    "predicted": 0.14518384482701083,
+    "observed": 0.18518518518518517,
+    "n": 54
+   },
+   {
+    "band": "20%-30%",
+    "predicted": 0.24470812374980347,
+    "observed": 0.09090909090909091,
+    "n": 22
+   },
+   {
+    "band": "30%-50%",
+    "predicted": 0.3943647165166808,
+    "observed": 0.4230769230769231,
+    "n": 26
+   },
+   {
+    "band": "50%-100%",
+    "predicted": 0.6532737070012119,
+    "observed": 0.6363636363636364,
+    "n": 11
+   }
+  ],
+  "xgb_v2": [
+   {
+    "band": "0%-5%",
+    "predicted": 0.023573037058877776,
+    "observed": 0.024539877300613498,
+    "n": 163
+   },
+   {
+    "band": "5%-10%",
+    "predicted": 0.07240332091972232,
+    "observed": 0.08,
+    "n": 75
+   },
+   {
+    "band": "10%-20%",
+    "predicted": 0.13958604444924275,
+    "observed": 0.16666666666666666,
+    "n": 48
+   },
+   {
+    "band": "20%-30%",
+    "predicted": 0.2453894888858,
+    "observed": 0.2,
+    "n": 15
+   },
+   {
+    "band": "30%-50%",
+    "predicted": 0.37109487349363535,
+    "observed": 0.3157894736842105,
+    "n": 19
+   },
+   {
+    "band": "50%-100%",
+    "predicted": 0.6258652456601461,
+    "observed": 0.7333333333333333,
+    "n": 15
+   }
+  ],
+  "xgb_all": [
+   {
+    "band": "0%-5%",
+    "predicted": 0.02518549848944706,
+    "observed": 0.030120481927710843,
+    "n": 166
+   },
+   {
+    "band": "5%-10%",
+    "predicted": 0.07082583898597437,
+    "observed": 0.08695652173913043,
+    "n": 69
+   },
+   {
+    "band": "10%-20%",
+    "predicted": 0.1354431837017182,
+    "observed": 0.2,
+    "n": 40
+   },
+   {
+    "band": "20%-30%",
+    "predicted": 0.2392041798173027,
+    "observed": 0.18181818181818182,
+    "n": 22
+   },
+   {
+    "band": "30%-50%",
+    "predicted": 0.38877872720892936,
+    "observed": 0.2857142857142857,
+    "n": 28
+   },
+   {
+    "band": "50%-100%",
+    "predicted": 0.606322112083435,
+    "observed": 0.7,
+    "n": 10
+   }
+  ],
+  "live": [
+   {
+    "band": "0%-5%",
+    "predicted": 0.019995000000000002,
+    "observed": 0.025,
+    "n": 80
+   },
+   {
+    "band": "5%-10%",
+    "predicted": 0.07536666666666667,
+    "observed": 0.14583333333333334,
+    "n": 48
+   },
+   {
+    "band": "10%-20%",
+    "predicted": 0.1359164383561644,
+    "observed": 0.1917808219178082,
+    "n": 73
+   },
+   {
+    "band": "20%-30%",
+    "predicted": 0.2407,
+    "observed": 0.35714285714285715,
+    "n": 14
+   },
+   {
+    "band": "30%-50%",
+    "predicted": 0.375325,
+    "observed": 0.5,
+    "n": 4
+   }
+  ]
+ },
+ "selection": {
+  "folds": 50,
+  "picked": {
+   "log_expected": 0.74,
+   "revert_share_any_language": 0.4,
+   "year_in_title": 0.22,
+   "log_prior_24h": 0.16,
+   "log_earlier_flags": 0.14,
+   "log_bytes_removed": 0.34,
+   "new_page": 0.04,
+   "span_minutes": 0.1,
+   "large_wiki": 0.9
+  },
+  "c": {
+   "3.0": 12,
+   "30.0": 18,
+   "10.0": 13,
+   "1.0": 4,
+   "0.3": 3
+  },
+  "sets": [
+   {
+    "features": [
+     "large_wiki",
+     "log_expected",
+     "revert_share_any_language"
+    ],
+    "folds": 5
+   },
+   {
+    "features": [
+     "large_wiki",
+     "revert_share_any_language",
+     "log_expected",
+     "log_bytes_removed"
+    ],
+    "folds": 4
+   },
+   {
+    "features": [
+     "large_wiki"
+    ],
+    "folds": 4
+   },
+   {
+    "features": [
+     "large_wiki",
+     "revert_share_any_language",
+     "log_expected"
+    ],
+    "folds": 3
+   },
+   {
+    "features": [
+     "large_wiki",
+     "log_expected"
+    ],
+    "folds": 3
+   }
+  ]
+ },
+ "live": {
+  "n": 219,
+  "news": 30,
+  "ap": 0.36760842435401864,
+  "roc_auc": 0.7605820105820107,
+  "log_loss": 0.3576423711150924,
+  "brier": 0.10818423808219178,
+  "precision_top10": 0.4090909090909091
+ },
+ "settled": {
+  "lr_c": 1.0,
+  "xgb": {
+   "learning_rate": 0.03,
+   "max_depth": 1,
+   "min_child_weight": 1,
+   "n_estimators": 300
+  },
+  "xgb_all": {
+   "learning_rate": 0.03,
+   "max_depth": 1,
+   "min_child_weight": 1,
+   "n_estimators": 300
+  }
+ },
+ "learning_curve": {
+  "lr_v2": [
+   {
+    "fraction": 0.25,
+    "news_in_training": 7.6938775510204085,
+    "ap": 0.3250515678009365,
+    "ap_interval": [
+     0.20672290345807243,
+     0.4595872987143934
+    ]
+   },
+   {
+    "fraction": 0.5,
+    "news_in_training": 16.48,
+    "ap": 0.42533609017377183,
+    "ap_interval": [
+     0.3272245028448463,
+     0.48441675407041973
+    ]
+   },
+   {
+    "fraction": 0.75,
+    "news_in_training": 22.32,
+    "ap": 0.4934101005516407,
+    "ap_interval": [
+     0.4167150475927079,
+     0.5514726049881831
+    ]
+   },
+   {
+    "fraction": 1.0,
+    "news_in_training": 30.4,
+    "ap": 0.4987027131399878,
+    "ap_interval": [
+     0.45235338197778696,
+     0.5363759771640861
+    ]
+   }
+  ],
+  "xgb_v2": [
+   {
+    "fraction": 0.25,
+    "news_in_training": 7.6938775510204085,
+    "ap": 0.34741678408127824,
+    "ap_interval": [
+     0.24723666606921518,
+     0.4572123061196557
+    ]
+   },
+   {
+    "fraction": 0.5,
+    "news_in_training": 16.48,
+    "ap": 0.4175600202809634,
+    "ap_interval": [
+     0.3151373155718097,
+     0.5071610219045117
+    ]
+   },
+   {
+    "fraction": 0.75,
+    "news_in_training": 22.32,
+    "ap": 0.4491999610517702,
+    "ap_interval": [
+     0.3646175838784977,
+     0.5013461945911288
+    ]
+   },
+   {
+    "fraction": 1.0,
+    "news_in_training": 30.4,
+    "ap": 0.4537199316639359,
+    "ap_interval": [
+     0.40968904690545,
+     0.5190536575066992
+    ]
+   }
+  ],
+  "xgb_all": [
+   {
+    "fraction": 0.25,
+    "news_in_training": 7.6938775510204085,
+    "ap": 0.32683283596159074,
+    "ap_interval": [
+     0.2346939739326623,
+     0.3976035248494475
+    ]
+   },
+   {
+    "fraction": 0.5,
+    "news_in_training": 16.48,
+    "ap": 0.41461469453327293,
+    "ap_interval": [
+     0.3387534209942197,
+     0.488822300424641
+    ]
+   },
+   {
+    "fraction": 0.75,
+    "news_in_training": 22.32,
+    "ap": 0.418304633265266,
+    "ap_interval": [
+     0.35805062170732893,
+     0.4538855669703973
+    ]
+   },
+   {
+    "fraction": 1.0,
+    "news_in_training": 30.4,
+    "ap": 0.39754306364152653,
+    "ap_interval": [
+     0.3427041725055285,
+     0.45608671936351036
+    ]
+   }
+  ]
+ },
+ "ablation": [
+  {
+   "kind": "v2",
+   "change": "v2 as it is",
+   "features": [
+    "log_edits",
+    "log_editors",
+    "log_expected",
+    "bot_share",
+    "anonymous_share",
+    "revert_share",
+    "large_wiki",
+    "year_in_title"
+   ],
+   "ap": 0.4987027131399878,
+   "delta": 0.0
+  },
+  {
+   "kind": "without",
+   "change": "without size",
+   "features": [
+    "log_edits",
+    "log_editors"
+   ],
+   "ap": 0.4212645966474948,
+   "delta": -0.07743811649249291,
+   "delta_interval": [
+    -0.10838932131428554,
+    -0.033567748494700636
+   ],
+   "ahead_share": 0.0
+  },
+  {
+   "kind": "without",
+   "change": "without baseline",
+   "features": [
+    "log_expected"
+   ],
+   "ap": 0.424439008586309,
+   "delta": -0.07426370455367878,
+   "delta_interval": [
+    -0.10299304570962943,
+    -0.04587766578905534
+   ],
+   "ahead_share": 0.0
+  },
+  {
+   "kind": "without",
+   "change": "without who",
+   "features": [
+    "bot_share",
+    "anonymous_share"
+   ],
+   "ap": 0.5226594939161933,
+   "delta": 0.023956780776205444,
+   "delta_interval": [
+    0.006929146062224107,
+    0.056446851446167345
+   ],
+   "ahead_share": 1.0
+  },
+  {
+   "kind": "without",
+   "change": "without reverts",
+   "features": [
+    "revert_share"
+   ],
+   "ap": 0.38219422662064084,
+   "delta": -0.11650848651934693,
+   "delta_interval": [
+    -0.15198637662435613,
+    -0.09133250693784832
+   ],
+   "ahead_share": 0.0
+  },
+  {
+   "kind": "without",
+   "change": "without wiki",
+   "features": [
+    "large_wiki"
+   ],
+   "ap": 0.37691484688033366,
+   "delta": -0.12178786625965413,
+   "delta_interval": [
+    -0.14920976804601374,
+    -0.10538010088916697
+   ],
+   "ahead_share": 0.0
+  },
+  {
+   "kind": "without",
+   "change": "without title",
+   "features": [
+    "year_in_title"
+   ],
+   "ap": 0.48893482360247437,
+   "delta": -0.009767889537513336,
+   "delta_interval": [
+    -0.04636019487518285,
+    0.02658021389962128
+   ],
+   "ahead_share": 0.3
+  },
+  {
+   "kind": "with",
+   "change": "with log_prior_24h",
+   "features": [
+    "log_prior_24h"
+   ],
+   "ap": 0.5051047491198635,
+   "delta": 0.006402035979875575,
+   "delta_interval": [
+    -0.02683605136136027,
+    0.03296909195084737
+   ],
+   "ahead_share": 0.6
+  },
+  {
+   "kind": "with",
+   "change": "with log_earlier_flags",
+   "features": [
+    "log_earlier_flags"
+   ],
+   "ap": 0.5197434437486134,
+   "delta": 0.02104073060862565,
+   "delta_interval": [
+    -0.00042435485295873017,
+    0.05061609565499867
+   ],
+   "ahead_share": 0.9
+  },
+  {
+   "kind": "with",
+   "change": "with log_bytes_removed",
+   "features": [
+    "log_bytes_removed"
+   ],
+   "ap": 0.5143648334082938,
+   "delta": 0.015662120268305997,
+   "delta_interval": [
+    0.008143648803234704,
+    0.03383959018998414
+   ],
+   "ahead_share": 1.0
+  },
+  {
+   "kind": "with",
+   "change": "with new_page",
+   "features": [
+    "new_page"
+   ],
+   "ap": 0.4758466194602037,
+   "delta": -0.02285609367978409,
+   "delta_interval": [
+    -0.03683057150907332,
+    -0.008273642165549759
+   ],
+   "ahead_share": 0.0
+  },
+  {
+   "kind": "with",
+   "change": "with span_minutes",
+   "features": [
+    "span_minutes"
+   ],
+   "ap": 0.49118799616463615,
+   "delta": -0.007514716975351621,
+   "delta_interval": [
+    -0.02393879223108328,
+    0.00523835886684796
+   ],
+   "ahead_share": 0.2
+  },
+  {
+   "kind": "with",
+   "change": "with reverts in 20 languages",
+   "features": [
+    "revert_share_any_language"
+   ],
+   "ap": 0.4835406170144821,
+   "delta": -0.015162096125505658,
+   "delta_interval": [
+    -0.03816718616270932,
+    0.00039757448934101295
+   ],
+   "ahead_share": 0.1
+  }
+ ],
+ "coefficients": [
+  {
+   "feature": "log_edits",
+   "weight": 0.2867602893546327,
+   "interval": [
+    -0.0692172010328736,
+    0.6269783953834515
+   ]
+  },
+  {
+   "feature": "log_editors",
+   "weight": 0.4631808789912731,
+   "interval": [
+    0.1679167173667106,
+    0.8223233821948618
+   ]
+  },
+  {
+   "feature": "log_expected",
+   "weight": -0.8112018798780315,
+   "interval": [
+    -1.361798172684085,
+    -0.3495172146605042
+   ]
+  },
+  {
+   "feature": "bot_share",
+   "weight": -0.24401086243246656,
+   "interval": [
+    -0.9061344336192344,
+    0.036944383152985615
+   ]
+  },
+  {
+   "feature": "anonymous_share",
+   "weight": 0.06051154791064868,
+   "interval": [
+    -0.6237496899319525,
+    0.5302899801085619
+   ]
+  },
+  {
+   "feature": "revert_share",
+   "weight": -1.8455616825279446,
+   "interval": [
+    -2.2829910314677835,
+    -1.3817183108996811
+   ]
+  },
+  {
+   "feature": "large_wiki",
+   "weight": 0.9221808392342494,
+   "interval": [
+    0.33919583255353936,
+    1.5354918053064077
+   ]
+  },
+  {
+   "feature": "year_in_title",
+   "weight": 0.37370502161343955,
+   "interval": [
+    0.00017059060987617043,
+    0.7688359516899671
+   ]
+  }
+ ],
+ "intercept": -3.1463987685146266,
+ "shap": [
+  {
+   "feature": "log_edits",
+   "mean_abs": 0.009128332138061523
+  },
+  {
+   "feature": "log_editors",
+   "mean_abs": 0.2071944922208786
+  },
+  {
+   "feature": "log_surprise",
+   "mean_abs": 0.22682027518749237
+  },
+  {
+   "feature": "log_expected",
+   "mean_abs": 0.6654865145683289
+  },
+  {
+   "feature": "bot_share",
+   "mean_abs": 0.0
+  },
+  {
+   "feature": "anonymous_share",
+   "mean_abs": 0.16244666278362274
+  },
+  {
+   "feature": "revert_share",
+   "mean_abs": 0.24953651428222656
+  },
+  {
+   "feature": "revert_share_any_language",
+   "mean_abs": 0.4235479235649109
+  },
+  {
+   "feature": "year_in_title",
+   "mean_abs": 0.12327615171670914
+  },
+  {
+   "feature": "log_prior_24h",
+   "mean_abs": 0.36720654368400574
+  },
+  {
+   "feature": "log_earlier_flags",
+   "mean_abs": 0.15655173361301422
+  },
+  {
+   "feature": "log_bytes_removed",
+   "mean_abs": 0.31462958455085754
+  },
+  {
+   "feature": "new_page",
+   "mean_abs": 0.0
+  },
+  {
+   "feature": "span_minutes",
+   "mean_abs": 0.22749683260917664
+  },
+  {
+   "feature": "large_wiki",
+   "mean_abs": 0.28920409083366394
+  }
+ ],
+ "thresholds": [
+  {
+   "rule": "precision of 40% or more, most recall",
+   "threshold": 0.23702720628755297,
+   "precision": 0.4,
+   "recall": 0.5263157894736842,
+   "news_calls_per_day": 28.21402986719568
+  },
+  {
+   "rule": "precision of 50% or more, most recall",
+   "threshold": 0.3261860662027094,
+   "precision": 0.5,
+   "recall": 0.4473684210526316,
+   "news_calls_per_day": 16.223067173637517
+  },
+  {
+   "rule": "precision of 60% or more, most recall",
+   "threshold": 0.3886593799622387,
+   "precision": 0.6,
+   "recall": 0.39473684210526316,
+   "news_calls_per_day": 11.109274260208299
+  },
+  {
+   "rule": "best F1",
+   "threshold": 0.3817629041200712,
+   "precision": 0.5714285714285714,
+   "recall": 0.42105263157894735,
+   "news_calls_per_day": 11.81462500688819
+  }
+ ],
+ "score_distribution": {
+  "news": [
+   5,
+   3,
+   3,
+   7,
+   2,
+   0,
+   2,
+   3,
+   1,
+   5,
+   1,
+   0,
+   1,
+   2,
+   0,
+   1,
+   1,
+   1,
+   0,
+   0
+  ],
+  "edit war": [
+   117,
+   23,
+   9,
+   6,
+   1,
+   4,
+   0,
+   0,
+   2,
+   0,
+   1,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "routine": [
+   45,
+   29,
+   22,
+   7,
+   10,
+   5,
+   6,
+   3,
+   4,
+   0,
+   1,
+   2,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "forward": {
+  "split": "2026-10-17 12:00:00",
+  "train": 160,
+  "train_news": 12,
+  "test": 175,
+  "test_news": 26,
+  "models": {
+   "lr_deployed": {
+    "ap": 0.34264034595317305,
+    "roc_auc": 0.7217346411977285,
+    "log_loss": 0.4003189929551574,
+    "brier": 0.11955641516235486,
+    "precision_top10": 0.4444444444444444
+   },
+   "lr_v2": {
+    "ap": 0.5541418920704618,
+    "roc_auc": 0.8132421270005163,
+    "log_loss": 0.34319877092694945,
+    "brier": 0.09800765183840231,
+    "precision_top10": 0.5555555555555556
+   },
+   "xgb_v2": {
+    "ap": 0.5532529724272006,
+    "roc_auc": 0.8067888487351573,
+    "log_loss": 0.3352855443954468,
+    "brier": 0.09621002525091171,
+    "precision_top10": 0.6111111111111112
+   },
+   "xgb_all": {
+    "ap": 0.5713083549153416,
+    "roc_auc": 0.8271812080536913,
+    "log_loss": 0.3292938768863678,
+    "brier": 0.09463463723659515,
+    "precision_top10": 0.6111111111111112
+   },
+   "live": {
+    "ap": 0.37143962007279663,
+    "roc_auc": 0.7395456892101188,
+    "log_loss": 0.3875415988650252,
+    "brier": 0.11739963194285716,
+    "precision_top10": 0.4444444444444444
+   }
+  }
+ },
+ "reweighted": {
+  "unweighted": {
+   "ap": 0.5050503191833609,
+   "roc_auc": 0.8175615807194755,
+   "log_loss": 0.2742136597182706,
+   "brier": 0.0770009962609006,
+   "precision_top10": 0.5
+  },
+  "weighted": {
+   "ap": 0.4408747441102437,
+   "roc_auc": 0.8116232469210624,
+   "log_loss": 0.25983772881407086,
+   "brier": 0.07290011108726985,
+   "precision_top10": 0.5
+  },
+  "weight_range": [
+   1.0,
+   20.0
+  ]
+ },
+ "incident": {
+  "labeled_inside": 72,
+  "news_inside": 8,
+  "ap_trained_with": 0.44044509907577895,
+  "ap_trained_without": 0.40784766682164514
+ }
+}</script>
+<script>
+"use strict";
+const R = JSON.parse(document.getElementById("results").textContent);
+const M = Object.fromEntries(R.models.map(m => [m.key, m]));
+const P = Object.fromEntries(R.pairs.map(p => [p.a + "__" + p.b, p]));
+const T = Object.fromEntries(R.thresholds.map(t => [t.rule.startsWith("best") ? "f1" : "p" + t.rule.match(/\d+/)[0], t]));
+const A = Object.fromEntries(R.ablation.map(a => [a.change.replace(/\W+/g, "_"), a]));
+const NALL = Object.keys(R.features).length;
+const NAME = {
+  lr_deployed: "LR, deployed features", lr_v2: "LR, v2 features", lr_selected: "LR, features picked in each fold",
+  lr_all: `LR, all ${NALL} features`, xgb_deployed: "XGBoost, deployed features", xgb_v2: "XGBoost, v2 features",
+  xgb_all: `XGBoost, all ${NALL} features`, xgb_all_defaults: `XGBoost, all ${NALL}, library defaults`, live: "Live model, as scored",
+};
+document.querySelectorAll(".nall").forEach(n => { n.textContent = NALL; });
+// One color per model across every chart; models that appear only in the dot plot stay neutral
+const COLOR = { lr_v2: "var(--s1)", xgb_v2: "var(--s2)", xgb_all: "var(--s3)", lr_deployed: "var(--s0)", live: "var(--s0)" };
+const colorOf = k => COLOR[k] || "var(--muted)";
+const FMT = {
+  pct0: v => (v * 100).toFixed(0) + "%", pct1: v => (v * 100).toFixed(1) + "%", d1: v => v.toFixed(1),
+  d2: v => v.toFixed(2), d3: v => v.toFixed(3), int: v => Math.round(v).toLocaleString("en-US"),
+  sci: v => v.toExponential(0).replace("e-", " × 10⁻").replace(/(\d+)$/, d => [...d].map(c => "⁰¹²³⁴⁵⁶⁷⁸⁹"[c]).join("")),
+  signed: v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(3),
+};
+const ctx = { ...R, m: M, p: P, t: T, a: A };
+const get = path => path.split(".").reduce((o, k) => (o == null ? o : o[k]), ctx);
+document.querySelectorAll("[data-v]").forEach(el => {
+  const v = get(el.dataset.v);
+  el.textContent = v == null ? "–" : FMT[el.dataset.f || "d2"](v);
+  el.classList.add("num");
+});
+
+// Tooltip: one element, filled with textContent only
+const tip = document.getElementById("tip");
+function showTip(evt, title, rows) {
+  tip.replaceChildren();
+  if (title) { const t = document.createElement("div"); t.className = "t"; t.textContent = title; tip.append(t); }
+  for (const [color, value, label] of rows) {
+    const r = document.createElement("div"); r.className = "row";
+    if (color) { const i = document.createElement("i"); i.style.background = color; r.append(i); }
+    const b = document.createElement("b"); b.textContent = value; r.append(b);
+    if (label) { const s = document.createElement("span"); s.textContent = label; r.append(s); }
+    tip.append(r);
+  }
+  tip.hidden = false;
+  const x = evt.clientX ?? evt.target.getBoundingClientRect().right, y = evt.clientY ?? evt.target.getBoundingClientRect().top;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(window.innerWidth - w - 8, x + 14) + "px";
+  tip.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, y - h / 2)) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  if (parent) parent.append(e);
+  return e;
+}
+const lin = (d0, d1, r0, r1) => v => r0 + ((v - d0) / (d1 - d0)) * (r1 - r0);
+function niceTicks(lo, hi, n = 5) {
+  const step = Math.pow(10, Math.floor(Math.log10((hi - lo) / n)));
+  const err = (hi - lo) / n / step;
+  const s = step * (err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1);
+  const out = [];
+  for (let v = Math.ceil(lo / s) * s; v <= hi + 1e-9; v += s) out.push(+v.toFixed(10));
+  return out;
+}
+function legend(host, items) {
+  const box = document.createElement("div"); box.className = "legend";
+  for (const [label, color, kind] of items) {
+    const s = document.createElement("span"); const i = document.createElement("i");
+    if (kind === "dot") i.className = "dot";
+    i.style.background = color; s.append(i, document.createTextNode(label)); box.append(s);
+  }
+  host.prepend(box);
+}
+function frame(host, height) {
+  const width = Math.max(300, host.clientWidth);
+  const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  host.append(svg);
+  return { svg, width, height };
+}
+const charts = [];
+function chart(id, draw) {
+  const host = document.getElementById(id);
+  const render = () => { host.querySelectorAll("svg, .legend").forEach(n => n.remove()); draw(host); };
+  charts.push(render);
+  render();
+}
+let lastWidth = window.innerWidth;
+new ResizeObserver(() => { if (Math.abs(window.innerWidth - lastWidth) > 30) { lastWidth = window.innerWidth; charts.forEach(r => r()); } }).observe(document.body);
+
+// A dot with an interval per row, e.g. average precision with its 90% bootstrap interval
+function dotInterval(host, rows, { domain, ref, refLabel, fmt = FMT.d2, title }) {
+  const narrow = host.clientWidth < 560;
+  const rowH = 34, top = 14, bottom = 30;
+  const { svg, width } = frame(host, top + rows.length * rowH + bottom);
+  const left = narrow ? 128 : 210, right = 54;
+  const x = lin(domain[0], domain[1], left, width - right);
+  const ticks = niceTicks(domain[0], domain[1], narrow ? 4 : 6);
+  for (const t of ticks) {
+    el("line", { x1: x(t), x2: x(t), y1: top - 6, y2: top + rows.length * rowH, class: "grid" }, svg);
+    el("text", { x: x(t), y: top + rows.length * rowH + 18, "text-anchor": "middle" }, svg, fmt(t));
+  }
+  if (ref != null) {
+    el("line", { x1: x(ref), x2: x(ref), y1: top - 6, y2: top + rows.length * rowH, class: "ref" }, svg);
+    if (refLabel) el("text", { x: x(ref) + 4, y: top + 2 }, svg, refLabel);
+  }
+  rows.forEach((r, i) => {
+    const y = top + i * rowH + rowH / 2 + 4;
+    const label = el("text", { x: left - 12, y: y + 4, "text-anchor": "end", class: "label" }, svg, r.label);
+    if (narrow) label.setAttribute("font-size", "11.5");
+    if (r.lo != null) el("line", { x1: x(r.lo), x2: x(r.hi), y1: y, y2: y, stroke: r.color, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.55 }, svg);
+    el("circle", { cx: x(r.value), cy: y, r: 5, fill: r.color, stroke: "var(--paper)", "stroke-width": 2 }, svg);
+    el("text", { x: Math.min(width - 4, Math.max(x(r.hi ?? r.value), x(r.value)) + 10), y: y + 4, class: "value" }, svg, fmt(r.value));
+    const hit = el("rect", { x: 0, y: y - rowH / 2, width, height: rowH, fill: "transparent", tabindex: 0 }, svg);
+    const tipRows = [[r.color, fmt(r.value), title || ""]];
+    if (r.lo != null) tipRows.push([null, `${fmt(r.lo)} to ${fmt(r.hi)}`, "90% interval"]);
+    for (const extra of r.extra || []) tipRows.push([null, extra[0], extra[1]]);
+    hit.addEventListener("pointermove", e => showTip(e, r.label, tipRows));
+    hit.addEventListener("focus", e => showTip(e, r.label, tipRows));
+    hit.addEventListener("pointerleave", hideTip); hit.addEventListener("blur", hideTip);
+  });
+}
+
+// Lines over a shared x, with a crosshair that reads every series at the pointer
+function lines(host, series, { xDomain, yDomain, xLabel, yLabel, xFmt = FMT.d1, yFmt = FMT.d2, height = 300, diagonal = false, points = false, step = false }) {
+  legend(host, series.map(s => [s.label, s.color, points ? "dot" : "line"]));
+  const narrow = host.clientWidth < 560;
+  const { svg, width } = frame(host, height);
+  const m = { l: narrow ? 42 : 52, r: 14, t: 10, b: 44 };
+  const x = lin(xDomain[0], xDomain[1], m.l, width - m.r), y = lin(yDomain[0], yDomain[1], height - m.b, m.t);
+  for (const t of niceTicks(yDomain[0], yDomain[1], 5)) {
+    el("line", { x1: m.l, x2: width - m.r, y1: y(t), y2: y(t), class: "grid" }, svg);
+    el("text", { x: m.l - 8, y: y(t) + 4, "text-anchor": "end" }, svg, yFmt(t));
+  }
+  for (const t of niceTicks(xDomain[0], xDomain[1], narrow ? 4 : 6)) el("text", { x: x(t), y: height - m.b + 18, "text-anchor": "middle" }, svg, xFmt(t));
+  el("line", { x1: m.l, x2: width - m.r, y1: height - m.b, y2: height - m.b, class: "axis" }, svg);
+  el("text", { x: (m.l + width - m.r) / 2, y: height - 6, "text-anchor": "middle" }, svg, xLabel);
+  el("text", { x: 12, y: (m.t + height - m.b) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${(m.t + height - m.b) / 2})` }, svg, yLabel);
+  if (diagonal) el("line", { x1: x(xDomain[0]), y1: y(yDomain[0]), x2: x(Math.min(xDomain[1], yDomain[1])), y2: y(Math.min(xDomain[1], yDomain[1])), class: "ref" }, svg);
+  for (const s of series) {
+    if (s.band) {
+      const pts = s.band.map(([bx, lo]) => `${x(bx)},${y(lo)}`).concat([...s.band].reverse().map(([bx, , hi]) => `${x(bx)},${y(hi)}`));
+      el("polygon", { points: pts.join(" "), fill: s.color, opacity: 0.12 }, svg);
+    }
+    let d = "";
+    s.points.forEach(([px, py], i) => {
+      if (i === 0) d += `M${x(px)},${y(py)}`;
+      else d += step ? `H${x(px)}V${y(py)}` : `L${x(px)},${y(py)}`;
+    });
+    el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    if (points) for (const [px, py] of s.points) el("circle", { cx: x(px), cy: y(py), r: 4, fill: s.color, stroke: "var(--paper)", "stroke-width": 2 }, svg);
+  }
+  const cross = el("line", { y1: m.t, y2: height - m.b, class: "ref", opacity: 0 }, svg);
+  const hit = el("rect", { x: m.l, y: m.t, width: width - m.l - m.r, height: height - m.t - m.b, fill: "transparent" }, svg);
+  const xs = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort((a, b) => a - b);
+  hit.addEventListener("pointermove", e => {
+    const box = svg.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * width;
+    const xv = xDomain[0] + ((px - m.l) / (width - m.l - m.r)) * (xDomain[1] - xDomain[0]);
+    const snap = xs.reduce((a, b) => (Math.abs(b - xv) < Math.abs(a - xv) ? b : a), xs[0]);
+    cross.setAttribute("x1", x(snap)); cross.setAttribute("x2", x(snap)); cross.setAttribute("opacity", 1);
+    const rows = series.map(s => {
+      const near = s.points.reduce((a, b) => (Math.abs(b[0] - snap) < Math.abs(a[0] - snap) ? b : a));
+      return [s.color, yFmt(near[1]), s.label + (near[2] ? ` (${near[2]})` : "")];
+    });
+    showTip(e, `${xLabel}: ${xFmt(snap)}`, rows);
+  });
+  hit.addEventListener("pointerleave", () => { hideTip(); cross.setAttribute("opacity", 0); });
+}
+
+// Horizontal bars from zero, for importances and changes; negative values extend left
+function bars(host, rows, { domain, fmt = FMT.d3, title, color = "var(--s1)" }) {
+  const narrow = host.clientWidth < 560;
+  const rowH = 30, top = 8, bottom = 28;
+  const { svg, width } = frame(host, top + rows.length * rowH + bottom);
+  const left = narrow ? 132 : 230, right = 60;
+  const x = lin(domain[0], domain[1], left, width - right);
+  for (const t of niceTicks(domain[0], domain[1], narrow ? 4 : 6)) {
+    el("line", { x1: x(t), x2: x(t), y1: top, y2: top + rows.length * rowH, class: "grid" }, svg);
+    el("text", { x: x(t), y: top + rows.length * rowH + 18, "text-anchor": "middle" }, svg, fmt(t));
+  }
+  el("line", { x1: x(0), x2: x(0), y1: top, y2: top + rows.length * rowH, class: "axis" }, svg);
+  rows.forEach((r, i) => {
+    const yc = top + i * rowH + rowH / 2;
+    const label = el("text", { x: left - 12, y: yc + 4, "text-anchor": "end", class: "label" }, svg, r.label);
+    if (narrow) label.setAttribute("font-size", "11.5");
+    const x0 = x(Math.min(0, r.value)), x1 = x(Math.max(0, r.value)), h = Math.min(16, rowH - 10);
+    const w = Math.max(1, x1 - x0), rad = Math.min(4, w / 2);
+    const neg = r.value < 0;
+    const d = neg
+      ? `M${x1},${yc - h / 2} H${x0 + rad} Q${x0},${yc - h / 2} ${x0},${yc - h / 2 + rad} V${yc + h / 2 - rad} Q${x0},${yc + h / 2} ${x0 + rad},${yc + h / 2} H${x1} Z`
+      : `M${x0},${yc - h / 2} H${x1 - rad} Q${x1},${yc - h / 2} ${x1},${yc - h / 2 + rad} V${yc + h / 2 - rad} Q${x1},${yc + h / 2} ${x1 - rad},${yc + h / 2} H${x0} Z`;
+    el("path", { d, fill: r.color || color }, svg);
+    if (r.lo != null) el("line", { x1: x(r.lo), x2: x(r.hi), y1: yc, y2: yc, stroke: "var(--ink-2)", "stroke-width": 1.5, opacity: 0.7 }, svg);
+    const tx = neg ? x(0) + 6 : Math.max(x1, r.hi != null ? x(r.hi) : x1) + 6;  // negatives: right of zero, clear of labels
+    el("text", { x: tx, y: yc + 4, "text-anchor": "start", class: "value" }, svg, fmt(r.value));
+    const hit = el("rect", { x: 0, y: yc - rowH / 2, width, height: rowH, fill: "transparent", tabindex: 0 }, svg);
+    const tipRows = [[r.color || color, fmt(r.value), title || ""]];
+    if (r.lo != null) tipRows.push([null, `${fmt(r.lo)} to ${fmt(r.hi)}`, "90% interval"]);
+    if (r.note) tipRows.push([null, r.note, ""]);
+    hit.addEventListener("pointermove", e => showTip(e, r.label, tipRows));
+    hit.addEventListener("focus", e => showTip(e, r.label, tipRows));
+    hit.addEventListener("pointerleave", hideTip); hit.addEventListener("blur", hideTip);
+  });
+}
+
+// Columns, one per category, e.g. label coverage by hour of day
+function columns(host, rows, { domain, fmt = FMT.pct0, title, height = 210 }) {
+  const { svg, width } = frame(host, height);
+  const m = { l: 40, r: 8, t: 10, b: 34 };
+  const y = lin(domain[0], domain[1], height - m.b, m.t);
+  const band = (width - m.l - m.r) / rows.length, bw = Math.min(24, band - 2);
+  for (const t of niceTicks(domain[0], domain[1], 4)) {
+    el("line", { x1: m.l, x2: width - m.r, y1: y(t), y2: y(t), class: "grid" }, svg);
+    el("text", { x: m.l - 8, y: y(t) + 4, "text-anchor": "end" }, svg, fmt(t));
+  }
+  rows.forEach((r, i) => {
+    const cx = m.l + band * i + band / 2, top = y(r.value), base = y(0), rad = Math.min(4, bw / 2);
+    el("path", { d: `M${cx - bw / 2},${base} V${top + rad} Q${cx - bw / 2},${top} ${cx - bw / 2 + rad},${top} H${cx + bw / 2 - rad} Q${cx + bw / 2},${top} ${cx + bw / 2},${top + rad} V${base} Z`, fill: r.color || "var(--s1)" }, svg);
+    if (i % (width < 560 ? 3 : 2) === 0) el("text", { x: cx, y: height - m.b + 16, "text-anchor": "middle" }, svg, r.label);
+    const hit = el("rect", { x: cx - band / 2, y: m.t, width: band, height: height - m.t - m.b, fill: "transparent", tabindex: 0 }, svg);
+    const tipRows = [[r.color || "var(--s1)", fmt(r.value), title], ...(r.extra || [])];
+    hit.addEventListener("pointermove", e => showTip(e, r.tipTitle || r.label, tipRows));
+    hit.addEventListener("focus", e => showTip(e, r.tipTitle || r.label, tipRows));
+    hit.addEventListener("pointerleave", hideTip); hit.addEventListener("blur", hideTip);
+  });
+  el("line", { x1: m.l, x2: width - m.r, y1: y(0), y2: y(0), class: "axis" }, svg);
+  el("text", { x: (m.l + width - m.r) / 2, y: height - 4, "text-anchor": "middle" }, svg, "Hour of the day (UTC)");
+}
+
+// Tables built from the data, so the numbers behind every chart are readable without hovering
+function table(id, head, rows, pick) {
+  const t = document.getElementById(id);
+  const tr = document.createElement("tr");
+  for (const h of head) { const th = document.createElement("th"); th.textContent = h; tr.append(th); }
+  t.append(tr);
+  for (const r of rows) {
+    const row = document.createElement("tr");
+    if (pick && pick(r)) row.className = "pick";
+    for (const c of r.cells) { const td = document.createElement("td"); td.textContent = c; row.append(td); }
+    t.append(row);
+  }
+}
+const day = s => new Date(s.replace(" ", "T") + "Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+document.getElementById("window").textContent = `${day(R.data.first)} to ${day(R.data.last)} 2026`;
+document.getElementById("split").textContent = new Date(R.forward.split.replace(" ", "T") + "Z").toLocaleString("en-US",
+  { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }) + " UTC";
+document.getElementById("generated").textContent = new Date(R.generated_at).toUTCString().replace(":00 GMT", " UTC");
+
+chart("coverage", host => columns(host, R.data.coverage_by_hour.map(h => ({
+  label: String(h.hour).padStart(2, "0"), value: h.labeled / h.flagged, tipTitle: `${String(h.hour).padStart(2, "0")}:00 UTC`,
+  extra: [[null, `${h.labeled} of ${h.flagged}`, "bursts labeled"]],
+})), { domain: [0, 0.6], title: "labeled" }));
+const ORDER = ["lr_deployed", "lr_v2", "lr_selected", "lr_all", "xgb_deployed", "xgb_v2", "xgb_all", "xgb_all_defaults"];
+const PICK = "lr_v2";
+const apMax = Math.ceil(Math.max(...R.models.map(m => m.ap_bootstrap_interval[1])) * 10) / 10;
+chart("models", host => dotInterval(host, ORDER.map(k => ({
+  label: NAME[k], value: M[k].metrics.ap, lo: M[k].ap_bootstrap_interval[0], hi: M[k].ap_bootstrap_interval[1], color: colorOf(k),
+  extra: [[null, FMT.d2(M[k].metrics.roc_auc), "ROC-AUC"], [null, FMT.pct0(M[k].metrics.precision_top10), "precision in the top 10%"]],
+})), { domain: [0, apMax], ref: R.base_rate, refLabel: `random guessing ${FMT.pct0(R.base_rate)}`, fmt: FMT.d2, title: "average precision" }));
+
+table("models-table", ["Model", "Average precision", "90% interval", "ROC-AUC", "Log loss", "Brier", "Precision, top 10%"],
+  ORDER.map(k => ({ key: k, cells: [NAME[k], FMT.d3(M[k].metrics.ap), `${FMT.d2(M[k].ap_bootstrap_interval[0])} to ${FMT.d2(M[k].ap_bootstrap_interval[1])}`,
+    FMT.d3(M[k].metrics.roc_auc), FMT.d3(M[k].metrics.log_loss), FMT.d3(M[k].metrics.brier), FMT.pct0(M[k].metrics.precision_top10)] })),
+  r => r.key === PICK);
+
+table("pairs-table", ["Comparison", "Difference in average precision", "90% interval", "First ahead, bootstrap", "First ahead, CV repeats"],
+  R.pairs.map(p => ({ cells: [`${NAME[p.a]} vs ${NAME[p.b]}`, FMT.signed(p.delta_ap), `${FMT.signed(p.interval[0])} to ${FMT.signed(p.interval[1])}`,
+    FMT.pct0(p.a_better_share), FMT.pct0(p.a_better_repeats)] })));
+
+const settled = R.settled.xgb;
+const describe = x => `depth ${x.max_depth}, ${x.n_estimators} trees, learning rate ${x.learning_rate}, minimum child weight ${x.min_child_weight}`;
+document.getElementById("xgb-settled").textContent = `${describe(settled)} on v2; ${describe(R.settled.xgb_all)} on all 14`;
+document.getElementById("lr-settled").textContent = `C = ${R.settled.lr_c}`;
+
+chart("pr", host => lines(host, ["lr_deployed", "lr_v2", "xgb_v2", "xgb_all"].map(k => ({
+  label: NAME[k], color: COLOR[k], points: R.pr_curves[k],
+})), { xDomain: [0, 1], yDomain: [0, 1], xLabel: "Recall: share of news caught", yLabel: "Precision", xFmt: FMT.pct0, yFmt: FMT.pct0, step: true, height: 320 }));
+
+chart("learning", host => {
+  const keys = ["lr_v2", "xgb_v2", "xgb_all"];
+  const xs = keys.flatMap(k => R.learning_curve[k].map(p => p.news_in_training));
+  lines(host, keys.map(k => ({
+    label: NAME[k], color: COLOR[k],
+    points: R.learning_curve[k].map(p => [p.news_in_training, p.ap, `${FMT.pct0(p.fraction)} of training articles`]),
+    band: R.learning_curve[k].map(p => [p.news_in_training, p.ap_interval[0], p.ap_interval[1]]),
+  })), { xDomain: [Math.floor(Math.min(...xs) / 5) * 5, Math.ceil(Math.max(...xs) / 5) * 5], yDomain: [0, apMax],
+    xLabel: "News labels in the training folds", yLabel: "Average precision", xFmt: FMT.int, yFmt: FMT.d2, points: true, height: 300 });
+});
+
+const SHORT = {
+  log_edits: "Edits", log_editors: "Editors", log_surprise: "Surprise (σ)", log_expected: "Usual edits (baseline)",
+  bot_share: "Bot share", anonymous_share: "Anonymous share",
+  revert_share: "Revert share, English", revert_share_any_language: "Revert share, 20 languages", year_in_title: "Year in title",
+  log_prior_24h: "Edits in the prior 24 h", log_earlier_flags: "Earlier flags, 24 h", log_bytes_removed: "Bytes removed",
+  new_page: "Created in the window", span_minutes: "Minutes, first to last edit", large_wiki: "Large wiki",
+};
+const ab = R.ablation.filter(a => a.kind !== "v2");
+const abMax = Math.max(...ab.map(a => Math.max(Math.abs(a.delta_interval[0]), Math.abs(a.delta_interval[1])))) * 1.1;
+for (const kind of ["without", "with"]) {
+  chart("ablation-" + kind, host => bars(host, ab.filter(a => a.kind === kind).map(a => ({
+    label: (kind === "without" ? "− " : "+ ") + a.features.map(f => SHORT[f]).join(", "),
+    value: a.delta, lo: a.delta_interval[0], hi: a.delta_interval[1],
+    color: (kind === "without" ? a.delta < 0 : a.delta > 0) ? "var(--s1)" : "var(--s0)",
+    note: `ahead of v2 in ${FMT.pct0(a.ahead_share)} of repeats`,
+  })).sort((p, q) => p.value - q.value), { domain: [-abMax, abMax], fmt: FMT.signed, title: "change in average precision" }));
+}
+chart("selection", host => bars(host, Object.entries(R.selection.picked).sort((p, q) => q[1] - p[1]).map(([f, share]) => ({
+  label: SHORT[f], value: share, color: share >= 0.5 ? "var(--s1)" : "var(--s0)",
+  note: `picked in ${Math.round(share * R.selection.folds)} of ${R.selection.folds} training folds`,
+})), { domain: [0, 1], fmt: FMT.pct0, title: "of training folds picked it" }));
+
+const cMax = Math.max(...R.coefficients.map(c => Math.max(Math.abs(c.interval[0]), Math.abs(c.interval[1])))) * 1.05;
+chart("coefs", host => dotInterval(host, [...R.coefficients].sort((p, q) => q.weight - p.weight).map(c => ({
+  label: SHORT[c.feature], value: c.weight, lo: c.interval[0], hi: c.interval[1], color: c.weight >= 0 ? "var(--s1)" : "var(--s2)",
+  extra: [[null, FMT.d2(Math.exp(c.weight)) + "×", "odds per standard deviation"]],
+})), { domain: [-cMax, cMax], ref: 0, fmt: FMT.d2, title: "weight per standard deviation" }));
+
+const shapMax = Math.max(...R.shap.map(s => s.mean_abs)) * 1.1;
+chart("shap", host => bars(host, [...R.shap].sort((p, q) => q.mean_abs - p.mean_abs).map(s => ({ label: SHORT[s.feature], value: s.mean_abs, color: "var(--s2)" })),
+  { domain: [0, shapMax], fmt: FMT.d2, title: "mean |contribution| to log-odds" }));
+
+chart("calib", host => {
+  const keys = ["lr_v2", "xgb_v2", "xgb_all", "live"];
+  const all = keys.flatMap(k => R.calibration[k]);
+  const top = Math.min(1, Math.ceil(Math.max(...all.map(b => Math.max(b.predicted, b.observed))) * 10) / 10);
+  lines(host, keys.map(k => ({
+    label: NAME[k], color: COLOR[k], points: R.calibration[k].map(b => [b.predicted, b.observed, `${b.band}, ${b.n} bursts`]),
+  })), { xDomain: [0, top], yDomain: [0, top], xLabel: "Predicted probability of news (band average)", yLabel: "Share Claude labeled news",
+    xFmt: FMT.pct0, yFmt: FMT.pct0, diagonal: true, points: true, height: 320 });
+});
+
+table("thr-table", ["Rule", "Threshold", "Precision", "Recall", "News calls a day"],
+  R.thresholds.map(t => ({ rule: t.rule, cells: [t.rule, FMT.d3(t.threshold), FMT.pct0(t.precision), FMT.pct0(t.recall), FMT.d1(t.news_calls_per_day)] })),
+  r => r.rule === "precision of 50% or more, most recall");
+
+const F = R.forward;
+table("fwd-table", ["Model", "Average precision", "ROC-AUC", "Brier", "Precision, top 10%"],
+  ["lr_deployed", "lr_v2", "xgb_v2", "xgb_all", "live"].map(k => ({ key: k, cells: [NAME[k], FMT.d3(F.models[k].ap), FMT.d3(F.models[k].roc_auc),
+    FMT.d3(F.models[k].brier), FMT.pct0(F.models[k].precision_top10)] })), r => r.key === PICK);
+
+// Feature medians by label, printed the way Wikipedia prints a page history's byte changes
+const fe = document.getElementById("feat-table");
+const LABELS = ["news", "edit war", "routine"];
+const head = document.createElement("tr");
+for (const h of ["Feature", "News", "Edit war", "Routine", "In"]) { const th = document.createElement("th"); th.textContent = h; head.append(th); }
+fe.append(head);
+const BINARY = new Set(["year_in_title", "new_page", "large_wiki"]);
+for (const [name, f] of Object.entries(R.features)) {
+  const tr = document.createElement("tr");
+  const td0 = document.createElement("td"); td0.textContent = SHORT[name]; td0.title = f.description; tr.append(td0);
+  for (const label of LABELS) {
+    const td = document.createElement("td");
+    let v = BINARY.has(name) ? f.mean[label] : f.median[label];
+    if (name === "log_expected") v = Math.exp(v);
+    else if (name.startsWith("log_")) v = Math.expm1(v);
+    if (name === "log_bytes_removed") {
+      const s = document.createElement("span"); s.className = "remove" + (v >= 500 ? " big" : ""); s.textContent = "−" + Math.round(v).toLocaleString("en-US");
+      td.append(s);
+    } else if (BINARY.has(name) || name.includes("share")) td.textContent = FMT.pct0(v);
+    else if (name === "log_expected") td.textContent = FMT.d2(v);
+    else if (name === "span_minutes") td.textContent = FMT.d1(v) + " min";
+    else if (name === "log_surprise") td.textContent = FMT.d1(v) + "σ";
+    else td.textContent = FMT.d1(v);
+    tr.append(td);
+  }
+  const td = document.createElement("td");
+  td.textContent = [f.in_deployed ? "deployed" : "", f.in_v2 ? "v2" : ""].filter(Boolean).join(", ") || "tested";
+  tr.append(td);
+  fe.append(tr);
+}
+/*CHARTS*/
+</script>
