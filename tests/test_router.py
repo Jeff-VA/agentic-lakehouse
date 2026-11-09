@@ -189,8 +189,9 @@ def assert_close_to_all_events(result, q, everything, compiler=PERCENTILES, rel=
     for actual_row, expected_row in zip(actual, expected):
         assert actual_row.keys() == expected_row.keys()
         for column, value in expected_row.items():
-            close = pytest.approx(value, rel=rel if column in ("median_latency_ms", "p90_latency_ms") else 1e-9)
-            assert actual_row[column] == (close if isinstance(value, float) else value), column
+            if isinstance(value, float):  # pytest 9.2 refuses approx() of a string, even unused
+                value = pytest.approx(value, rel=rel if column in ("median_latency_ms", "p90_latency_ms") else 1e-9)
+            assert actual_row[column] == value, column
 
 
 @pytest.mark.parametrize(
