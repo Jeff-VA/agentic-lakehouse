@@ -1,6 +1,6 @@
 [project]
 name = "agentic-lakehouse"
-version = "0.10.1"
+version = "0.10.2"
 description = "An AI-first lakehouse: metrics defined once over Kafka, Pinot and Iceberg, served live to dashboards and AI agents."
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"  # see LICENSE; other use needs a commercial license (README)
