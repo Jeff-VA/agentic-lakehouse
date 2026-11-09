@@ -44,7 +44,7 @@ from confluent_kafka import Consumer
 from dotenv import load_dotenv
 
 from agentic_lakehouse import duckdb_client
-from agentic_lakehouse.api_gateway import Gateway, Project, create_app, create_mcp_server
+from agentic_lakehouse.api_gateway import Gateway, Project, create_app, run_stdio
 from agentic_lakehouse.browser import BrowserError
 from agentic_lakehouse.scaffold import create_project, engine_version
 from agentic_lakehouse.config import ColumnType, Dataset, Platform, load_platform
@@ -299,7 +299,7 @@ def main() -> None:
         app = create_app(Gateway.from_platform(platform), dashboards_dir=project.dashboards_dir, project=project)
         uvicorn.run(app, host=args.host, port=args.port)
     elif args.command == "mcp":
-        create_mcp_server(Gateway.from_platform(platform), project=Project(platform.config_dir)).run("stdio")
+        run_stdio(Gateway.from_platform(platform), project=Project(platform.config_dir))
     elif args.command == "duckdb":
         write_duckdb_setup(platform, args.gateway, Path(args.out))
 

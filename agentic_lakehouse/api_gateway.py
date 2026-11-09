@@ -22,8 +22,9 @@ Live:  GET /views/{name}/live?<params>, a Server-Sent Events stream of the
 Dashboards: the project's dashboards/*.html, at /d/<name> (and / for the only one);
        they draw views with the chart tags in /al.js (agentic_lakehouse/static/al.js)
 MCP:   Streamable HTTP at /mcp, or stdio via `agentic-lakehouse mcp`. Given the project
-       (Project), it also checks and screenshots dashboards for the agent
-       building them, and open pages reload when a view, macro or dashboard file changes.
+       (Project), its tools answer with the views and macros as they are on disk
+       (ProjectViews), and it checks and screenshots dashboards for the agent
+       building them; open pages reload when a view, macro or dashboard file changes.
 """
 
 import asyncio
@@ -32,6 +33,7 @@ import html
 import logging
 import math
 import re
+import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from urllib.parse import parse_qsl
@@ -826,7 +828,15 @@ Chart tags (al.js):
 """
 
 
-def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPServer:
+def create_mcp_server(gateway: Gateway, project: Project | None = None, views: "ProjectViews | None" = None) -> MCPServer:
+    """The gateway's tools. With a `project`, they answer with its views and macros as they are on
+    disk (`views`, or a ProjectViews of their own), and the tools for building dashboards join them."""
+    views = views or (ProjectViews(project, gateway) if project else None)
+
+    def current() -> str | None:
+        """Reload the views and macros if their files changed: why they don't load, if they don't."""
+        return views.current() if views else None
+
     mcp = MCPServer(
         "lakehouse-metrics",
         instructions=(
@@ -845,6 +855,7 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
     def list_views() -> ViewCatalog:
         """List the project's views (config/views/*.sql): named, parameterized queries that dashboards
         read. Each comes with its description, parameters, result columns and SQL."""
+        current()
         return gateway.view_catalog()
 
     @mcp.tool(annotations=read_only)
@@ -856,12 +867,18 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
         include_sql: Annotated[bool, Field(description="Also return the SQL each engine ran")] = False,
     ) -> ViewResult:
         """Run a view and get its rows as a dashboard does, with how fresh the data is."""
+        problem = current()
+        stale = f"The view files as they are now don't load, so these are the last views that did: {problem}" if problem else None
         if name not in gateway.views:
-            raise ToolError(f"no view named '{name}'. Views: {', '.join(gateway.views) or 'none'}")
+            missing = f"no view named '{name}'. Views: {', '.join(gateway.views) or 'none'}"
+            raise ToolError(f"{missing}. {stale}" if stale else missing)
         try:
-            return gateway.view(name, params or {}, include_sql)
+            result = gateway.view(name, params or {}, include_sql)
         except (ViewError, QueryError, EngineError) as e:
             raise ToolError(str(e)) from e
+        if stale:
+            result.notes.insert(0, stale)
+        return result
 
     @mcp.tool(annotations=read_only)
     def query_sql(
@@ -875,6 +892,7 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
         Read tables as namespace.table (raw tables, gold rollups) with any Trino SELECT. A WITH query
         can combine them: each CTE reads one model, or tables, and the final SELECT runs on the
         merged results. The project's macros ({{ ... }}) work in view files only."""
+        current()  # the macros the metrics compile with
         try:
             return gateway.run_view(gateway.parse_sql(sql), {}, include_sql)
         except (ViewError, QueryError, EngineError) as e:
@@ -887,6 +905,7 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
     def list_metrics() -> Catalog:
         """List the metrics and dimensions you can query, what each one means, and how far the data reaches;
         and the SQL macros views can call, with what each one is for."""
+        current()
         return gateway.catalog()
 
     @mcp.tool(annotations=read_only)
@@ -921,6 +940,7 @@ def create_mcp_server(gateway: Gateway, project: Project | None = None) -> MCPSe
 
         Answers come from the real-time tier, the historical tier or both, whichever holds the range.
         """
+        current()  # the macros the metrics compile with
         try:
             query = MetricQuery(
                 metrics=metrics,
@@ -986,39 +1006,99 @@ async def _read_lookups(gateway: Gateway) -> None:
             log.warning(error)
 
 
-async def _watch_project(project: Project, gateway: Gateway, live: LiveViews, interval: float = 1.0) -> None:
+async def _start_reading_lookups(gateway: Gateway) -> asyncio.Task | None:
+    """Read the lookups' tables now, so no query gets them empty, and then as often as they ask."""
+    if not any(l.table for l in gateway.router.compiler.ontology.lookups):
+        return None
+    for error in await asyncio.to_thread(gateway.refresh_lookups):
+        log.warning(error)
+    return asyncio.create_task(_read_lookups(gateway))
+
+
+def _stamps(config_dir: Path, patterns: tuple[str, ...]) -> dict[str, tuple[int, int]]:
+    """Each file in `config_dir` matching one of `patterns`, with when it last changed and its size."""
+    found = {}
+    for pattern in patterns:
+        for path in config_dir.glob(pattern):
+            with contextlib.suppress(OSError):  # deleted while listing
+                stat = path.stat()
+                found[str(path)] = (stat.st_mtime_ns, stat.st_size)
+    return found
+
+
+class ProjectViews:
+    """The gateway's views and macros, kept as the project's files are. `current()` reloads them
+    when a view or macro file changed since it last looked, so a view saved a moment ago runs. An
+    edit that breaks a view or a macro keeps the last good views and macros, and `current()` says
+    what broke until the files change again. The MCP tools call it before they answer, over stdio
+    and at /mcp; `serve` also calls it every second, for open pages (_watch_project)."""
+
+    FILES = ("views/*.sql", "macros/*.sql")
+
+    def __init__(self, project: Project, gateway: Gateway):
+        self.project = project
+        self.gateway = gateway
+        self._lock = threading.Lock()  # MCP runs tools in threads
+        self._stamps = _stamps(project.config_dir, self.FILES)  # the files the gateway's views came from
+        self._problem: str | None = None
+
+    def current(self) -> str | None:
+        """Reload the views and macros if their files changed. Returns why they don't load, if they don't."""
+        with self._lock:
+            stamps = _stamps(self.project.config_dir, self.FILES)
+            if stamps == self._stamps:
+                return self._problem
+            self._stamps = stamps
+            try:
+                platform = load_platform(self.project.config_dir)
+            except (ConfigError, ValidationError, OSError) as e:
+                log.warning("not reloading the views and macros: %s", e)
+                self._problem = str(e)
+                return self._problem
+            self.gateway.views = dict(platform.views)  # rendered with the macros as they are now
+            # The compiler reads the ontology's macros at each query (SqlCompiler._macros), so
+            # every query from now on compiles with these.
+            self.gateway.router.compiler.ontology._macros = platform.ontology.macros
+            self._problem = None
+            return None
+
+
+async def _watch_project(views: ProjectViews, live: LiveViews, interval: float = 1.0) -> None:
     """Reload the views when a view or macro file changes, and open pages when a view, macro or
     dashboard does. A macro edit also reaches every query the gateway compiles from then on. An
     edit that breaks a view or a macro keeps the last good views and macros, and pages say what broke."""
-
-    def stamps() -> dict[str, int]:
-        found = {}
-        for path in [*project.config_dir.glob("views/*.sql"), *project.config_dir.glob("macros/*.sql"), *project.dashboards_dir.glob("*.html")]:
-            with contextlib.suppress(OSError):  # deleted while listing
-                found[str(path)] = path.stat().st_mtime_ns
-        return found
-
-    last = await asyncio.to_thread(stamps)
+    config_dir, files = views.project.config_dir, (*ProjectViews.FILES, "dashboards/*.html")
+    last = await asyncio.to_thread(_stamps, config_dir, files)
     while True:
         await asyncio.sleep(interval)
-        current = await asyncio.to_thread(stamps)
+        current = await asyncio.to_thread(_stamps, config_dir, files)
         if current == last:
             continue
         sql_changed = any(path.endswith(".sql") for path in current.keys() ^ last.keys() | {p for p in current if current[p] != last.get(p)})
         last = current
-        if sql_changed:  # a view or a macro
-            try:
-                platform = await asyncio.to_thread(load_platform, project.config_dir)
-            except (ConfigError, ValidationError, OSError) as e:
-                log.warning("not reloading the views and macros: %s", e)
-                live.announce("problem", {"detail": str(e)})
+        if sql_changed:  # a view or a macro, which an MCP tool may have reloaded already
+            if problem := await asyncio.to_thread(views.current):
+                live.announce("problem", {"detail": problem})
                 continue
-            gateway.views = dict(platform.views)  # rendered with the macros as they are now
-            # The compiler reads the ontology's macros at each query (SqlCompiler._macros), so
-            # every query from now on compiles with these.
-            gateway.router.compiler.ontology._macros = platform.ontology.macros
             live.restart()
         live.announce("reload", {})
+
+
+def run_stdio(gateway: Gateway, project: Project | None = None) -> None:
+    """The MCP server over stdio (`agentic-lakehouse mcp`), until the client closes it. As under
+    `serve`, its tools answer with the project's views and macros as they are on disk, and the
+    lookups' tables are read before it answers and then as often as they ask."""
+    mcp = create_mcp_server(gateway, project)
+
+    async def main() -> None:
+        reader = await _start_reading_lookups(gateway)
+        try:
+            await mcp.run_stdio_async()
+        finally:
+            if reader:
+                reader.cancel()
+
+    asyncio.run(main())
 
 
 # Query-string options of GET /views/{name} and /sql. Views can't declare parameters with these
@@ -1066,18 +1146,15 @@ def create_app(
     reload when its view, macro or dashboard files change."""
     dashboards = Path(dashboards_dir) if dashboards_dir else None
     live = live or LiveViews(gateway)
-    mcp = create_mcp_server(gateway, project)
+    project_views = ProjectViews(project, gateway) if project else None  # one for MCP's tools and the watcher
+    mcp = create_mcp_server(gateway, project, project_views)
     mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         async with mcp.session_manager.run():  # mounted apps don't get their own lifespan run
-            watcher = asyncio.create_task(_watch_project(project, gateway, live)) if project else None
-            reader = None
-            if any(l.table for l in gateway.router.compiler.ontology.lookups):  # before serving, so no query gets them empty
-                for error in await asyncio.to_thread(gateway.refresh_lookups):
-                    log.warning(error)
-                reader = asyncio.create_task(_read_lookups(gateway))
+            watcher = asyncio.create_task(_watch_project(project_views, live)) if project_views else None
+            reader = await _start_reading_lookups(gateway)  # before serving
             try:
                 yield
             finally:

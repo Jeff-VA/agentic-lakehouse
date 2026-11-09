@@ -69,7 +69,9 @@ registers for Claude Code; each has a command-line twin.
    - Reading tables (`FROM gold.hourly_activity`), write any Trino SELECT. Say how
      to read computed columns in the header: `columns: {share: {format: percent}}`.
    - Give it a `description` a stranger could act on, and parameters
-     (`:hours`) instead of hard-coded windows. `query_view` runs it.
+     (`:hours`) instead of hard-coded windows. `query_view` runs it as soon
+     as it's saved. A change to the YAML config needs the stack's app
+     services restarted and the MCP server reconnected (`/mcp` in Claude Code).
 3. **Write the page** in plain HTML with the chart tags listed at the top of
    http://127.0.0.1:8000/al.js (the `build_dashboard` MCP prompt includes
    them). Names are enough: labels and formats come from the ontology. Copy

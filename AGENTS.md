@@ -36,7 +36,8 @@ Code; each has a command-line twin.
      Prefer gold rollups for long ranges.
    - Give the view a `description` a stranger could act on, and parameters
      (`:hours`) instead of hard-coded windows.
-   - `query_view` runs it, so you can read the rows before drawing them.
+   - `query_view` runs it as soon as it's saved, so you can read the rows
+     before drawing them.
 3. **Write the page** in plain HTML with the chart tags listed at the top of
    `agentic_lakehouse/static/al.js`. Names are enough: labels and number formats come
    from the ontology, so set `label`, `format`, `unit` and `better` there
@@ -59,5 +60,7 @@ reference.
 - `pytest` runs the unit tests without Docker. They include browser tests of
   the example dashboard when Chrome is installed.
 - `pytest -m integration` runs against the stack.
-- Changes to the config's YAML need the platform restarted. Changes to views
-  and dashboards don't.
+- Changes to the config's YAML need the platform restarted, and
+  `agentic-lakehouse mcp` too (in Claude Code, reconnect it with `/mcp`).
+  Changes to views, macros and dashboards don't: the gateway and the MCP
+  server read them as they're saved.

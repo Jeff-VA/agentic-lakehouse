@@ -9,9 +9,10 @@ import duckdb
 import pyarrow as pa
 import pytest
 from fastapi.testclient import TestClient
+from mcp.server.mcpserver import MCPServer
 from pydantic import ValidationError
 
-from agentic_lakehouse.api_gateway import Gateway, Warehouse, create_app
+from agentic_lakehouse.api_gateway import Gateway, Warehouse, create_app, run_stdio
 from agentic_lakehouse.compiler import SqlCompiler
 from agentic_lakehouse.config import Rollup
 from agentic_lakehouse.engines import DuckDBEngine
@@ -181,6 +182,20 @@ def test_the_gateway_reads_its_lookups_before_it_serves():
     with TestClient(create_app(gateway)) as client:
         body = client.post("/query", json={"metrics": ["plays"], "dimensions": ["isp", "region"], "start": "2026-01-01T00:00:00", "end": "2026-01-01T06:00:00"}).json()
     assert {r["isp"]: r["region"] for r in body["rows"]} == {"att": "south", "comcast": None, "verizon": None}
+
+
+def test_the_stdio_mcp_server_reads_its_lookups_before_it_answers(monkeypatch):
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA gold; CREATE TABLE gold.isp_regions AS SELECT 'att' AS isp, 'south' AS region, 4.0 AS subscribers")
+    gateway = Gateway(router(compiler=SqlCompiler(WITH_LOOKUPS)), warehouse=Warehouse(DuckDBEngine(con)))
+    answered = []
+
+    async def answer_from_stdin(server):  # the loop answering requests on stdin, until it closes
+        answered.extend(gateway.router.run(query(0, 6, metrics=["plays"], dimensions=["isp", "region"])).table.to_pylist())
+
+    monkeypatch.setattr(MCPServer, "run_stdio_async", answer_from_stdin)
+    run_stdio(gateway)
+    assert {r["isp"]: r["region"] for r in answered} == {"att": "south", "comcast": None, "verizon": None}
 
 
 def _tiered_platform():

@@ -561,7 +561,12 @@ claude mcp add --transport http lakehouse http://127.0.0.1:8000/mcp
 ```
 
 The same server runs over stdio on your machine with `agentic-lakehouse mcp`,
-which is what [`.mcp.json`](.mcp.json) sets up for Claude Code. Its tools:
+which is what [`.mcp.json`](.mcp.json) sets up for Claude Code. Both answer
+with the project's views and macros as they are on disk: a view saved a moment
+ago is listed and runs. While an edit leaves a view or macro broken,
+`query_view` runs the last ones that loaded and says what broke. Changes to the
+YAML config need the server restarted (in Claude Code, reconnect it with
+`/mcp`). Its tools:
 
 | Tool | Arguments | Returns |
 |---|---|---|

@@ -7,9 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from mcp import Client, StdioServerParameters
 from agentic_lakehouse.testing import standin_gateway
 from test_api_gateway import call_mcp
 
@@ -194,6 +196,54 @@ def test_mcp_checks_the_project_as_it_is_on_disk(tmp_path):
     (tmp_path / "config" / "views" / "isp_now.sql").write_text("SELECT 1")  # an edit since the server started
     result = call_mcp(server, "call_tool", "check_dashboards", {}).structured_content
     assert "views/isp_now.sql: start the file with a /* ... */ comment" in result["config_error"]
+
+
+BITRATE = """/*
+description: Average bitrate per ISP over the last hour.
+*/
+SELECT isp_provider, avg_bitrate_kbps
+FROM playback_telemetry
+WHERE event_ts >= now() - INTERVAL '1' HOUR
+"""
+
+
+def test_mcp_runs_a_view_saved_a_moment_ago(tmp_path):
+    """The agent saves a view and runs it straight away. It breaks the view: the last good views
+    answer, saying what broke. It deletes the view: it's gone."""
+    proj = project(tmp_path)
+    server = create_mcp_server(standin_gateway(load_platform(proj.config_dir)), project=proj)
+    view = proj.config_dir / "views" / "isp_bitrate.sql"
+    view.write_text(BITRATE)
+    listed = call_mcp(server, "call_tool", "list_views", {}).structured_content["views"]
+    assert "isp_bitrate" in [v["name"] for v in listed]
+    ran = call_mcp(server, "call_tool", "query_view", {"name": "isp_bitrate"})
+    assert ran.is_error is False and ran.structured_content["rows"] and ran.structured_content["notes"] == []
+    view.write_text(BITRATE.replace("isp_provider,", "isp_providr,"))
+    stale = "The view files as they are now don't load, so these are the last views that did: "
+    notes = call_mcp(server, "call_tool", "query_view", {"name": "isp_bitrate"}).structured_content["notes"]
+    assert notes[0].startswith(stale) and "views/isp_bitrate.sql: 'isp_providr' isn't a metric or dimension" in notes[0]
+    missing = call_mcp(server, "call_tool", "query_view", {"name": "nope"})
+    assert missing.is_error and f"no view named 'nope'. Views: isp_bitrate, isp_hourly, isp_now, quality_overall. {stale}" in missing.content[0].text
+    view.unlink()
+    gone = call_mcp(server, "call_tool", "query_view", {"name": "isp_bitrate"})
+    assert gone.is_error and gone.content[0].text.endswith("no view named 'isp_bitrate'. Views: isp_hourly, isp_now, quality_overall")
+
+
+def test_the_stdio_server_lists_a_view_saved_after_it_started(tmp_path):
+    """`agentic-lakehouse mcp`, as Claude Code runs it from .mcp.json: one process for the session."""
+    proj = project(tmp_path)
+    command = StdioServerParameters(
+        command=sys.executable, args=["-m", "agentic_lakehouse", "--config", str(proj.config_dir), "mcp"], cwd=Path(__file__).parents[1]
+    )
+
+    async def main() -> tuple[list[str], list[str]]:
+        async with Client(command) as client:
+            before = (await client.call_tool("list_views", {})).structured_content["views"]
+            (proj.config_dir / "views" / "isp_bitrate.sql").write_text(BITRATE)
+            after = (await client.call_tool("list_views", {})).structured_content["views"]
+        return [v["name"] for v in before], [v["name"] for v in after]
+
+    assert anyio.run(main) == (["isp_hourly", "isp_now", "quality_overall"], ["isp_bitrate", "isp_hourly", "isp_now", "quality_overall"])
 
 
 def test_the_build_dashboard_prompt_carries_the_workflow_and_tag_reference(tmp_path):
