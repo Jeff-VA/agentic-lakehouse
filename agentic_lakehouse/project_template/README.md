@@ -41,3 +41,5 @@ queries). After changing `config/deployment.yaml`, rewrite them with
 4. Check everything with `.venv/bin/agentic-lakehouse check` and `.venv/bin/pytest`.
 
 The engine's README documents every endpoint, the view format, macros and the chart tags.
+The engine is free for noncommercial use (PolyForm Noncommercial 1.0.0); use inside a
+company needs a commercial license, as its README explains.

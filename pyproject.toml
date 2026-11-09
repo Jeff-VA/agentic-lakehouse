@@ -3,7 +3,7 @@ name = "agentic-lakehouse"
 version = "0.10.1"
 description = "An AI-first lakehouse: metrics defined once over Kafka, Pinot and Iceberg, served live to dashboards and AI agents."
 readme = "README.md"
-license = "LicenseRef-All-Rights-Reserved"  # see LICENSE: public to read, no rights granted
+license = "PolyForm-Noncommercial-1.0.0"  # see LICENSE; other use needs a commercial license (README)
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 keywords = ["lakehouse", "semantic layer", "iceberg", "pinot", "trino", "kafka", "mcp", "dashboards"]

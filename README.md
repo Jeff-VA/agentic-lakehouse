@@ -1156,6 +1156,10 @@ tests/              unit tests; tests/integration/ runs against the stack
 
 ## License
 
-Copyright (c) 2026 Jeffrey Van Anderson. All rights reserved. The code is public to read,
-but no license is granted to use, copy, modify or distribute it without
-permission. See [LICENSE](LICENSE).
+Copyright (c) 2026 Jeffrey Van Anderson.
+
+Agentic Lakehouse is free for noncommercial use under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): personal projects, study and
+research, and use by schools, charities, public research bodies and
+government institutions. Any other use, including inside a company, needs a
+commercial license from [the author](https://github.com/Jeff-VA).
