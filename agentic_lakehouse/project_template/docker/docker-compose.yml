@@ -34,6 +34,10 @@ x-after-setup: &after-setup
   prefect:
     condition: service_healthy
 
+# Each Pinot process registers under its service name (-controllerHost, -brokerHost, -serverHost),
+# not its container's IP, which can change when the stack restarts: the tables' segments stay
+# assigned to a server that answers. In a stack from before 0.10.2, setup moves them off the
+# servers it lost that way.
 x-pinot: &pinot
   image: apachepinot/pinot:1.5.0
   restart: unless-stopped
@@ -87,7 +91,9 @@ services:
 
   pinot-controller:
     <<: *pinot
-    command: StartController -zkAddress zookeeper:2181 -controllerPort 9000 -dataDir /var/pinot/controller
+    command: >-
+      StartController -zkAddress zookeeper:2181 -controllerHost pinot-controller -controllerPort 9000
+      -dataDir /var/pinot/controller
     ports: ["9000:9000"]
     environment:
       JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx1g -XX:+UseG1GC
@@ -101,7 +107,7 @@ services:
 
   pinot-broker:
     <<: *pinot
-    command: StartBroker -zkAddress zookeeper:2181 -brokerPort 8099
+    command: StartBroker -zkAddress zookeeper:2181 -brokerHost pinot-broker -brokerPort 8099
     ports: ["8099:8099"]
     environment:
       JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx1g -XX:+UseG1GC
@@ -115,7 +121,7 @@ services:
   pinot-server:
     <<: *pinot
     command: >-
-      StartServer -zkAddress zookeeper:2181 -serverPort 8098 -serverAdminPort 8097
+      StartServer -zkAddress zookeeper:2181 -serverHost pinot-server -serverPort 8098 -serverAdminPort 8097
       -dataDir /var/pinot/server/index -segmentDir /var/pinot/server/segments
     environment:
       JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms512m -Xmx2g -XX:+UseG1GC

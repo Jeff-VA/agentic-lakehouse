@@ -1,10 +1,13 @@
 """Bootstraps the platform's infrastructure from config and loads data into it.
 
 setup() is idempotent: it creates whatever is missing (Kafka topics, Pinot
-schemas and tables, Iceberg namespaces and tables) and leaves the rest alone.
+schemas and tables, Iceberg namespaces and tables) and leaves the rest alone,
+except Pinot segments assigned to servers that are gone, which it moves to the
+live ones (reassign_lost_segments).
 """
 
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -42,13 +45,48 @@ def iceberg_catalog(platform: Platform) -> Catalog:
 
 
 def setup(platform: Platform, log: Log = print) -> None:
-    """Create every dataset's Kafka topic, Pinot table and Iceberg table if missing."""
+    """Create every dataset's Kafka topic, Pinot table and Iceberg table if missing, and move Pinot
+    segments off servers that are gone (reassign_lost_segments)."""
     kafka = AdminClient({"bootstrap.servers": platform.deployment.kafka.bootstrap_servers})
     catalog = iceberg_catalog(platform)
     for dataset in platform.ingestion.datasets:
         _create_topic(kafka, dataset, log)
         _create_pinot_table(platform, dataset, log)
         _create_iceberg_table(platform, catalog, dataset, log)
+    with httpx.Client(timeout=30) as client:
+        reassign_lost_segments(client, platform.deployment.pinot.controller_url, [d.realtime.table for d in platform.ingestion.datasets], log)
+
+
+# A Pinot server named after an IP address, as every one was in stacks from before 0.10.2
+_NAMED_BY_IP = re.compile(r"^Server_\d{1,3}(\.\d{1,3}){3}_\d+$")
+LOST = "lost"  # the tag lost servers get: no tenant uses it, so a rebalance assigns them nothing
+
+
+def reassign_lost_segments(client: httpx.Client, controller_url: str, tables: list[str], log: Log = print) -> None:
+    """Move `tables`' segments off Pinot servers that registered under a container IP and are gone,
+    onto the live servers, and remove those servers.
+
+    Before 0.10.2 the stack's Pinot processes registered under their containers' IPs. When a restart
+    gave the server a new IP, it registered again under that, while the tables' segments stayed
+    assigned to the old name: queries found no rows, or failed to reach it. The processes register
+    under their service names now (docker/docker-compose.yml), so once this has run it finds nothing."""
+    cluster = client.get(f"{controller_url}/cluster/info").raise_for_status().json()["clusterName"]
+    live = set(client.get(f"{controller_url}/zk/ls", params={"path": f"/{cluster}/LIVEINSTANCES"}).raise_for_status().json())
+    servers = [i for i in client.get(f"{controller_url}/instances").raise_for_status().json()["instances"] if i.startswith("Server_")]
+    lost = [s for s in servers if s not in live and _NAMED_BY_IP.match(s)]
+    if not lost or not live.intersection(servers):  # nothing lost, or no server to move segments to yet
+        return
+    for server in lost:  # a rebalance assigns segments to every server with the tenant's tag, live or not
+        client.put(f"{controller_url}/instances/{server}/updateTags", params={"tags": LOST}).raise_for_status()
+    for table in tables:
+        ideal = client.get(f"{controller_url}/tables/{table}/idealstate", params={"tableType": "realtime"}).raise_for_status().json()
+        if on := sorted({s for replicas in (ideal.get("REALTIME") or {}).values() for s in replicas if s in lost}):
+            params = {"type": "REALTIME", "downtime": "true", "includeConsuming": "true", "bootstrap": "true", "reassignInstances": "true"}
+            status = client.post(f"{controller_url}/tables/{table}/rebalance", params=params).raise_for_status().json().get("status")
+            log(f"pinot: moving table {table}'s segments off {', '.join(on)}, gone since its IP changed ({status})")
+    for server in lost:  # refused while a segment is still assigned to it: the next setup removes it
+        if client.delete(f"{controller_url}/instances/{server}").is_success:
+            log(f"pinot: removed {server}, gone since its IP changed")
 
 
 def _create_topic(kafka: AdminClient, dataset: Dataset, log: Log) -> None:

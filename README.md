@@ -166,6 +166,24 @@ A project's tests use `agentic_lakehouse.testing`, which runs every view and
 dashboard on DuckDB stand-ins for the stack, so they need no Docker and run in
 CI. To upgrade the engine, change the version in `requirements.txt`.
 
+**Projects from before 0.10.2** registered each Pinot process under its
+container's IP. A restart can change the IP (restarting Colima often does), and
+the tables' segments stayed with the server's old name, so live queries found
+no rows or failed with "unavailable segments" or "Connection refused". After
+upgrading, add the host flags from the template's
+[`docker-compose.yml`](agentic_lakehouse/project_template/docker/docker-compose.yml)
+to your `docker/docker-compose.yml` (`-controllerHost pinot-controller`,
+`-brokerHost pinot-broker`, `-serverHost pinot-server`), then run
+`docker compose -f docker/docker-compose.yml up -d --build`. Setup moves the
+segments off the servers that are gone and removes them, once; it logs each
+move. The same repair by hand, for each server that is gone (`GET
+:9000/instances` lists them) and each table:
+
+```bash
+curl -X PUT 'http://127.0.0.1:9000/instances/Server_172.20.0.9_8098/updateTags?tags=lost'
+curl -X POST 'http://127.0.0.1:9000/tables/<table>/rebalance?type=REALTIME&downtime=true&includeConsuming=true&bootstrap=true&reassignInstances=true'
+```
+
 This repository works the same way: `config/` is a project (a copy of
 [`examples/playback/`](examples/playback/), which the tests use), and
 `agentic_lakehouse/` is the engine, which knows nothing about playback data.
